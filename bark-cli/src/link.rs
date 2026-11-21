@@ -95,10 +95,43 @@ pub struct Found {
     pub address: String,
     /// The strongest RSSI it was heard at, in dBm.
     pub rssi: Option<i16>,
-    /// It advertised the public node's UUID (spec "Phone link", Public).
-    pub public: bool,
+    /// Whether it serves guests, as far as its advertising tells
+    /// (spec "Phone link", Public).
+    pub public: Reach,
     /// This computer holds a bond with it.
     pub bonded: bool,
+}
+
+/// Whether a node serves guests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reach {
+    Public,
+    Private,
+    /// What the transport holds of its advertising cannot tell.
+    Unknown,
+}
+
+impl Reach {
+    /// What a device's UUIDs tell, as a transport that keeps every UUID a
+    /// device was ever seen with, and those its services have, holds them:
+    /// the public node's UUID, which no attribute has, alone is a public
+    /// node, the service's alone a private one (spec "Phone link",
+    /// Public); with both it may be either now.
+    pub fn of_uuids(public_node: bool, service: bool) -> Reach {
+        match (public_node, service) {
+            (true, false) => Reach::Public,
+            (false, true) => Reach::Private,
+            _ => Reach::Unknown,
+        }
+    }
+
+    pub fn word(self) -> &'static str {
+        match self {
+            Reach::Public => "public",
+            Reach::Private => "private",
+            Reach::Unknown => "unknown",
+        }
+    }
 }
 
 /// The node's ID from its advertised name, or none for a name that is not

@@ -14,7 +14,7 @@ use zbus::message::Type;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 use zbus::MatchRule;
 
-use crate::link::{id_of_name, uuid_text, Char, Error, Found, Link, Result, Transport};
+use crate::link::{id_of_name, uuid_text, Char, Error, Found, Link, Reach, Result, Transport};
 
 const BLUEZ: &str = "org.bluez";
 const ADAPTER: &str = "org.bluez.Adapter1";
@@ -261,21 +261,26 @@ impl Device {
         }
     }
 
-    /// The node it is, if it is one: named as a node. Public when it
-    /// advertised the public node's UUID, which no attribute has (spec
-    /// "Phone link", Public): BlueZ adds to a device's UUIDs the services
-    /// it finds on a link, so the service's own UUID there does not tell a
-    /// private node.
+    /// The node it is, if it is one: named as a node.
     fn found(&self) -> Option<Found> {
         Some(Found {
             id: id_of_name(self.name.as_deref()?)?,
             address: self.address.clone(),
             rssi: self.rssi,
-            public: self
-                .uuids
-                .contains(&uuid_text(bark_link::uuid::PUBLIC_NODE)),
+            public: self.reach(),
             bonded: self.paired,
         })
+    }
+
+    /// Public or private, by its UUIDs. BlueZ keeps every UUID a device was
+    /// ever seen with, adds the services it finds on a link, and tells of
+    /// no UUID seen again, so the UUIDs cannot say what changed since.
+    fn reach(&self) -> Reach {
+        let has = |u| self.uuids.contains(&uuid_text(u));
+        Reach::of_uuids(
+            has(bark_link::uuid::PUBLIC_NODE),
+            has(bark_link::uuid::SERVICE),
+        )
     }
 }
 
@@ -1067,10 +1072,11 @@ mod tests {
             .collect()
     }
 
-    /// Seen public, linked, seen again: the link adds the service's UUID
-    /// to the device, and the node stays public.
+    /// Seen public, linked, made private: BlueZ keeps the public node's
+    /// UUID and adds the service's, so the scan cannot tell, and says so
+    /// rather than an answer that may be stale.
     #[test]
-    fn a_node_linked_once_stays_public() {
+    fn a_node_linked_once_is_not_called_public_or_private() {
         let mut d = Device::default();
         d.update(&props(&[
             ("Address", Value::from("E2:49:1C:03:EF:88")),
@@ -1081,7 +1087,7 @@ mod tests {
                 Value::from(vec![uuid_text(bark_link::uuid::PUBLIC_NODE)]),
             ),
         ]));
-        assert!(d.found().unwrap().public);
+        assert_eq!(d.found().unwrap().public, Reach::Public);
         d.update(&props(&[(
             "UUIDs",
             Value::from(vec![
@@ -1090,7 +1096,7 @@ mod tests {
             ]),
         )]));
         let f = d.found().unwrap();
-        assert!(f.public);
+        assert_eq!(f.public, Reach::Unknown);
         assert_eq!(crate::link::id_text(f.id), "bae6e6cbf4f5");
     }
 
@@ -1104,7 +1110,7 @@ mod tests {
                 Value::from(vec![uuid_text(bark_link::uuid::SERVICE)]),
             ),
         ]));
-        assert!(!d.found().unwrap().public);
+        assert_eq!(d.found().unwrap().public, Reach::Private);
     }
 
     /// While a discovery runs, BlueZ holds the RSSI of a device heard in

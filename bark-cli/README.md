@@ -36,8 +36,9 @@ Until it pairs, the tool is a guest, and a guest uses only a public node
 connects.
 
 - `scan`: the nodes in reach, strongest first, one a line: ID, RSSI in
-  dBm, public or private, whether this computer is paired with it, and the
-  Bluetooth address.
+  dBm, `public`, `private` or `unknown`, whether this computer is paired
+  with it, and the Bluetooth address. `unknown` is a node BlueZ has seen
+  advertise both ways, or linked to: see below.
 - `node <id>`: the node's Node value: link version, the oldest it serves,
   its ID, its firmware image's version, and `room`, how many more phones
   may pair with it.
@@ -45,7 +46,9 @@ connects.
   name, its address's position or `none`, battery in millivolts (0 on
   USB), the relays it knows, the neighbours it hears, the seconds left of
   its first rotation, the image it installs, the messages waiting for
-  this phone, and the count that moves when its phones change.
+  this phone, and `phones_mark`, which is no count: a number that moves,
+  wrapping, whenever the node's list of phones changes, so that a phone
+  knows to read it again (protocol.md, "The service").
 
 ## An owner's commands
 
@@ -112,10 +115,13 @@ was last heard at.
 
 BlueZ adds to a device the UUIDs it was ever seen with and the services
 found on a link, so a scan judges a node public by the public node's
-UUID, which only the advertisement carries. A node made private since
-BlueZ last saw it public still looks public; it refuses the guest's
-first read, and the tool says it is private now. Whether a paired node
-is public, `public <id>` says.
+UUID, which only the advertisement carries, and the service's alone as
+private. A device BlueZ has seen with both, as after a link or a change,
+may be either now, and BlueZ reports no UUID seen again, so the scan
+says `unknown` rather than an answer that may be stale. A guest still
+connects to an `unknown` node; a private one refuses its first read, and
+the tool says the node is private now. `public <id>` reads the truth on
+a paired node.
 
 An attempt to connect is given 70 s, longer than BlueZ's own bound: 40 s
 for the link, then the discovery of the node's table. One BlueZ has not

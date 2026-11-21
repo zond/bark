@@ -19,7 +19,7 @@ fn yes(b: bool) -> &'static str {
 
 pub fn found(f: &Found) -> String {
     let rssi = f.rssi.map_or("none".into(), |r| r.to_string());
-    let reach = if f.public { "public" } else { "private" };
+    let reach = f.public.word();
     format!(
         "{} rssi {rssi} {reach} paired {} address {}",
         id_text(f.id),
@@ -232,7 +232,7 @@ pub fn status(s: &Status) -> Vec<String> {
         format!("boot_left_s {}", s.boot_left_s),
         format!("installing {}", s.installing),
         format!("inbox {}", s.inbox),
-        format!("phones {}", s.phones),
+        format!("phones_mark {}", s.phones),
     ]
 }
 
@@ -266,7 +266,7 @@ mod tests {
             id: NodeId::from_u64(0xfa4e_0000_0001),
             address: "E2:49:1C:03:EF:88".into(),
             rssi: Some(-61),
-            public: true,
+            public: crate::link::Reach::Public,
             bonded: false,
         };
         assert_eq!(

@@ -14,7 +14,7 @@ use bark_link::{
 };
 use bark_proto::{NodeId, Position};
 
-use crate::link::{id_text, Char, Error, Found, Link, Result, Transport};
+use crate::link::{id_text, Char, Error, Found, Link, Reach, Result, Transport};
 
 /// This computer's identity address, as the node's records keep a phone's.
 const ME: [u8; 6] = [1, 2, 3, 4, 5, 0xc6];
@@ -35,9 +35,6 @@ fn keys(addr: [u8; 6]) -> Keys {
 pub struct FakeNode {
     pub rssi: i16,
     pub public: bool,
-    /// Scans call it public though it is not, as BlueZ keeps the UUIDs a
-    /// device once advertised.
-    pub looks_public: bool,
     pub node: Node,
     pub status: Status,
     /// The passkey it shows when a pairing asks.
@@ -58,7 +55,6 @@ impl FakeNode {
         let mut n = FakeNode {
             rssi: -60,
             public: true,
-            looks_public: false,
             node: Node {
                 version: bark_link::VERSION,
                 oldest: bark_link::OLDEST,
@@ -189,6 +185,9 @@ pub struct FakeRadio {
     pub others: bool,
     /// What the tool told the person.
     pub warnings: Vec<String>,
+    /// Of each address, whether the radio has seen the public node's UUID
+    /// and the service's, kept for ever as BlueZ keeps them.
+    pub uuids: std::collections::HashMap<String, (bool, bool)>,
 }
 
 impl FakeRadio {
@@ -207,6 +206,7 @@ impl FakeRadio {
             held: HashSet::new(),
             others: false,
             warnings: Vec::new(),
+            uuids: Default::default(),
         }
     }
 
@@ -219,7 +219,10 @@ impl FakeRadio {
             id: n.node.id,
             address: Self::address(i),
             rssi: Some(n.rssi),
-            public: n.public || n.looks_public,
+            public: self
+                .uuids
+                .get(&Self::address(i))
+                .map_or(Reach::Unknown, |&(p, s)| Reach::of_uuids(p, s)),
             bonded: self.bonds.borrow().contains(&Self::address(i)),
         }
     }
@@ -239,8 +242,13 @@ impl Transport for FakeRadio {
         // A node is heard an advertising interval after the one before.
         let step = time / (self.nodes.len() as u32 + 1);
         for (i, n) in self.nodes.clone().iter().enumerate() {
-            heard.push(self.found(i, &n.borrow()));
             self.held.insert(Self::address(i));
+            // What it advertises now joins what was seen before.
+            let public = n.borrow().public;
+            let seen = self.uuids.entry(Self::address(i)).or_default();
+            seen.0 |= public;
+            seen.1 |= !public;
+            heard.push(self.found(i, &n.borrow()));
             if enough(&heard, step * (i as u32 + 1)) {
                 self.scan_ended_early = i + 1 < self.nodes.len();
                 break;
@@ -269,6 +277,8 @@ impl Transport for FakeRadio {
             return Err(Error::NoDevice);
         }
         let node = self.nodes[i].clone();
+        // A link finds the service, which the radio keeps too.
+        self.uuids.entry(Self::address(i)).or_default().1 = true;
         let address = Self::address(i);
         let bonded = self.bonds.borrow().contains(&address);
         let held = node.borrow().mine().is_some();

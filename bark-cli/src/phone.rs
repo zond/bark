@@ -10,7 +10,7 @@ use bark_link::phones::{self, PhonesWrite, RECORDS};
 use bark_link::{Answer, Ask, Clock, MapPoint, Node, NodeTime, Public, PublicWrite, Status};
 use bark_proto::{NodeId, Position};
 
-use crate::link::{id_text, Char, Error, Found, Link, Result, Transport};
+use crate::link::{id_text, Char, Error, Found, Link, Reach, Result, Transport};
 use crate::state::{Paired, State};
 
 /// A node's advertising interval, 1022.5 ms (spec "Phone link", Finding
@@ -206,7 +206,7 @@ fn connect_heard<T: Transport>(
 /// a guest does not connect to one it knows to be private.
 pub fn guest<T: Transport>(t: &mut T, sel: &Select, time: Duration) -> Result<T::Link> {
     let found = find(t, sel, time)?;
-    if !found.public {
+    if found.public == Reach::Private {
         return Err(Error::Other(format!(
             "{} is private: only its paired phones use it",
             id_text(found.id)
@@ -296,7 +296,7 @@ pub fn owner<T: Transport>(
         id: p.id,
         address: p.address.clone(),
         rssi: None,
-        public: false,
+        public: Reach::Unknown,
         bonded: true,
     };
     let busy = others_scanning(t);
@@ -599,8 +599,8 @@ mod tests {
         let found = scan(&mut radio, SCAN_TIME).unwrap();
         assert_eq!(found.len(), 2);
         assert_eq!(found[0].id, id(0xfa4e_0000_0002));
-        assert!(!found[0].public);
-        assert!(found[1].public);
+        assert_eq!(found[0].public, Reach::Private);
+        assert_eq!(found[1].public, Reach::Public);
     }
 
     #[test]
@@ -653,22 +653,52 @@ mod tests {
     }
 
     #[test]
-    fn a_node_seen_public_linked_and_seen_again_is_public() {
+    fn a_node_seen_public_and_linked_is_still_used_by_a_guest() {
         let mut radio = FakeRadio::new(vec![FakeNode::new(id(1))]);
         let l = guest(&mut radio, &sel("1"), SCAN_TIME).unwrap();
         l.disconnect().unwrap();
-        assert!(find(&mut radio, &sel("1"), SCAN_TIME).unwrap().public);
+        // The link added the service's UUID to what the radio keeps.
+        assert_eq!(
+            scan(&mut radio, SCAN_TIME).unwrap()[0].public,
+            Reach::Unknown
+        );
         guest(&mut radio, &sel("1"), SCAN_TIME).unwrap();
     }
 
     #[test]
     fn a_node_made_private_since_refuses_the_guest() {
-        let mut n = FakeNode::new(id(1)).private();
-        n.looks_public = true;
-        let mut radio = FakeRadio::new(vec![n]);
+        let mut radio = FakeRadio::new(vec![FakeNode::new(id(1))]);
+        guest(&mut radio, &sel("1"), SCAN_TIME).unwrap();
+        radio.nodes[0].borrow_mut().public = false;
         let mut l = guest(&mut radio, &sel("1"), SCAN_TIME).unwrap();
         let e = node_status(&mut l).unwrap_err();
         assert!(e.to_string().contains("private now"), "{e}");
+    }
+
+    /// The bench, 2026-11-21: after `public off`, a scan still said public.
+    #[test]
+    fn a_scan_after_public_off_does_not_say_public() {
+        let mut radio = FakeRadio::new(vec![FakeNode::new(id(0xbae6_e6cb_f4f5))]);
+        assert_eq!(
+            scan(&mut radio, SCAN_TIME).unwrap()[0].public,
+            Reach::Public
+        );
+        let mut state = State::in_memory();
+        pair(
+            &mut radio,
+            &mut state,
+            &sel("f4f5"),
+            SCAN_TIME,
+            Some(123_456),
+            CLOCK,
+        )
+        .unwrap();
+        let (_, mut l) = owner(&mut radio, &state, &sel("f4f5"), CLOCK).unwrap();
+        assert!(!public(&mut l, Some(false)).unwrap());
+        assert_eq!(
+            scan(&mut radio, SCAN_TIME).unwrap()[0].public,
+            Reach::Unknown
+        );
     }
 
     #[test]
