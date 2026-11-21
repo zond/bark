@@ -174,6 +174,8 @@
     "hand_over": "040002",
     "leave": "05",
     "not_allowed_round": 1000740,
-    "not_allowed_summary": "23cf1b4d9a265e6ca2413a5d1f1347c02f0a8ef37f5c89"
+    "not_allowed_summary": "23cf1b4d9a265e6ca2413a5d1f1347c02f0a8ef37f5c89",
+    "removed_round": 1000800,
+    "removed_summary": "23cf32a404c1df43d2fc12cefbdf44387123b1b49d5a13"
   }
 }

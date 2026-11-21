@@ -2059,6 +2059,11 @@ mod commands {
         };
         assert_eq!(command, c);
         command::obey(m, p, person, command, 300, 0);
+        drain(m, key, sent)
+    }
+
+    /// The round's summary and its count of items, opened under `key`.
+    fn drain(m: &mut Home, key: &[u8; 32], sent: u32) -> (Summary, usize) {
         let mut out = [0u8; MAX_PAYLOAD];
         let mut summary = None;
         let mut items = 0;
@@ -2297,7 +2302,7 @@ mod commands {
         );
         assert_eq!(s.outcome, done(Code::Ok));
         assert_eq!(
-            p.get(1).map(|r| (r.bond.is_some(), r.key)),
+            p.get(1).map(|r| (r.bond.is_some(), r.home())),
             Some((true, None))
         );
         let (s, _) = ask(
@@ -2467,6 +2472,136 @@ mod commands {
             Arrival::Refused
         );
         let (s, _) = ask(&mut m, &mut p, &carol, 41, None);
+        assert_eq!(s.outcome, None);
+    }
+
+    /// A fetch under a removed home's key: taken as any other, its command
+    /// not run, and answered by a summary alone that says so.
+    fn told(
+        m: &mut Home,
+        p: &mut Phones,
+        key: &[u8; 32],
+        sent: u32,
+        c: Option<Command>,
+    ) -> Summary {
+        let Arrival::Fetch { person, command } = m.arrive(MsgId(sent), &fetch(key, sent, c)) else {
+            panic!("the fetch is taken");
+        };
+        assert_eq!(command, None, "no command runs");
+        command::obey(m, p, person, command, 300, 0);
+        let (s, items) = drain(m, key, sent);
+        assert_eq!(items, 0, "no item goes");
+        s
+    }
+
+    /// The person whose home was removed is told at their next fetch, once
+    /// for each later `sent`, and never sent their mail; their command
+    /// does not run (spec "Mailbox", The answer; roadmap D239).
+    #[test]
+    fn a_fetch_under_a_removed_home_is_told_so() {
+        let f = fixture();
+        let (alice, bob) = (f.alice.mailbox, f.bob.mailbox);
+        let (mut m, mut p) = node();
+        let mut item = std::vec![Form::Boxed.format(), 0x22, 1, 2, 3];
+        m.arrive(MsgId(100), &item);
+        item[4] = 4;
+        m.arrive(MsgId(101), &item);
+        let bob_number = p.get(1).unwrap().number;
+        let (s, _) = ask(&mut m, &mut p, &bob, 10, None);
+        assert_eq!(s.items, 2);
+        m.arrive(MsgId(102), &item);
+        let (s, _) = ask(
+            &mut m,
+            &mut p,
+            &alice,
+            11,
+            Some(Command::Remove(bob_number)),
+        );
+        assert_eq!(s.outcome, done(Code::Ok));
+        assert!(m.person(1).is_some_and(|p| p.removed) && m.is_home());
+        let removed = Summary {
+            items: 0,
+            remaining: 0,
+            owner: false,
+            newest: crate::VERSION,
+            outcome: done(Code::Removed),
+        };
+        assert_eq!(told(&mut m, &mut p, &bob, 20, None), removed);
+        assert_eq!(p.get(1).map(|r| r.last_fetch), Some(20));
+        // Once for each later `sent`.
+        assert_eq!(m.arrive(MsgId(1), &fetch(&bob, 20, None)), Arrival::Refused);
+        assert_eq!(m.arrive(MsgId(2), &fetch(&bob, 19, None)), Arrival::Refused);
+        assert_eq!(told(&mut m, &mut p, &bob, 21, None), removed);
+        // A command is not run, a leave nor the owner's.
+        assert_eq!(
+            told(&mut m, &mut p, &bob, 22, Some(Command::Leave)),
+            removed
+        );
+        assert_eq!(
+            p.get(1).map(|r| (r.key, r.removed)),
+            Some((Some(bob), true))
+        );
+        let alice_number = p.get(0).unwrap().number;
+        assert_eq!(
+            told(
+                &mut m,
+                &mut p,
+                &bob,
+                23,
+                Some(Command::Remove(alice_number))
+            ),
+            removed
+        );
+        assert_eq!(p.get(0).and_then(|r| r.home()), Some(alice));
+        // Home again from his phone, from that write's `sent`: his mail
+        // waited.
+        p.set_home(1, Some(bob), 30);
+        sync(&mut m, &p);
+        assert_eq!(m.arrive(MsgId(3), &fetch(&bob, 30, None)), Arrival::Refused);
+        let (s, items) = ask(&mut m, &mut p, &bob, 31, None);
+        assert_eq!((s.outcome, s.items, items), (None, 1, 1));
+    }
+
+    /// The owner who removes their own home is answered as any command
+    /// that takes the sender's key, and told so at their next fetch,
+    /// without the owner's flag; their list is not given.
+    #[test]
+    fn the_owner_s_own_removed_home_is_told_so() {
+        let f = fixture();
+        let alice = f.alice.mailbox;
+        let (mut m, mut p) = node();
+        let alice_number = p.get(0).unwrap().number;
+        let (s, _) = ask(
+            &mut m,
+            &mut p,
+            &alice,
+            10,
+            Some(Command::Remove(alice_number)),
+        );
+        assert_eq!((s.owner, s.outcome), (false, done(Code::Ok)));
+        assert_eq!(p.owner(), None);
+        let s = told(&mut m, &mut p, &alice, 11, Some(Command::List));
+        assert_eq!((s.owner, s.outcome), (false, done(Code::Removed)));
+    }
+
+    /// A key a removed record and a home both hold opens as the home's.
+    #[test]
+    fn a_home_s_key_opens_before_a_removed_one() {
+        let f = fixture();
+        let bob = f.bob.mailbox;
+        let (mut m, mut p) = node();
+        p.remove(
+            p.get(1).unwrap().number,
+            bark_link::phones::Parts {
+                bond: false,
+                home: true,
+            },
+        )
+        .unwrap();
+        p.pair(bond(3), 0).unwrap();
+        p.set_home(2, Some(bob), 0);
+        sync(&mut m, &p);
+        let (s, _) = ask(&mut m, &mut p, &bob, 5, None);
         assert_eq!(s.outcome, None);
     }
 }

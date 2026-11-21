@@ -570,6 +570,11 @@ pub fn json() -> String {
     let refused = Some(Outcome::Done(Code::NotAllowed));
     rest.push(("not_allowed_round", format!("{round}")));
     rest.push(("not_allowed_summary", h(&summary(round, 0, false, refused))));
+    // Her fetch once her home there was removed.
+    let round = fetch.sent + 300;
+    let removed = Some(Outcome::Done(Code::Removed));
+    rest.push(("removed_round", format!("{round}")));
+    rest.push(("removed_summary", h(&summary(round, 0, false, removed))));
     parts.push(entry("commands", &rest));
 
     format!("{{\n{}\n}}\n", parts.join(",\n"))
