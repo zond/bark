@@ -93,7 +93,12 @@ async fn work(mut flash: Flash) {
                 // after it is not counted as kept until the next write.
                 let asked = PHONES_ASKED.load(Relaxed);
                 let written = flash.keep_phones().await;
-                PHONES_KEPT.store(asked, Relaxed);
+                // Not kept after a failed write: a reply waits for the
+                // next write, which turns the page and writes every
+                // record again.
+                if written.is_ok() {
+                    PHONES_KEPT.store(asked, Relaxed);
+                }
                 crate::node::WAKE.mailbox_changed();
                 written
             }
