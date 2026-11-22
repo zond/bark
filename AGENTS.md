@@ -49,7 +49,8 @@ The version rule is tested on purpose, by a build that claims a later version (r
 
 After the first deployment, a change an older node or app cannot follow goes out in two
 releases: the first understands the new form and does not send it, and the second sends it
-once the first has spread.
+once the first has spread. What that takes in each place two versions meet, and what the
+protocol still lacks for it, is in `docs/compatibility-2026-11-22.md`.
 
 ## Writing
 
