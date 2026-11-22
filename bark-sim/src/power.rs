@@ -7,7 +7,7 @@
 //! A node on USB does not go dark: a pocket or a basement is where a node
 //! on battery goes.
 
-use crate::metrics::PowerMetrics;
+use crate::metrics::{LeftFate, PowerMetrics};
 use crate::rng::{Purpose, Stream};
 use crate::sim::{key, Ev, Sim};
 use bark_proto::wire::Packet;
@@ -25,8 +25,8 @@ pub(crate) struct PowerModel {
     /// Switching node by its ID's key.
     index: HashMap<u64, u32>,
     /// Texts held at a turn to leaving after the settle time: their
-    /// holder and fate so far, an index of `PowerMetrics::held`.
-    held: HashMap<u32, (u32, Option<usize>)>,
+    /// holder and fate so far.
+    held: HashMap<u32, (u32, Option<LeftFate>)>,
     /// Per node, the anchor it had after its last event.
     anchors: Vec<Option<NodeId>>,
 }
@@ -210,9 +210,9 @@ impl Sim {
             }
             T::Delivered { msg_id, by, .. } => {
                 let fate = match by {
-                    Delivery::Flush => 0,
-                    Delivery::Window | Delivery::Long => 1,
-                    Delivery::Relay => 2,
+                    Delivery::Flush => LeftFate::Flush,
+                    Delivery::Window | Delivery::Long => LeftFate::Beat,
+                    Delivery::Relay => LeftFate::AsRelay,
                 };
                 self.power_fate(msg_id, fate);
             }
@@ -224,7 +224,7 @@ impl Sim {
                     let m = self.power.as_mut().expect("checked");
                     m.held.entry(msg_id.0).or_insert((node, None));
                 }
-                self.power_fate(msg_id, 3)
+                self.power_fate(msg_id, LeftFate::HandedOn)
             }
             T::Dropped { msg_id, .. } => {
                 let by_holder = self
@@ -233,14 +233,14 @@ impl Sim {
                     .and_then(|m| m.held.get(&msg_id.0))
                     .is_some_and(|&(holder, _)| holder == node);
                 if by_holder {
-                    self.power_fate(msg_id, 4);
+                    self.power_fate(msg_id, LeftFate::Dropped);
                 }
             }
             _ => {}
         }
     }
 
-    fn power_fate(&mut self, msg_id: MsgId, fate: usize) {
+    fn power_fate(&mut self, msg_id: MsgId, fate: LeftFate) {
         if let Some((_, f)) = self.power.as_mut().and_then(|m| m.held.get_mut(&msg_id.0)) {
             f.get_or_insert(fate);
         }
@@ -255,19 +255,18 @@ impl Sim {
         if self.now >= self.settle {
             let air = bark_proto::radio::time_on_air(f.len, f.preamble_symbols);
             if let Some(p) = self.metrics.research.power.as_mut() {
-                p.changed.0 += 1;
-                p.changed.1 += air.as_micros() as f64 / 1e6;
+                p.changed.add(air.as_micros() as f64 / 1e6);
             }
         }
     }
 
     /// The fates of the texts held at a turn to leaving
     /// (`PowerMetrics::held`).
-    pub(crate) fn power_held(&self) -> [u64; 6] {
-        let mut held = [0; 6];
+    pub(crate) fn power_held(&self) -> [u64; LeftFate::N] {
+        let mut held = [0; LeftFate::N];
         if let Some(m) = &self.power {
             for (_, f) in m.held.values() {
-                held[f.unwrap_or(5)] += 1;
+                held[f.unwrap_or(LeftFate::None) as usize] += 1;
             }
         }
         held

@@ -4,13 +4,11 @@
 //! frame needs it.
 
 use crate::geo::{Grid, Xy};
-use crate::links::{LinkParams, Site, SHADOW_TRUNCATE_SIGMA};
+use crate::links::{pair_key, LinkParams, Site, C_M_PER_S, SHADOW_TRUNCATE_SIGMA};
 use crate::rng::{mix, normal_fast_at, stream_seed, Purpose, Stream};
 use crate::scenario::{Movement, Vehicles};
 use bark_proto::radio::{Channel, CHANNELS};
 use bark_proto::{Duration, Instant};
-
-const C_M_PER_S: f64 = 299_792_458.0;
 
 /// A receiver's share of a frame from a walker or to one: its node, the
 /// power before fading and with it, dBm.
@@ -648,11 +646,6 @@ fn on_route((a, b): (Xy, Xy), f: f64) -> Xy {
         x: a.x + (b.x - a.x) * f,
         y: a.y + (b.y - a.y) * f,
     }
-}
-
-fn pair_key(a: u32, b: u32) -> u64 {
-    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
-    ((lo as u64) << 32) | hi as u64
 }
 
 #[cfg(test)]

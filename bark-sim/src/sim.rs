@@ -17,7 +17,7 @@
 use crate::boots::{BootKind, Boots};
 use crate::geo::{Grid, Origin, Xy};
 use crate::links::{LinkTable, NodeRadio, Site};
-use crate::metrics::{DropReason, FirstTry, Metrics, Observer, Outcome, AFTER_BEAT, AFTER_TAKE};
+use crate::metrics::{DropReason, Metrics, Observer, Outcome};
 use crate::phy::{self, Deaf, ErrorCurve, Loss, RadioParams};
 use crate::queue::{self, Events, Wakeups};
 use crate::rng::{stream_seed, Purpose, Stream};
@@ -194,7 +194,7 @@ pub(crate) struct Rx {
     /// Worst interference so far that the hazard counted, mW, and what
     /// the strongest frame it counted was then (`Addressed::lost_how`).
     pub max_hurt_mw: f64,
-    pub max_i_how: u8,
+    pub max_i_how: crate::metrics::LostHow,
     /// Error hazard accrued up to `since`, and the hazard at which the
     /// packet is lost, drawn at lock.
     pub spent: f64,
@@ -286,24 +286,6 @@ impl BeatRing {
     }
 }
 
-/// A DATA on the air to a sleepy node (`Sim::to_sleepy`).
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct ToSleepy {
-    pub node: u32,
-    /// It could not hear the frame when it started: it received
-    /// duty-cycled and the frame's preamble was short.
-    pub deaf: bool,
-    /// It was dark or removed then.
-    pub absent: bool,
-    /// The sender, its holder.
-    pub holder: u32,
-    pub msg: u32,
-    /// The window it went in (`Sim::window_of`).
-    pub window: usize,
-    /// Why it was lost at the node, if it was.
-    pub lost: Option<Outcome>,
-}
-
 /// A transmission, from excursion start until it leaves the air.
 pub(crate) struct AirTx {
     pub src: u32,
@@ -372,12 +354,12 @@ pub enum Fate {
     },
 }
 
-struct OriginRecord {
+pub(crate) struct OriginRecord {
     src: u32,
-    dst: u32,
+    pub(crate) dst: u32,
     /// When the traffic model first had it for its origin.
     t: Instant,
-    fate: Fate,
+    pub(crate) fate: Fate,
     /// Whether the destination could be reached from the origin at the
     /// start of the run; see [`Sim::reachable`].
     reachable: bool,
@@ -393,12 +375,12 @@ struct OriginRecord {
     /// The node that queued it for its destination node
     /// (spec "Delivery queue"), the beats of that node it heard while the
     /// message was queued, and the DATA it sent it.
-    holder: Option<u32>,
-    holder_beats: u32,
+    pub(crate) holder: Option<u32>,
+    pub(crate) holder_beats: u32,
     holder_tries: u32,
     /// What became of its destination node's beats at the holder while
     /// it was queued.
-    watch: HolderWatch,
+    pub(crate) watch: HolderWatch,
     /// Frames that carried it or answered it (DATA and their ACKs),
     /// and their time on air, µs.
     frames: u32,
@@ -506,34 +488,39 @@ pub struct MessageRow {
     pub watch: HolderWatch,
 }
 
-/// Fates of a sleepy node's beat at the holder of a message for it, by
-/// index into [`HolderWatch::beats`].
-pub mod beat_fate {
-    pub const RECEIVED: usize = 0;
+/// Fates of a sleepy node's beat at the holder of a message for it, the
+/// index of [`HolderWatch::beats`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BeatFate {
+    Received = 0,
     /// The node was dark: the beat reached nobody.
-    pub const DARK: usize = 1;
+    Dark = 1,
     /// No link from the node to the holder above sensitivity on average.
-    pub const FAR: usize = 2;
+    Far = 2,
     /// The holder rested on another channel when the beat began.
-    pub const OFF_CHANNEL: usize = 3;
+    OffChannel = 3,
     /// Lost to noise: a weak link or a fade.
-    pub const WEAK: usize = 4;
+    Weak = 4,
     /// Lost to another frame: capture, interference, or the holder
     /// demodulating a corrupted one.
-    pub const COLLIDED: usize = 5;
+    Collided = 5,
     /// The holder was transmitting, or turning its radio round for it.
-    pub const TRANSMITTING: usize = 6;
+    Transmitting = 6,
     /// The holder was checking a channel or retuning.
-    pub const CHECKING: usize = 7;
+    Checking = 7,
     /// Not received for another reason.
-    pub const OTHER: usize = 8;
+    Other = 8,
     /// The node's listen-before-talk found its channel busy each time and
     /// it skipped the beat.
-    pub const SKIPPED: usize = 9;
+    Skipped = 9,
     /// The node beat without an anchor: no window follows.
-    pub const ANCHORLESS: usize = 10;
+    Anchorless = 10,
+}
+
+impl BeatFate {
     pub const N: usize = 11;
-    pub const NAMES: [&str; N] = [
+    /// The names of the fates in the per-message table, in index order.
+    pub const NAMES: [&str; Self::N] = [
         "rx",
         "dark",
         "far",
@@ -559,8 +546,8 @@ pub struct HolderWatch {
     pub anchored: bool,
     /// DATA of it the holder sent with the long preamble.
     pub long_tries: u32,
-    /// Its destination's beats while it was queued, by [`beat_fate`].
-    pub beats: [u32; beat_fate::N],
+    /// Its destination's beats while it was queued, by [`BeatFate`].
+    pub beats: [u32; BeatFate::N],
     /// Of the beats the holder did not receive, those another node that
     /// is not sleepy did.
     pub elsewhere: u32,
@@ -582,26 +569,21 @@ pub(crate) enum FrameKind {
     Seen,
 }
 
-/// A message held on a neighbour after a failed hand-over
-/// (`metrics::Holds`).
-#[derive(Clone, Copy)]
-struct Hold {
-    /// The neighbour's ID key.
-    to: u64,
-    /// Failed hand-overs to it in a row.
-    failures: u8,
-    /// When the first failed.
-    since: Instant,
+/// The most entries a node's send queue held at once.
+#[derive(Clone, Copy, Default)]
+struct QueuePeak {
+    /// In its regular room.
+    regular: u16,
+    /// In hop places.
+    places: u16,
 }
 
-impl Hold {
-    fn new(to: u64, since: Instant) -> Hold {
-        Hold {
-            to,
-            failures: 0,
-            since,
-        }
-    }
+/// How often a node asked to keep its state across a reboot.
+#[derive(Clone, Copy, Default)]
+struct StoreCount {
+    all: u32,
+    /// After the settle time.
+    settled: u32,
 }
 
 /// A message an application waits to hand to its core.
@@ -697,7 +679,7 @@ pub struct Sim {
     /// Where the local grid is on the Earth.
     pub(crate) origin: Origin,
     /// Whether the core being handed a GPS fix (`Ev::Fix`) is.
-    fixing: bool,
+    pub(crate) fixing: bool,
     /// Each node's ID, assigned here (spec "Addresses"): one per node but
     /// for the pairs the scenario forces to share one.
     ids: Vec<NodeId>,
@@ -712,44 +694,21 @@ pub struct Sim {
     gps_error: Vec<(Xy, Instant, Stream)>,
     /// Per node, its GPS receiver's searches (`gps.rs`).
     pub(crate) receivers: Vec<crate::gps::Receiver>,
-    /// The texts held at a first far fix after the settle time: whether
-    /// their holder had turned fixed again before, and how it delivered
-    /// them, an index of `metrics::Carried::held`.
-    held_far: HashMap<u32, (bool, Option<usize>)>,
-    /// Per relay, its last first far fix, and whether it has turned fixed
-    /// again since it was first carried.
-    far_at: HashMap<u32, (Instant, bool)>,
-    /// Fixed nodes plugged in that have had no fix since: when, their
-    /// position then, and their entry in `metrics::Carried::plugged_fixed`.
-    plugged: HashMap<u32, (Instant, bark_proto::Position, usize)>,
-    /// The walks under way, begun after the settle time, of walkers that
-    /// were fixed relays when they set off: when the walk began, whether
-    /// the node was on battery, and when it turned carried.
-    relay_walks: HashMap<u32, (Instant, bool, Option<Instant>)>,
-    /// The sleepy nodes whose carried flag changed since their last
-    /// heartbeat for a change.
-    carried_flip: std::collections::HashSet<u32>,
+    /// What is followed of the nodes that move (`carried.rs`).
+    pub(crate) carried: crate::carried::CarriedWatch,
     /// The nodes about to send a heartbeat for a change
-    /// (`Trace::Changed`), and whether it says a sleepy node's carried
-    /// flag.
-    changing: HashMap<u32, bool>,
-    /// Deliveries by the way they went, after the settle time
-    /// (`metrics::Carried::delivered_by`).
-    delivered_by: [u64; 4],
+    /// (`Trace::Changed`), which is no beat to take a fix at.
+    changing: std::collections::HashSet<u32>,
     /// Relay node by ID, as [`key`] gives it.
     pub(crate) relay_index: HashMap<u64, u32>,
     /// Per node, the most entries its send queue held at once in its
     /// regular room and in hop places; and every DATA received by the
     /// node it was for, by its hop count.
-    queue_peaks: Vec<(u16, u16)>,
+    queue_peaks: Vec<QueuePeak>,
     arrival_hops: [u64; 256],
-    /// Each anchor's sleepy nodes, as of the update's last sample.
-    sleepers: HashMap<u32, Vec<u32>>,
-    /// The last heartbeat each node heard, its sender and when.
-    beat_from: HashMap<u32, (u64, Instant)>,
     /// Whether the relay a core event is being delivered to was booting
     /// before it, so that its boot choice is not counted as a move.
-    was_booting: bool,
+    pub(crate) was_booting: bool,
     positions: Vec<Position>,
     /// Nodes `0..n_relays` are not sleepy at boot; the rest, placed as
     /// leaves, are.
@@ -821,23 +780,15 @@ pub struct Sim {
     leaf_nodes: HashMap<[u8; NodeId::LEN], u32>,
     /// Sleepy node by ID, as [`key`] gives it.
     pub(crate) sleepy_index: HashMap<u64, u32>,
-    /// DATA on air addressed to a sleepy node: key to the node, what the
-    /// frame found at its start, and the message and its holder.
-    pub(crate) to_sleepy: HashMap<u64, ToSleepy>,
+    /// What DATA to sleepy nodes meets (`sleepy_data.rs`).
+    pub(crate) sleepy_data: crate::sleepy_data::SleepyDataWatch,
     /// Heartbeats on air of nodes that are not sleepy, after the settle
     /// time: key to the receivers that lost them, and why.
     pub(crate) beat_losses: HashMap<u64, Vec<(u32, crate::metrics::Outcome)>>,
-    /// Per sleepy node by index less the relays: the start of its last
-    /// beat and the end of the last DATA for it that it received.
-    pub(crate) beat_took: Vec<(Instant, Instant)>,
-    /// A delivery's hand-over under way, by holder and message: the window
-    /// it went in and what became of its first DATA
-    /// (`SleepMetrics::waited`).
-    pub(crate) first_try: HashMap<(u32, u32), (usize, FirstTry)>,
     /// Sleepy nodes whose anchor the scenario removed or restarted, and
     /// when; and, once an anchor hears them again, when that was.
     pub(crate) orphans: HashMap<u32, (Instant, Option<Instant>)>,
-    origins: Vec<OriginRecord>,
+    pub(crate) origins: Vec<OriginRecord>,
     /// Per node, the message its application waits to send.
     offers: Vec<Option<Offer>>,
     /// Per node, its mailbox if it is a person's home (spec "Mailbox"),
@@ -852,32 +803,11 @@ pub struct Sim {
     msg_tags: HashMap<u32, u32>,
     /// What each application offered, to offer again when given back.
     offered: HashMap<u32, Offer>,
-    /// The count of the last DATA of each message to each node, to read
-    /// the count a refusing ACK answers.
-    pub(crate) data_hops: HashMap<(u32, u64), u32>,
     /// Per minute and message tag, airtime by frame kind, when asked for.
     msg_minutes: Option<HashMap<(u32, u32), [u64; 5]>>,
-    /// Messages queued, by holder and destination node's ID, for counting
-    /// the beats the holder hears.
-    queued_for: HashMap<(u32, u64), Vec<u32>>,
-    /// The holders of messages queued for each node, by the node's ID.
-    holders_of: HashMap<u64, Vec<u32>>,
-    /// Messages held on a neighbour after a failed hand-over, by node and
-    /// message ID (`metrics::Holds`).
-    holds: HashMap<(u32, u32), Hold>,
-    /// Every hand-over that ended, by message tag: the relay and the
-    /// neighbour offered, in order (`metrics::Pressure`).
-    offer_log: HashMap<u32, OfferLog>,
-    /// The refuser of each relay origin's own message refused last, by
-    /// origin and message tag, until its next hand-over ends
-    /// (`metrics::Pressure::own_refused`).
-    own_refused_by: HashMap<(u32, u32), u64>,
-    /// Demotions not yet followed by an answer from the neighbour, by
-    /// relay and the neighbour's key: when.
-    demoted_at: HashMap<(u32, u64), Instant>,
-    /// Beats on the air of a node with messages queued: key to each
-    /// holder and the beat's fate there so far.
-    pub(crate) beat_watch: HashMap<u64, Vec<(u32, Option<usize>)>>,
+    /// The beats of sleepy nodes at the holders of messages for them
+    /// (`holders.rs`).
+    pub(crate) holder_beats: crate::holders::HolderBeats,
     script: Vec<ScriptEntry>,
     /// Results of scripted excursions, in completion order.
     pub script_log: Vec<ScriptResult>,
@@ -900,40 +830,15 @@ pub struct Sim {
     component: Vec<u32>,
     /// The per-minute series, when asked for (`Sim::series_on`).
     series: Option<String>,
-    /// Frames on air addressed to a relay: key to (relay, kind, state at
-    /// the start), for [`crate::metrics::Addressed`].
-    pub(crate) addressed: HashMap<u64, (u32, u8, u8)>,
-    /// Frames on air: key to kind, 0 DATA, 1 ACK, 2 a relay's heartbeat,
-    /// 3 a sleepy node's beat, and the sender, for
-    /// [`crate::metrics::Addressed::lost_how`].
-    pub(crate) air_kinds: HashMap<u64, (u8, u32)>,
-    /// Frames on air addressed to a relay that lost them: key to how, and
-    /// whether to a later frame within the harmless level.
-    pub(crate) lost_how: HashMap<u64, (u8, bool)>,
-    /// Per relay, its heartbeat grid's phase in its own clock and its
-    /// interval, for [`crate::metrics::Addressed::heartbeat_late`].
-    pub(crate) hb_grid: Vec<Option<(Instant, Duration)>>,
-    /// DATA on air from a relay to a relay, with `tables_on`: key to the
-    /// margin and distance bin of [`crate::metrics::Tables::data_by_reach`].
-    pub(crate) reach_of: HashMap<u64, (usize, usize)>,
+    /// What becomes of frames addressed to relays (`addressed.rs`).
+    pub(crate) addressed: crate::addressed::AddressedWatch,
+    /// What the neighbour tables hold, with `tables_on` (`tables.rs`).
+    pub(crate) tables: crate::tables::TablesWatch,
     /// The log of what each DATA's sender knew of its next hop, when asked
     /// for (`Sim::margin_to`).
     pub(crate) margin: Option<crate::margin::MarginLog>,
-    /// DATA on air addressed to a relay: key to the ACK that would answer
-    /// it, message ID and `to`.
-    pub(crate) answer_of: HashMap<u64, (u32, u64)>,
-    /// DATA a relay received and has not answered yet: (relay, message,
-    /// `to`) to the answer's deadline and whether a leaf sent it.
-    pub(crate) awaiting: HashMap<(u32, u32, u64), (Instant, bool)>,
-    /// The relay DATA a relay is being handed now: (relay, message,
-    /// sender's ID, count), for [`crate::metrics::HopPlaceRefusals`].
-    rx_data: Option<(u32, u32, u64, u32)>,
-    /// (relay, message) for every record a relay has kept, for
-    /// [`crate::metrics::RecordsLost`].
-    recorded: std::collections::HashSet<(u32, u32)>,
-    /// Refused messages not yet sent again: (sender, message) to the
-    /// refusal's time and whether a hop place was free for another.
-    refused_at: HashMap<(u32, u32), (Instant, bool)>,
+    /// How hand-overs go (`handovers.rs`).
+    pub(crate) handovers: crate::handovers::HandOverWatch,
     /// Every boot, watched until the node takes part (`boots.rs`).
     boots: Boots,
     /// Per node, what the trace before its next transmission said it is.
@@ -941,7 +846,7 @@ pub struct Sim {
     /// Per node, what it last asked to keep across a reboot, and how
     /// often it asked: in all, and after the settle time.
     pub(crate) stored: Vec<Option<Stored>>,
-    store_writes: Vec<[u32; 2]>,
+    store_writes: Vec<StoreCount>,
     /// The destinations of the texts offered at scripted boots.
     boot_rng: Stream,
 }
@@ -954,39 +859,6 @@ pub struct Sim {
 /// their heartbeat intervals (spec "Heartbeat").
 fn node_id(i: u32) -> NodeId {
     NodeId::from_u64((i as u64 + 1).wrapping_mul(0x9e37_79b9_7f4b))
-}
-
-/// The 45° sector of the bearing to `p`, north first and clockwise.
-fn sector(p: bark_proto::geo::Point) -> usize {
-    let deg = p.east.atan2(p.north).to_degrees().rem_euclid(360.0);
-    ((deg / 45.0) as usize).min(crate::metrics::SECTORS - 1)
-}
-
-/// The bin of [`crate::metrics::Tables`] of a neighbour at `p`.
-pub(crate) fn reach_bin(p: bark_proto::geo::Point) -> usize {
-    use crate::metrics::{REACH_BINS, REACH_BIN_M};
-    ((p.distance_m(Default::default()) / REACH_BIN_M) as usize).min(REACH_BINS - 1)
-}
-
-/// The hand-overs of one message that ended, at any relay
-/// (`Sim::note_offer`).
-#[derive(Default)]
-struct OfferLog {
-    /// Relay and neighbour of each, in order.
-    to: Vec<(u32, u64)>,
-    /// Offers to a neighbour, then another, then the first again, at one
-    /// relay.
-    flaps: u32,
-}
-
-impl OfferLog {
-    /// Distinct relay and neighbour pairs offered.
-    fn next_hops(&self) -> usize {
-        let mut v = self.to.clone();
-        v.sort_unstable();
-        v.dedup();
-        v.len()
-    }
 }
 
 /// A node ID as a map key.
@@ -1157,7 +1029,7 @@ fn floor_ratio(a: i128, b: i64, d: i64) -> i128 {
 }
 
 /// The interval of the series, µs.
-const SERIES_EVERY_US: u64 = 60_000_000;
+pub(crate) const SERIES_EVERY_US: u64 = 60_000_000;
 
 /// What the trace before a node's transmission said the frame is
 /// (`metrics::BootAirtime`).
@@ -1337,15 +1209,13 @@ impl Sim {
             names,
             xy,
             relay_index: (0..n_relays).map(|i| (key(ids[i as usize]), i)).collect(),
-            queue_peaks: vec![(0, 0); ids.len()],
+            queue_peaks: vec![QueuePeak::default(); ids.len()],
             arrival_hops: [0; 256],
             sleepy_index: (n_relays..n as u32)
                 .map(|i| (key(ids[i as usize]), i))
                 .collect(),
-            to_sleepy: HashMap::new(),
+            sleepy_data: crate::sleepy_data::SleepyDataWatch::new(n - n_relays as usize),
             beat_losses: HashMap::new(),
-            beat_took: vec![(Instant::ZERO, Instant::ZERO); n - n_relays as usize],
-            first_try: HashMap::new(),
             orphans: HashMap::new(),
             ids,
             pairs,
@@ -1353,13 +1223,8 @@ impl Sim {
             gps: sc.gps.clone(),
             gps_error: Vec::new(),
             receivers: vec![Default::default(); n],
-            held_far: HashMap::new(),
-            far_at: HashMap::new(),
-            plugged: HashMap::new(),
-            relay_walks: HashMap::new(),
-            carried_flip: Default::default(),
-            changing: HashMap::new(),
-            delivered_by: [0; 4],
+            carried: Default::default(),
+            changing: Default::default(),
             positions,
             sites: site,
             walks,
@@ -1372,8 +1237,6 @@ impl Sim {
             battery: None,
             update: None,
             install: None,
-            sleepers: HashMap::new(),
-            beat_from: HashMap::new(),
             relays,
             nodes,
             now: Instant::ZERO,
@@ -1423,15 +1286,8 @@ impl Sim {
             replies: Vec::new(),
             msg_tags: HashMap::new(),
             offered: HashMap::new(),
-            data_hops: HashMap::new(),
             msg_minutes: None,
-            queued_for: HashMap::new(),
-            holders_of: HashMap::new(),
-            holds: HashMap::new(),
-            offer_log: HashMap::new(),
-            own_refused_by: HashMap::new(),
-            demoted_at: HashMap::new(),
-            beat_watch: HashMap::new(),
+            holder_beats: Default::default(),
             script: Vec::new(),
             script_log: Vec::new(),
             cadence: sc.metrics.cadence_s.map(secs),
@@ -1451,21 +1307,14 @@ impl Sim {
             tracer: None,
             component: Vec::new(),
             series: None,
-            addressed: HashMap::new(),
-            air_kinds: HashMap::new(),
-            lost_how: HashMap::new(),
-            hb_grid: Vec::new(),
-            reach_of: HashMap::new(),
+            addressed: Default::default(),
+            tables: Default::default(),
             margin: None,
-            answer_of: HashMap::new(),
-            awaiting: HashMap::new(),
-            rx_data: None,
-            recorded: std::collections::HashSet::new(),
-            refused_at: HashMap::new(),
+            handovers: Default::default(),
             boots: Boots::new(n),
             next_tx: vec![TxMark::None; n],
             stored: vec![None; n],
-            store_writes: vec![[0; 2]; n],
+            store_writes: vec![StoreCount::default(); n],
             boot_rng: Stream::new(sc.seed, Purpose::BootText, 0),
         };
         sim.component = sim.components();
@@ -1781,57 +1630,13 @@ impl Sim {
         self.battery_setup(&sc.battery, sc.seed)
     }
 
-    /// The update's first relay, the time it is given the image, and the
-    /// series' first row (`update.rs`).
-    fn update_setup(
-        &mut self,
-        u: &crate::scenario::UpdateSpec,
-        sc: &Scenario,
-        placed: &[PlacedNode],
-    ) -> Result<(), String> {
-        let holder = match &u.holder {
-            Some(name) => resolve(placed, name)?,
-            None => {
-                let placed_relays: Vec<u32> = (0..self.n_relays)
-                    .filter(|&i| self.person_of[i as usize] == u32::MAX)
-                    .collect();
-                let n = self.xy.len() as f64;
-                let cx = self.xy.iter().map(|p| p.x).sum::<f64>() / n;
-                let cy = self.xy.iter().map(|p| p.y).sum::<f64>() / n;
-                let d = |i: &u32| {
-                    let p = self.xy[*i as usize];
-                    (p.x - cx).hypot(p.y - cy)
-                };
-                *placed_relays
-                    .iter()
-                    .min_by(|a, b| d(a).total_cmp(&d(b)))
-                    .ok_or("[update] needs a node placed as a relay")?
-            }
-        };
-        let at = Instant::ZERO + secs(u.at_s.unwrap_or_else(|| sc.settled_s()));
-        let mut run = crate::update::UpdateRun::new(u.image_bytes, holder, at, self.xy.len());
-        if let Some(name) = &u.forger {
-            let until = u
-                .forged_until_s
-                .map_or(Instant::MAX, |s| Instant::ZERO + secs(s));
-            run.forger = Some((resolve(placed, name)?, until));
-        }
-        self.update = Some(run);
-        self.push(at, Ev::Update);
-        self.push(at, Ev::UpdateSample);
-        if let Some(s) = u.next_at_s {
-            self.push(Instant::ZERO + secs(s), Ev::UpdateNext);
-        }
-        Ok(())
-    }
-
     /// The send queue's peaks over relays and the hop counts DATA arrived
     /// with (spec "Send queue"): the most, and the 99th and 99.9th
     /// percentiles.
     pub fn places_report(&self) -> String {
         let pct = |v: &[u16], p: f64| v[((v.len() as f64 * p) as usize).min(v.len() - 1)];
-        let mut places: Vec<u16> = self.queue_peaks.iter().map(|p| p.1).collect();
-        let mut regular: Vec<u16> = self.queue_peaks.iter().map(|p| p.0).collect();
+        let mut places: Vec<u16> = self.queue_peaks.iter().map(|p| p.places).collect();
+        let mut regular: Vec<u16> = self.queue_peaks.iter().map(|p| p.regular).collect();
         places.sort_unstable();
         regular.sort_unstable();
         let all: u64 = self.arrival_hops.iter().sum();
@@ -1863,62 +1668,6 @@ impl Sim {
         )
     }
 
-    /// The update's run, if the scenario has one.
-    pub fn update(&self) -> Option<&crate::update::UpdateRun> {
-        self.update.as_ref()
-    }
-
-    /// The update's series, and when each node came to hold the image.
-    pub fn update_csv(&self) -> Option<String> {
-        self.update.as_ref().map(|u| u.csv())
-    }
-
-    /// A row of the update's series.
-    fn update_sample(&mut self) {
-        let Some(mut u) = self.update.take() else {
-            return;
-        };
-        let nodes: Vec<(bool, bool)> = (0..self.relays.len())
-            .map(|i| {
-                let placed = (i as u32) < self.n_relays && self.person_of[i] == u32::MAX;
-                let alive = self.nodes[i].alive;
-                (alive && !self.relays[i].sleepy(), alive && placed)
-            })
-            .collect();
-        let busy = (0..self.relays.len())
-            .filter(|&i| nodes[i].0)
-            .map(|i| {
-                let r = &self.relays[i];
-                r.busy().fraction(r.home()) as f64 / bark_proto::tables::busy::ONE as f64
-            })
-            .collect();
-        let gathering: Vec<u8> = (0..self.relays.len())
-            .filter(|&i| self.nodes[i].alive)
-            .filter_map(|i| self.relays[i].gathering().map(|g| g.1))
-            .collect();
-        u.sample(self.now, &nodes, &gathering, busy);
-        self.update = Some(u);
-        self.sleepers.clear();
-        for i in 0..self.relays.len() {
-            let r = &self.relays[i];
-            if !self.nodes[i].alive || !r.sleepy() {
-                continue;
-            }
-            let Some(a) = r.anchor() else { continue };
-            if let Some(&ai) = self
-                .relay_index
-                .get(&key(a.id))
-                .or(self.sleepy_index.get(&key(a.id)))
-            {
-                self.sleepers.entry(ai).or_default().push(i as u32);
-            }
-        }
-        self.push(
-            self.now + Duration::from_micros(crate::update::SAMPLE_US),
-            Ev::UpdateSample,
-        );
-    }
-
     pub(crate) fn push(&mut self, t: Instant, ev: Ev) {
         self.seq += 1;
         self.heap.push(queue::order(t, self.seq), ev);
@@ -1942,6 +1691,11 @@ impl Sim {
     /// Number of relays (nodes `0..relays()` are relays, the rest leaves).
     pub fn relays(&self) -> u32 {
         self.n_relays
+    }
+
+    /// Whether node `i` was placed as a relay, not as one of the people.
+    pub(crate) fn placed_relay(&self, i: u32) -> bool {
+        i < self.n_relays && self.person_of[i as usize] == u32::MAX
     }
 
     /// The link table.
@@ -1991,7 +1745,7 @@ impl Sim {
             // and walks.
             self.gps_off(n);
             self.gps_flush(n);
-            self.end_relay_walk(n);
+            self.carried_walk_end(n);
         }
         if let Some(t) = &mut self.tracer {
             t.flush();
@@ -2113,7 +1867,7 @@ impl Sim {
                     self.metrics.sleep.walks[usize::from(walking)] += 1;
                 }
                 self.power_walk(node, walking);
-                self.note_relay_walk(node, walking);
+                self.carried_walk(node, walking);
                 self.push(until, Ev::Leg(w));
             }
             Ev::Group(k, dark) => {
@@ -2202,16 +1956,7 @@ impl Sim {
                 rec.1.map_or(-1, |d| (d.as_micros() / 1_000_000) as i64)
             ));
         }
-        let now = self.now;
-        let replies = &mut self.metrics.addressed.replies;
-        self.awaiting.retain(|_, (deadline, leaf)| {
-            // An ACK may still come late; give it a second.
-            let gone = now > *deadline + Duration::from_secs(1);
-            if gone {
-                replies[*leaf as usize][3] += 1;
-            }
-            !gone
-        });
+        self.addressed_unanswered();
         let mut a = crate::metrics::LeafSums::default();
         for (k, leaf) in self.relays[self.n_relays as usize..].iter().enumerate() {
             let n = self.n_relays as usize + k;
@@ -2283,73 +2028,26 @@ impl Sim {
                 }
             }
         }
-        if node < self.n_relays {
-            self.rx_data = match ev {
-                Event::Received { bytes, .. } => match bark_proto::wire::Packet::decode(bytes) {
-                    Ok(bark_proto::wire::Packet::Data(d)) if d.hops > 0 => {
-                        Some((node, d.msg_id().0, key(d.src_hop), d.hops))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            };
+        if let Event::Received { bytes, .. } = &ev {
+            self.update_received(node, bytes);
         }
-        if let (Some(u), Event::Received { bytes, .. }) = (self.update.as_mut(), &ev) {
-            use bark_proto::wire::{Packet, Update};
-            match Packet::decode(bytes) {
-                Ok(Packet::Update(Update::Piece {
-                    version,
-                    block,
-                    index,
-                    ..
-                })) => {
-                    let r = &self.relays[node as usize];
-                    let gathers =
-                        !r.sleepy() && r.gathering().is_some_and(|(i, _)| i.version == version);
-                    if gathers {
-                        u.gatherer_heard(node, block, index);
-                    }
-                    u.piece_heard(node, block, index)
-                }
-                Ok(Packet::Heartbeat(hb)) => {
-                    self.beat_from.insert(node, (key(hb.id), now));
-                    let forger = u.forger.map(|(f, _)| self.relays[f as usize].id());
-                    let section = bark_proto::wire::decode_section(bytes);
-                    if forger == Some(hb.id) && section.and_then(|s| s.image) == Some(u.forged) {
-                        u.heard_forged(node);
-                    }
-                }
-                _ => {}
-            }
-        }
+        self.handover_before(node, &ev);
         let clock = self.clocks[node as usize];
-        let rx = self.rx_data.filter(|r| r.0 == node);
-        if let Some((at, id, _, _)) = rx {
-            if !self.relays[at as usize].knows(MsgId(id)) && self.recorded.contains(&(at, id)) {
-                let l = &mut self.metrics.records_lost;
-                l.packets += 1;
-                l.tags.extend(self.msg_tags.get(&id));
-            }
-        }
         let c = &mut self.relays[node as usize];
         self.was_booting = c.booting();
         let received = matches!(ev, Event::Received { .. });
         c.handle(ev, clock.local(now), &mut |a| buf.push(a));
         let (regular, places) = c.queue_use();
         let peak = &mut self.queue_peaks[node as usize];
-        peak.0 = peak.0.max(regular as u16);
-        peak.1 = peak.1.max(places as u16);
+        peak.regular = peak.regular.max(regular as u16);
+        peak.places = peak.places.max(places as u16);
         let relays = &self.relays;
         self.boots
             .after_event(node, &relays[node as usize], now, received, |n| {
                 relays[n as usize].home()
             });
+        self.handover_after(node);
         let c = &mut self.relays[node as usize];
-        if let Some((at, id, _, _)) = rx {
-            if c.knows(MsgId(id)) {
-                self.recorded.insert((at, id));
-            }
-        }
         let wake = c.next_wakeup().map(|t| clock.true_time(t));
         if node >= self.n_relays || c.sleepy() {
             let anchor = c.anchor().map(|a| a.position);
@@ -2550,158 +2248,6 @@ impl Sim {
         &self.anchorless
     }
 
-    /// Per relay, how many running relays keep it in their neighbour
-    /// tables, and how many with margin.
-    pub(crate) fn known_by(&self) -> Vec<(u32, u32)> {
-        use bark_proto::tables::neighbours::Neighbours;
-        let mut known = vec![(0u32, 0u32); self.n_relays as usize];
-        for (i, r) in self.relays[..self.n_relays as usize].iter().enumerate() {
-            if !self.nodes[i].alive || r.booting() {
-                continue;
-            }
-            let floor = r.busy().noise_floor_dbm(r.home());
-            for e in r.neighbours().filter(|e| e.relay()) {
-                if let Some(&j) = self.relay_index.get(&key(e.id)) {
-                    let k = &mut known[j as usize];
-                    k.0 += 1;
-                    k.1 += u32::from(Neighbours::has_margin(e, floor));
-                }
-            }
-        }
-        known
-    }
-
-    /// Whether relays are placed among the people, so that the dense
-    /// instruments are kept.
-    fn dense(&self) -> bool {
-        self.people.first().is_some_and(|&i| i < self.n_relays)
-    }
-
-    /// Once a minute after the settle time, with relays among the people:
-    /// the running relays no running relay keeps (`metrics::Dense`).
-    fn sample_dense(&mut self) {
-        if !self.dense() || self.now < self.settle {
-            return;
-        }
-        let known = self.known_by();
-        let (mut none, mut faint) = ([0u32; 2], [0u32; 2]);
-        for (i, k) in known.iter().enumerate() {
-            if !self.nodes[i].alive || self.relays[i].booting() {
-                continue;
-            }
-            let person = usize::from(self.person_of[i] != u32::MAX);
-            none[person] += u32::from(k.0 == 0);
-            faint[person] += u32::from(k.1 == 0);
-        }
-        let t = self.now.as_micros() / 1_000_000;
-        let d = self
-            .metrics
-            .research
-            .dense
-            .get_or_insert_with(Default::default);
-        d.unknown.push((t, none, faint));
-    }
-
-    /// Sample what the neighbour tables hold (`metrics::Tables`), for the
-    /// JSON summary.
-    pub fn tables_on(&mut self) {
-        self.metrics.research.tables = Some(crate::metrics::Tables {
-            relays: vec![(0, 0, 0); self.n_relays as usize],
-            ..Default::default()
-        });
-    }
-
-    /// Once a minute after the settle time, with `tables_on`: what the
-    /// running relays' tables hold; every five minutes, whether each
-    /// sleepy node's anchor is the strongest relay it hears.
-    fn sample_tables(&mut self) {
-        use bark_proto::tables::neighbours::Neighbours;
-        if self.metrics.research.tables.is_none() || self.now < self.settle {
-            return;
-        }
-        let mut t = self.metrics.research.tables.take().expect("on");
-        for i in 0..self.n_relays as usize {
-            let r = &self.relays[i];
-            if !self.nodes[i].alive || r.booting() {
-                continue;
-            }
-            let floor = r.busy().noise_floor_dbm(r.home());
-            let e = &mut t.relays[i];
-            e.0 += 1;
-            for n in r.neighbours() {
-                let margin = Neighbours::has_margin(n, floor);
-                e.1 += 1;
-                e.2 += u64::from(margin && n.relay());
-                let s = sector(n.local);
-                t.sectors[0][s] += 1;
-                t.sectors[1][s] += u64::from(margin);
-                if margin && n.relay() {
-                    t.margin_by_distance[reach_bin(n.local)] += 1;
-                }
-            }
-        }
-        if (self.now.as_micros() / SERIES_EVERY_US).is_multiple_of(5) {
-            self.sample_anchor_fit(&mut t);
-        }
-        self.metrics.research.tables = Some(t);
-    }
-
-    /// See `sample_tables`.
-    fn sample_anchor_fit(&self, t: &mut crate::metrics::Tables) {
-        let n = self.n_relays as usize;
-        if self.relays.len() == n {
-            return;
-        }
-        // Per sleepy node, the strongest running relay it hears and its
-        // anchor's link, dBm.
-        let mut best = vec![(f32::NEG_INFINITY, u32::MAX); self.relays.len() - n];
-        let mut anchor = vec![f32::NEG_INFINITY; self.relays.len() - n];
-        let anchors: Vec<Option<u32>> = (n..self.relays.len())
-            .map(|s| self.attached_relay(s as u32))
-            .collect();
-        for a in 0..n {
-            if !self.nodes[a].alive || self.relays[a].booting() {
-                continue;
-            }
-            for l in self.links.row(a as u32) {
-                let Some(k) = (l.rx as usize).checked_sub(n) else {
-                    continue;
-                };
-                if (l.base_dbm as f64) < self.sens_dbm {
-                    continue;
-                }
-                if l.base_dbm > best[k].0 {
-                    best[k] = (l.base_dbm, a as u32);
-                }
-                if anchors[k] == Some(a as u32) {
-                    anchor[k] = l.base_dbm;
-                }
-            }
-        }
-        for k in 0..best.len() {
-            let s = n + k;
-            let walks = self.walks.as_ref().and_then(|w| w.walker(s as u32));
-            if anchors[k].is_none()
-                || !self.nodes[s].alive
-                || !self.nodes[s].present
-                || walks.is_some()
-            {
-                continue;
-            }
-            let (dbm, b) = best[k];
-            if b == u32::MAX {
-                continue;
-            }
-            let id = self.relays[b as usize].id();
-            let held = self.relays[s].neighbours().any(|e| e.id == id);
-            t.anchors.0 += 1;
-            t.anchors.1 += u64::from(anchors[k] == Some(b));
-            t.anchors.2 += u64::from(held);
-            let gap = (dbm - anchor[k]).max(0.0);
-            t.anchor_gap_db[(gap as usize).min(30)] += 1;
-        }
-    }
-
     /// Once a minute after the settle time: sleepy nodes whose anchor would
     /// not hear their beat, on another channel or not in its heard table.
     fn sample_anchors(&mut self) {
@@ -2757,46 +2303,6 @@ impl Sim {
         }
     }
 
-    /// Whether relay `a`, an anchor of the sleepy nodes `own`, opens the
-    /// slot after its heartbeat on its home channel, and if not, why, by
-    /// the simulator's truth against its table.
-    fn slot_opens(&self, a: u32, own: &[u32], u: &crate::update::UpdateRun) -> &'static str {
-        let r = &self.relays[a as usize];
-        let image = u.image;
-        let whole = r.image().is_some();
-        let holds = |b: u8| whole || u.has.contains(&(a, b));
-        if !whole && !(0..image.blocks).any(holds) {
-            return "anchor holds no block";
-        }
-        let me = r.id();
-        let lacking = own.iter().any(|&s| {
-            let c = &self.relays[s as usize];
-            self.nodes[s as usize].alive
-                && c.anchor().is_some_and(|x| x.id == me)
-                && c.gathering().is_some()
-                && (0..image.blocks).any(|b| holds(b) && !u.has.contains(&(s, b)))
-        });
-        if !lacking {
-            return "no sleepy node of its own lacks a block it holds";
-        }
-        let local = self.clocks[a as usize].local(self.now);
-        let table = r.neighbour_table();
-        let table_says = table
-            .live(local)
-            .map(|(_, n)| n)
-            .filter(|n| n.sleepy && n.home == r.home())
-            .filter_map(|n| table.section(n))
-            .filter(|x| x.gathers(image.version))
-            .any(|x| {
-                (x.complete..image.blocks)
-                    .any(|b| holds(b) && (b > x.complete || x.have < image.pieces(b)))
-            });
-        if !table_says {
-            return "its table's sleepy sections show nothing lacking";
-        }
-        "opens"
-    }
-
     /// A node hears the beat of a sleepy node that came back into reach,
     /// and is its anchor, or any node if it has none: the network knows the
     /// sleepy node is back.
@@ -2811,13 +2317,7 @@ impl Sim {
         else {
             return;
         };
-        if let Some(tags) = self.queued_for.get_mut(&(receiver, key(hb.id))) {
-            let origins = &mut self.origins;
-            tags.retain(|&t| origins[t as usize].fate == Fate::Unaccounted);
-            for &t in tags.iter() {
-                origins[t as usize].holder_beats += 1;
-            }
-        }
+        self.holder_heard(receiver, hb.id);
         let Some(&leaf) = self.leaf_nodes.get(&hb.id.0) else {
             return;
         };
@@ -2863,742 +2363,72 @@ impl Sim {
             Action::Listen(c) => self.listen(node, c),
             Action::Lbt(c) => self.check(node, ExKind::Lbt, c, scripted),
             Action::Rssi(c) => self.check(node, ExKind::Rssi, c, scripted),
-            Action::Offered(image) => {
-                if let Some(u) = self.update.as_mut() {
-                    u.offered(node, image, self.now);
-                }
-            }
-            Action::Unproven(version) => {
-                if let Some(u) = self.update.as_mut() {
-                    u.unproven(node, version, self.now);
-                }
-            }
-            Action::StorePiece(p) => {
-                if let Some(u) = self.update.as_mut() {
-                    if self.relays[node as usize].sleepy() {
-                        u.stored_sleepy += 1;
-                    }
-                    u.piece(node, p, self.now);
-                }
-            }
-            // The piece's bytes are the driver's; here there are none.
-            Action::Transmit(mut f) | Action::Serve(mut f) => {
-                if let Some(u) = self.update.as_ref() {
-                    u.forge(node, &mut f, self.now);
-                }
-                let mark = std::mem::take(&mut self.next_tx[node as usize]);
-                let air = time_on_air(f.len, f.preamble_symbols).as_micros();
-                let home_beat = f.channel == self.relays[node as usize].home()
-                    && matches!(
-                        bark_proto::wire::Packet::decode(f.payload()),
-                        Ok(bark_proto::wire::Packet::Heartbeat(_))
-                    );
-                let open = match (home_beat, self.update.as_ref(), self.sleepers.get(&node)) {
-                    (true, Some(u), Some(own)) => Some(self.slot_opens(node, own, u)),
-                    _ => None,
-                };
-                if let Some(u) = self.update.as_mut() {
-                    use bark_proto::wire::{Packet, Update, HEARTBEAT_LEN};
-                    let home = self.relays[node as usize].home();
-                    let decoded = Packet::decode(f.payload());
-                    if matches!(decoded, Ok(Packet::Heartbeat(_))) && f.channel == home {
-                        u.home_beat(node, self.now);
-                        if let Some(why) = open {
-                            u.slot_open_fate(why, self.now);
-                        }
-                    }
-                    match decoded {
-                        // A heartbeat's section: what it adds to the frame.
-                        Ok(Packet::Heartbeat(_)) if usize::from(f.len) > HEARTBEAT_LEN => {
-                            let bare =
-                                time_on_air(HEARTBEAT_LEN as u8, f.preamble_symbols).as_micros();
-                            u.aired(Some(0), air - bare);
-                            u.aired(None, bare);
-                        }
-                        Ok(Packet::Update(Update::Piece { block, index, .. })) => {
-                            u.aired(Some(2), air);
-                            let image = u.image;
-                            let table = self.relays[node as usize].neighbour_table();
-                            let (relays, sleepy) = (&self.relay_index, &self.sleepy_index);
-                            let me = self.relays[node as usize].id();
-                            let cores = &self.relays;
-                            // A sleepy node listens only for its anchor's
-                            // piece right after the anchor's slot heartbeat.
-                            let slot = u.after_home_beat(node, self.now);
-                            let targets = table
-                                .live(self.clocks[node as usize].local(self.now))
-                                .map(|(_, n)| n)
-                                .filter(|n| n.home == f.channel)
-                                .filter(|n| {
-                                    table.section(n).is_some_and(|s| {
-                                        s.gathers(image.version)
-                                            && (s.complete < block
-                                                || s.complete == block
-                                                    && s.have < image.pieces(block))
-                                    })
-                                })
-                                .filter_map(|n| {
-                                    let i = relays.get(&key(n.id)).or(sleepy.get(&key(n.id)));
-                                    i.map(|&i| (i, n.sleepy))
-                                })
-                                .filter(|&(i, sleepy)| {
-                                    !sleepy
-                                        || slot
-                                            && cores[i as usize]
-                                                .anchor()
-                                                .is_some_and(|a| a.id == me)
-                                })
-                                .collect::<Vec<_>>();
-                            let foreign = f.channel != home;
-                            u.piece_gap(node, f.channel.index(), self.now);
-                            u.piece_sent(node, foreign, self.now, block, index, targets);
-                            if slot && !foreign {
-                                let me_key = key(me);
-                                for &s in self.sleepers.get(&node).into_iter().flatten() {
-                                    let c = &self.relays[s as usize];
-                                    let st = &self.nodes[s as usize];
-                                    if c.anchor().is_none_or(|a| a.id != me) {
-                                        u.slot_fate(s, block, index, Some("anchor changed"));
-                                        continue;
-                                    }
-                                    let fate = if !st.alive || !st.present {
-                                        Some("absent")
-                                    } else if let Some((g, first)) = c.gathering() {
-                                        let local = self.clocks[s as usize].local(self.now);
-                                        let t = c.neighbour_table();
-                                        let anchor_says = t
-                                            .live(local)
-                                            .find(|(_, n)| n.id == me)
-                                            .and_then(|(_, n)| t.section(n))
-                                            .filter(|x| {
-                                                x.image.is_some_and(|i| i.version == g.version)
-                                            })
-                                            .map_or(0, |x| x.complete);
-                                        let heard_beat =
-                                            self.beat_from.get(&s).is_some_and(|&(k, t)| {
-                                                k == me_key
-                                                    && self.now.since(t).as_micros() < 60_000
-                                            });
-                                        if u.has.contains(&(s, block)) {
-                                            Some("has the block")
-                                        } else if !heard_beat {
-                                            Some("missed the slot heartbeat")
-                                        } else if anchor_says <= first {
-                                            Some("anchor's section says it holds nothing more")
-                                        } else {
-                                            None
-                                        }
-                                    } else if u.holds_at[s as usize].is_some() {
-                                        Some("holds the image")
-                                    } else {
-                                        Some("not gathering")
-                                    };
-                                    u.slot_fate(s, block, index, fate);
-                                }
-                            }
-                        }
-                        _ => u.aired(None, air),
-                    }
-                }
-                self.metrics.boot_airtime.add(
-                    self.now,
-                    mark == TxMark::Burst,
-                    mark == TxMark::Answer,
-                    air,
-                );
-                self.note_direct(node, &f);
-                self.note_sent_again(node, &f);
-                self.note_carried_beat(&f);
-                // A heartbeat for a change is no beat to take a fix at.
-                match self.changing.remove(&node) {
-                    Some(flip) => self.note_changed(&f, flip),
-                    None => self.note_beat_fix(node, &f, scripted),
-                }
-                self.begin_excursion(node, ExKind::Transmit, f.channel, Some(f), scripted)
-            }
+            Action::Offered(_)
+            | Action::Unproven(_)
+            | Action::StorePiece(_)
+            | Action::Trace(Trace::SlotPiece(_)) => self.update_action(node, a),
+            Action::Transmit(f) | Action::Serve(f) => self.transmit(node, f, scripted),
             Action::App(e) => self.app_event(node, e),
             Action::Store(s) => {
                 self.stored[node as usize] = Some(s);
                 let w = &mut self.store_writes[node as usize];
-                w[0] += 1;
-                w[1] += u32::from(self.now >= self.settle);
-            }
-            Action::Trace(Trace::SlotPiece(o)) => {
-                if let Some(u) = self.update.as_mut() {
-                    u.slot_piece(o);
-                }
+                w.all += 1;
+                w.settled += u32::from(self.now >= self.settle);
             }
             Action::Trace(Trace::Dropped { msg_id, reason }) => {
                 self.power_trace(node, &Trace::Dropped { msg_id, reason });
                 self.message_dropped(node, msg_id, reason)
             }
-            Action::Trace(t) => {
-                self.power_trace(node, &t);
-                if let Trace::Role { sleepy } = t {
-                    self.battery_turn(sleepy);
-                }
-                // The core's instant is on its own clock.
-                let busy_wait = match t {
-                    Trace::ChannelBusy { until, .. } => self.clocks[node as usize]
-                        .true_time(until)
-                        .since(self.now)
-                        .as_micros(),
-                    _ => 0,
-                };
-                let c = &mut self.metrics.nodes[node as usize].core;
-                match t {
-                    Trace::HomeChannelMoved { from, to } if !self.was_booting => {
-                        c.home_moves += 1;
-                        if node < self.n_relays {
-                            let t = self.now.as_micros() as f64 / 1e6;
-                            let m = (t, node, from.index(), to.index());
-                            self.metrics.research.moves.push(m);
-                        }
-                    }
-                    Trace::HeartbeatSkipped { channel } => {
-                        c.heartbeats_skipped += 1;
-                        let r = &self.relays[node as usize];
-                        if r.sleepy() && r.anchor().is_some() && channel == r.home() {
-                            let id = key(r.id());
-                            for h in self.holders_waiting(id) {
-                                self.watch_note(h, id, beat_fate::SKIPPED, false);
-                            }
-                        }
-                    }
-                    Trace::HeartbeatDeferred { .. } => c.heartbeats_deferred += 1,
-                    Trace::Refused { msg_id, reason } => {
-                        c.refused.add(reason);
-                        self.note_refusal(node, msg_id, reason);
-                    }
-                    Trace::TurnedAway { msg_id, by } => {
-                        self.note_offer(node, msg_id, by);
-                        self.note_own_refusal(node, msg_id, by);
-                        let c = &mut self.metrics.nodes[node as usize].core;
-                        c.turned_away += 1;
-                        if let Some(held) = self.hold_ended(node, msg_id) {
-                            self.metrics.holds.ended_refused += 1;
-                            self.metrics.holds.held_us.push(held);
-                        }
-                    }
-                    Trace::HandOverDeferred { .. } => c.handovers_deferred += 1,
-                    Trace::ChannelBusy { .. } => {
-                        c.lbt_gave_up += 1;
-                        c.busy_wait_us += busy_wait;
-                    }
-                    Trace::Demoted { neighbour } => {
-                        c.demoted += 1;
-                        let now = self.now;
-                        if let std::collections::hash_map::Entry::Vacant(e) =
-                            self.demoted_at.entry((node, key(neighbour)))
-                        {
-                            e.insert(now);
-                            self.metrics.pressure.demotions += 1;
-                        }
-                    }
-                    Trace::Answered { neighbour } => {
-                        if let Some(t) = self.demoted_at.remove(&(node, key(neighbour))) {
-                            let s = self.now.since(t).as_micros() as f64 / 1e6;
-                            self.metrics.pressure.answered_after(s);
-                        }
-                    }
-                    Trace::InLine {
-                        wait,
-                        service,
-                        at_cap,
-                        ..
-                    } => self.metrics.pressure.in_line(wait, service, at_cap),
-                    Trace::WayWait { wait, refused } if self.now >= self.settle => {
-                        self.metrics.pressure.way_wait(wait, refused)
-                    }
-                    Trace::Silent { owed, .. } => {
-                        let p = &mut self.metrics.pressure;
-                        if owed {
-                            p.silent_owed += 1;
-                        } else {
-                            p.silent_budget += 1;
-                        }
-                    }
-                    Trace::MoveSign {
-                        surprises,
-                        sum_milli,
-                        moved,
-                    } if self.now >= self.settle => {
-                        let walking = self
-                            .walks
-                            .as_ref()
-                            .and_then(|w| w.walker(node))
-                            .is_some_and(|k| k.walking);
-                        let m = &mut self.carried_metrics().move_sign[usize::from(walking)];
-                        m[0] += 1.0;
-                        m[1] += f64::from(u8::from(moved));
-                        m[2] += sum_milli as f64 / 1000.0 / f64::from(surprises.max(1));
-                    }
-                    Trace::AnchorCheck => {
-                        c.anchor_checks += 1;
-                        if self.fixing && self.now >= self.settle {
-                            self.metrics.sleep.fix_checks += 1;
-                        }
-                    }
-                    Trace::AnchorWatch {
-                        heard,
-                        offset_us,
-                        listened,
-                    } if self.now >= self.settle => {
-                        let s = &mut self.metrics.sleep;
-                        s.watches[usize::from(!heard)] += 1;
-                        s.watch_listen_us += listened.as_micros();
-                        if heard && offset_us < 0 {
-                            s.watch_early += 1;
-                        }
-                        if heard {
-                            s.watch_earliest_us = s.watch_earliest_us.min(offset_us as i64);
-                        }
-                    }
-                    Trace::Delivered { msg_id, by, .. } => {
-                        c.delivered += 1;
-                        self.first_try.remove(&(node, msg_id.0));
-                        self.note_delivered_by(msg_id, by);
-                    }
-                    Trace::FarFix => self.note_far_fix(node),
-                    Trace::Changed => {
-                        let flip = self.carried_flip.remove(&node);
-                        self.changing.insert(node, flip);
-                    }
-                    Trace::Burst => self.next_tx[node as usize] = TxMark::Burst,
-                    Trace::Answer => self.next_tx[node as usize] = TxMark::Answer,
-                    Trace::Role { sleepy: false } if self.relays[node as usize].carried() => {
-                        let after = self.now >= self.settle;
-                        self.carried_metrics().plugged_in += u64::from(after);
-                    }
-                    Trace::Role { sleepy: false } if self.relays[node as usize].placed() => {
-                        let at = self.relays[node as usize].config().position;
-                        let c = self.carried_metrics();
-                        c.plugged_fixed.push(None);
-                        let k = c.plugged_fixed.len() - 1;
-                        self.plugged.insert(node, (self.now, at, k));
-                    }
-                    Trace::Carried { carried } => self.note_carried(node, carried),
-                    Trace::AnchorCarried => {
-                        let after = self.now >= self.settle;
-                        self.carried_metrics().anchors_left += u64::from(after);
-                    }
-                    Trace::Queued { msg_id, node: to } => {
-                        if self.relays[node as usize].carried() {
-                            self.carried_metrics().queued += 1;
-                        }
-                        if let Some(&tag) = self.msg_tags.get(&msg_id.0) {
-                            let r = &self.relays[node as usize];
-                            let dst = self.origins[tag as usize].dst as usize;
-                            let w = &mut self.origins[tag as usize].watch;
-                            w.queued_at = Some(self.now);
-                            w.known = r.heard_nodes().get(to).is_some();
-                            w.anchored = self.relays[dst].anchor().is_some_and(|a| a.id == r.id());
-                            let row = self.links.row(dst as u32);
-                            let to_relay = row.iter().filter(|l| l.rx < self.n_relays);
-                            w.best_dbm = to_relay.map(|l| l.base_dbm).reduce(f32::max);
-                            w.holder_dbm = row.iter().find(|l| l.rx == node).map(|l| l.base_dbm);
-                            let holders = self.holders_of.entry(key(to)).or_default();
-                            if !holders.contains(&node) {
-                                holders.push(node);
-                            }
-                            self.origins[tag as usize].holder = Some(node);
-                            self.queued_for
-                                .entry((node, key(to)))
-                                .or_default()
-                                .push(tag);
-                        }
-                    }
-                    Trace::DeliveryWaits {
-                        msg_id,
-                        node: to,
-                        tried,
-                    } => {
-                        if tried {
-                            c.deliveries_failed += 1;
-                        } else {
-                            c.deliveries_late += 1;
-                        }
-                        self.delivery_waits(node, msg_id.0, key(to), tried)
-                    }
-                    Trace::Forwarded {
-                        msg_id,
-                        to,
-                        hops,
-                        attempts,
-                    } => {
-                        self.note_offer(node, msg_id, to);
-                        let c = &mut self.metrics.nodes[node as usize].core;
-                        c.handed_over += 1;
-                        c.originated_out += u64::from(hops == 1);
-                        self.metrics.taken_at_attempt(attempts);
-                        self.hold_taken(node, msg_id, to);
-                    }
-                    Trace::HandOverFailed {
-                        msg_id,
-                        to,
-                        moves_on,
-                    } => {
-                        self.note_offer(node, msg_id, to);
-                        let c = &mut self.metrics.nodes[node as usize].core;
-                        c.failed += 1;
-                        let had = self
-                            .relay_index
-                            .get(&key(to))
-                            .is_some_and(|&r| self.relays[r as usize].knows(msg_id));
-                        c.failed_taken += u64::from(had);
-                        c.moved_on += u64::from(moves_on);
-                        c.moved_on_taken += u64::from(moves_on && had);
-                        let now = self.now;
-                        let hold = self
-                            .holds
-                            .entry((node, msg_id.0))
-                            .and_modify(|h| {
-                                if h.to != key(to) {
-                                    *h = Hold::new(key(to), now);
-                                }
-                            })
-                            .or_insert_with(|| Hold::new(key(to), now));
-                        hold.failures = hold.failures.saturating_add(1);
-                        if moves_on {
-                            let failures = hold.failures;
-                            let held = now.since(hold.since);
-                            self.metrics.holds.moved_on_after(failures);
-                            self.metrics.holds.held_us.push(held.as_micros());
-                            self.holds.remove(&(node, msg_id.0));
-                        }
-                    }
-                    Trace::Copy {
-                        returned,
-                        merged,
-                        seen,
-                        ..
-                    } => {
-                        if returned {
-                            c.returns_in += 1;
-                        } else {
-                            c.copies += 1;
-                            c.merged += u64::from(merged);
-                            c.seen += u64::from(seen);
-                        }
-                    }
-                    Trace::Seen { msg_id, by } => {
-                        self.note_offer(node, msg_id, by);
-                        let c = &mut self.metrics.nodes[node as usize].core;
-                        c.seen_acted += 1;
-                        if let Some(held) = self.hold_ended(node, msg_id) {
-                            self.metrics.holds.ended_seen += 1;
-                            self.metrics.holds.held_us.push(held);
-                        }
-                    }
-                    Trace::ReturnedToParent {
-                        msg_id,
-                        to,
-                        attempts,
-                    } => {
-                        self.note_offer(node, msg_id, to);
-                        let c = &mut self.metrics.nodes[node as usize].core;
-                        c.handed_over += 1;
-                        c.returned += 1;
-                        self.metrics.taken_at_attempt(attempts);
-                        self.hold_taken(node, msg_id, to);
-                    }
-                    _ => {}
-                }
-            }
+            Action::Trace(t) => self.trace(node, t),
         }
         if let (Some(a), Some(t)) = (traced, &mut self.tracer) {
             t.action(self.now, node, &a, &self.msg_tags);
         }
     }
 
-    /// A hand-over of `msg_id` from `node` to `to` ended, taken, refused,
-    /// failed or seen: counted per message, and a flap noted when `node`
-    /// offers it to a neighbour, then another, then the first again.
-    fn note_offer(&mut self, node: u32, msg_id: MsgId, to: NodeId) {
-        let Some(&tag) = self.msg_tags.get(&msg_id.0) else {
-            return;
-        };
-        let to = key(to);
-        if let Some(by) = self.own_refused_by.remove(&(node, tag)) {
-            self.metrics.pressure.own_round += u64::from(by != to);
+    /// `node` sends `f`: what is counted of it, then the frame goes out.
+    fn transmit(&mut self, node: u32, mut f: Frame, scripted: bool) {
+        // The piece's bytes are the driver's; here there are none.
+        if let Some(u) = self.update.as_ref() {
+            u.forge(node, &mut f, self.now);
         }
-        let log = self.offer_log.entry(tag).or_default();
-        let mut here = log.to.iter().rev().filter(|(n, _)| *n == node);
-        if let Some(&(_, last)) = here.next() {
-            if last != to && here.any(|&(_, k)| k == to) {
-                log.flaps += 1;
-                self.metrics.pressure.flaps += 1;
-            }
-        }
-        log.to.push((node, to));
-    }
-
-    /// `by` refused `msg_id` at `node`: counted if it is the own message
-    /// of a relay origin, not yet past its first hop, whose next
-    /// hand-over [`Sim::note_offer`] then compares with `by`.
-    fn note_own_refusal(&mut self, node: u32, msg_id: MsgId, by: NodeId) {
-        let Some(&tag) = self.msg_tags.get(&msg_id.0) else {
-            return;
-        };
-        let o = &self.origins[tag as usize];
-        if o.src != node || o.entered_at.is_some() || self.relays[node as usize].sleepy() {
-            return;
-        }
-        self.metrics.pressure.own_refused += 1;
-        self.own_refused_by.insert((node, tag), key(by));
-    }
-
-    /// `node` handed `msg_id` to `to`: if it had held the message on `to`
-    /// after failures, the hand-over was taken at an offer again, and the
-    /// hold ends; held on another neighbour, that hold is over without an
-    /// outcome to count.
-    fn hold_taken(&mut self, node: u32, msg_id: MsgId, to: NodeId) {
-        let hold = self.holds.remove(&(node, msg_id.0));
-        let failures = hold.filter(|h| h.to == key(to)).map_or(0, |h| h.failures);
-        self.metrics.holds.taken_after(failures);
-        if let Some(h) = hold.filter(|h| h.to == key(to)) {
-            self.metrics
-                .holds
-                .held_us
-                .push(self.now.since(h.since).as_micros());
-        }
-    }
-
-    /// `node`'s hold of `msg_id`, if any, ended by something other than a
-    /// hand-over: how long it lasted, microseconds.
-    fn hold_ended(&mut self, node: u32, msg_id: MsgId) -> Option<u64> {
-        let h = self.holds.remove(&(node, msg_id.0))?;
-        Some(self.now.since(h.since).as_micros())
-    }
-
-    /// What the nodes that move do, from the first event that shows one.
-    fn carried_metrics(&mut self) -> &mut crate::metrics::Carried {
+        self.update_transmit(node, &f);
+        let mark = std::mem::take(&mut self.next_tx[node as usize]);
+        let air = time_on_air(f.len, f.preamble_symbols).as_micros();
         self.metrics
-            .research
-            .carried
-            .get_or_insert_with(Default::default)
-    }
-
-    /// `relay` had the first far fix of a run: what it holds for its
-    /// sleepy nodes is flushed.
-    fn note_far_fix(&mut self, relay: u32) {
-        let walks = self.walks.as_ref().is_some_and(|w| w.walks(relay));
-        let t = self.now;
-        let again = self.far_at.get(&relay).is_some_and(|&(_, a)| a);
-        self.far_at.insert(relay, (t, again));
-        let s = t.as_micros() as f64 / 1e6;
-        self.carried_metrics().far_fixes.push((s, relay, walks));
-        if t >= self.settle {
-            let held: Vec<u32> = self.relays[relay as usize]
-                .delivery_queue()
-                .map(|(id, _)| id.0)
-                .collect();
-            for id in held {
-                self.held_far.entry(id).or_insert((again, None));
-            }
-        }
-    }
-
-    /// A walker set off or stopped: a walk of a fixed relay, begun after
-    /// the settle time, is followed until it ends.
-    fn note_relay_walk(&mut self, node: u32, walking: bool) {
-        if !walking {
-            self.end_relay_walk(node);
-            return;
-        }
-        let r = &self.relays[node as usize];
-        if self.now >= self.settle && self.nodes[node as usize].alive && !r.sleepy() && !r.carried()
-        {
-            let battery = !self.external[node as usize];
-            self.relay_walks.insert(node, (self.now, battery, None));
-        }
-    }
-
-    /// The walk of `node` under way, if followed, ends now.
-    pub(crate) fn end_relay_walk(&mut self, node: u32) {
-        if let Some((from, battery, carried)) = self.relay_walks.remove(&node) {
-            let s = |t: Instant| t.since(from).as_micros() as f64 / 1e6;
-            let walk = (node, s(self.now), carried.map(s), battery);
-            self.carried_metrics().relay_walks.push(walk);
-        }
-    }
-
-    /// `relay` turned carried, or fixed again.
-    fn note_carried(&mut self, relay: u32, carried: bool) {
-        if let Some((_, _, at)) = self.relay_walks.get_mut(&relay) {
-            if carried {
-                at.get_or_insert(self.now);
-            }
-        }
-        let walks = self.walks.as_ref().is_some_and(|w| w.walks(relay));
-        let sleepy = self.relays[relay as usize].sleepy();
-        if sleepy && !self.carried_flip.remove(&relay) {
-            self.carried_flip.insert(relay);
-        }
-        let t = self.now;
-        let s = t.as_micros() as f64 / 1e6;
-        if carried {
-            let since = self.far_at.get(&relay).map_or(t, |&(f, _)| f);
-            let run = t.since(since).as_micros() as f64 / 1e6;
-            self.carried_metrics()
-                .carried
-                .push((s, relay, walks, run, sleepy));
+            .boot_airtime
+            .add(self.now, mark == TxMark::Burst, mark == TxMark::Answer, air);
+        self.carried_transmit(node, &f);
+        self.handover_transmit(node, &f);
+        if self.changing.remove(&node) {
+            self.power_changed(&f);
+            self.carried_changed(node, &f);
         } else {
-            self.far_at.entry(relay).or_insert((t, true)).1 = true;
-            self.carried_metrics().fixed.push((s, relay, walks, sleepy));
+            self.note_beat_fix(node, &f, scripted);
         }
+        self.begin_excursion(node, ExKind::Transmit, f.channel, Some(f), scripted)
     }
 
-    /// A heartbeat for a change goes out: counted with the power's, and,
-    /// if it says a sleepy node's carried flag, on its own.
-    fn note_changed(&mut self, f: &Frame, flip: bool) {
-        self.power_changed(f);
-        if flip && self.now >= self.settle {
-            let air = time_on_air(f.len, f.preamble_symbols).as_micros() as f64 / 1e6;
-            let c = &mut self.carried_metrics().sleepy_changed;
-            c.0 += 1;
-            c.1 += air;
-        }
-    }
-
-    /// A heartbeat flagged sleepy and carried after the settle time,
-    /// counted.
-    fn note_carried_beat(&mut self, f: &Frame) {
-        if self.now < self.settle {
-            return;
-        }
-        if let Ok(bark_proto::wire::Packet::Heartbeat(hb)) =
-            bark_proto::wire::Packet::decode(f.payload())
-        {
-            if hb.sleepy && hb.carried {
-                let air = time_on_air(f.len, f.preamble_symbols).as_micros() as f64 / 1e6;
-                let c = &mut self.carried_metrics().beats;
-                c.0 += 1;
-                c.1 += air;
+    /// A trace of `node`'s core: what it changes here, then what is
+    /// counted of it.
+    fn trace(&mut self, node: u32, t: Trace) {
+        match t {
+            Trace::Changed => {
+                self.changing.insert(node);
             }
+            Trace::Burst => self.next_tx[node as usize] = TxMark::Burst,
+            Trace::Answer => self.next_tx[node as usize] = TxMark::Answer,
+            _ => {}
         }
-    }
-
-    /// A holder delivered `msg_id` to its node `by` that way.
-    fn note_delivered_by(&mut self, msg_id: MsgId, by: bark_proto::Delivery) {
-        use bark_proto::Delivery as D;
-        let (i, fate) = match by {
-            D::Window => (0, 1),
-            D::Long => (1, 1),
-            D::Flush => (2, 0),
-            D::Relay => (3, 2),
-        };
-        if self.now >= self.settle {
-            self.delivered_by[i] += 1;
+        self.power_trace(node, &t);
+        self.carried_trace(node, &t);
+        self.handover_trace(node, &t);
+        self.holders_trace(node, &t);
+        self.sleepy_data_trace(node, &t);
+        if let Trace::Role { sleepy } = t {
+            self.battery_turn(sleepy);
         }
-        if matches!(by, D::Flush | D::Relay) {
-            self.carried_metrics();
-        }
-        if let Some((_, f)) = self.held_far.get_mut(&msg_id.0) {
-            f.get_or_insert(fate);
-        }
-    }
-
-    /// `node` sends `f`: if it is the flush or a delivery to a node as a
-    /// relay, count its airtime.
-    fn note_direct(&mut self, node: u32, f: &Frame) {
-        if !self.relays[node as usize].sending_direct() {
-            return;
-        }
-        let after = self.now >= self.settle;
-        let air = time_on_air(f.len, f.preamble_symbols).as_micros() as f64 / 1e6;
-        let c = self.carried_metrics();
-        let to = if f.preamble_symbols >= LONG_PREAMBLE_SYMBOLS {
-            &mut c.flush
-        } else {
-            &mut c.to_relay
-        };
-        if after {
-            to.0 += 1;
-            to.1 += air;
-        }
-    }
-
-    /// The fates of the texts held at a first far fix
-    /// (`metrics::Carried::held`).
-    pub(crate) fn held_fates(&self) -> [[u64; 5]; 2] {
-        let mut held = [[0; 5]; 2];
-        for (id, &(again, fate)) in &self.held_far {
-            let got = self
-                .msg_tags
-                .get(id)
-                .is_some_and(|&tag| matches!(self.origins[tag as usize].fate, Fate::Delivered));
-            let i = fate.unwrap_or(if got { 4 } else { 3 });
-            held[usize::from(again)][i] += 1;
-        }
-        held
-    }
-
-    /// Deliveries by the way they went (`metrics::Carried::delivered_by`).
-    pub(crate) fn delivered_by(&self) -> [u64; 4] {
-        self.delivered_by
-    }
-
-    /// A delivery by `holder` of `msg` to the node `to` waits for its next
-    /// beat: count it by its window and its first DATA.
-    fn delivery_waits(&mut self, holder: u32, msg: u32, to: u64, tried: bool) {
-        let first = self.first_try.remove(&(holder, msg));
-        let Some(&n) = self.sleepy_index.get(&to) else {
-            return;
-        };
-        if self.now < self.settle {
-            return;
-        }
-        let (window, how) = match (first, tried) {
-            (Some(f), _) => f,
-            (None, t) => {
-                let how = if t {
-                    FirstTry::NotSent
-                } else {
-                    FirstTry::NotStarted
-                };
-                (self.window_of(n), how)
-            }
-        };
-        self.metrics.sleep.waited[window][how as usize] += 1;
-    }
-
-    /// The window the sleepy node `n` listens in now: after its beat, or
-    /// after a message it took since.
-    pub(crate) fn window_of(&self, n: u32) -> usize {
-        let (beat, took) = self.beat_took[(n - self.n_relays) as usize];
-        if took > beat {
-            AFTER_TAKE
-        } else {
-            AFTER_BEAT
-        }
-    }
-
-    /// A relay refused the relay DATA it is being handed, if it is that:
-    /// see [`crate::metrics::HopPlaceRefusals`].
-    fn note_refusal(&mut self, node: u32, msg_id: MsgId, reason: bark_proto::DropReason) {
-        use bark_proto::DropReason as R;
-        if !matches!(reason, R::Budget | R::SendQueueFull) {
-            return;
-        }
-        let Some((at, id, from, _)) = self.rx_data else {
-            return;
-        };
-        if at != node || id != msg_id.0 {
-            return;
-        }
-        let Some(&sender) = self.relay_index.get(&from) else {
-            return;
-        };
-        let me = self.relays[node as usize].id();
-        let lowest = self.relays[node as usize].lowest_free_hop_place();
-        let then = self.clocks[sender as usize].local(self.now);
-        let held = self.relays[sender as usize].highest_count_for(me, then);
-        let with = matches!((lowest, held), (Some(k), Some(h)) if h >= u32::from(k));
-        let h = &mut self.metrics.hop_places;
-        h.refusals += 1;
-        h.with_place += u64::from(with);
-        self.refused_at.insert((sender, id), (self.now, with));
+        self.count_trace(node, &t);
     }
 
     /// `node` takes a GPS fix: where it is, or where a fault says. With
@@ -3663,14 +2493,7 @@ impl Sim {
         self.fixing = true;
         self.deliver(n, Event::App(AppCommand::Fix { position }));
         self.fixing = false;
-        if let Some((t, before, k)) = self.plugged.remove(&n) {
-            if self.now.since(t) <= bark_proto::gps::SEARCH_LIMIT {
-                let truly = self.origin.position(self.place(n));
-                let m = bark_proto::geo::LocalPlane::new(before).distance_m(before, truly);
-                let kept = self.relays[n as usize].config().position == before;
-                self.carried_metrics().plugged_fixed[k] = Some((kept, f64::from(m)));
-            }
-        }
+        self.carried_fix(n);
         true
     }
 
@@ -3688,26 +2511,6 @@ impl Sim {
             bark_proto::wire::Packet::decode(f.payload())
         {
             self.push(self.now, Ev::Fix(node));
-        }
-    }
-
-    /// `node` sends `f`: if it is a DATA of a message refused to it, the
-    /// wait since ends.
-    fn note_sent_again(&mut self, node: u32, f: &Frame) {
-        if node >= self.n_relays || self.refused_at.is_empty() {
-            return;
-        }
-        let Ok(bark_proto::wire::Packet::Data(d)) = bark_proto::wire::Packet::decode(f.payload())
-        else {
-            return;
-        };
-        if let Some((t, with)) = self.refused_at.remove(&(node, d.msg_id().0)) {
-            let w = self.now.since(t).as_micros();
-            let h = &mut self.metrics.hop_places;
-            h.wait_us += w;
-            if with {
-                h.wait_with_place_us += w;
-            }
         }
     }
 
@@ -4050,10 +2853,7 @@ impl Sim {
     pub fn message_dropped(&mut self, node: u32, msg_id: MsgId, reason: DropReason) {
         self.metrics.app.drops.add(reason);
         self.metrics.nodes[node as usize].drops.add(reason);
-        if let Some(held) = self.hold_ended(node, msg_id) {
-            self.metrics.holds.ended_dropped += 1;
-            self.metrics.holds.held_us.push(held);
-        }
+        self.handover_dropped(node, msg_id);
         if reason == DropReason::Pushback {
             // The message is its application's again, which decides its
             // fate on the `AppEvent::GivenBack` that follows.
@@ -4089,45 +2889,6 @@ impl Sim {
             if o.fate != Fate::Delivered {
                 o.fate = Fate::Dropped { node, reason };
                 o.dropped_at = Some(self.now);
-            }
-        }
-    }
-
-    /// A DATA of the message `msg` went from `src` with the long preamble.
-    pub(crate) fn note_long_try(&mut self, msg: u32, src: u32) {
-        if let Some(&tag) = self.msg_tags.get(&msg) {
-            let o = &mut self.origins[tag as usize];
-            if o.holder == Some(src) {
-                o.watch.long_tries += 1;
-            }
-        }
-    }
-
-    /// The holders with messages for the node `id` not yet accounted for.
-    pub(crate) fn holders_waiting(&mut self, id: u64) -> Vec<u32> {
-        let Some(holders) = self.holders_of.get_mut(&id) else {
-            return Vec::new();
-        };
-        let (queued, origins) = (&self.queued_for, &self.origins);
-        holders.retain(|&h| {
-            queued.get(&(h, id)).is_some_and(|tags| {
-                tags.iter()
-                    .any(|&t| origins[t as usize].fate == Fate::Unaccounted)
-            })
-        });
-        holders.clone()
-    }
-
-    /// Count a beat of the node `id` with `fate` at `holder` for each
-    /// message the holder holds for it.
-    pub(crate) fn watch_note(&mut self, holder: u32, id: u64, fate: usize, elsewhere: bool) {
-        if let Some(tags) = self.queued_for.get(&(holder, id)) {
-            for &t in tags {
-                let o = &mut self.origins[t as usize];
-                if o.fate == Fate::Unaccounted {
-                    o.watch.beats[fate] += 1;
-                    o.watch.elsewhere += u32::from(elsewhere);
-                }
             }
         }
     }
@@ -4240,6 +3001,26 @@ impl Sim {
             .collect()
     }
 
+    /// The tag of the message with the ID `msg_id`, if it is a text the
+    /// traffic made.
+    pub(crate) fn msg_tag(&self, msg_id: u32) -> Option<u32> {
+        self.msg_tags.get(&msg_id).copied()
+    }
+
+    /// Whether the text `tag` is `node`'s own and has not yet passed its
+    /// first hop.
+    pub(crate) fn own_unsent(&self, node: u32, tag: u32) -> bool {
+        let o = &self.origins[tag as usize];
+        o.src == node && o.entered_at.is_none()
+    }
+
+    /// The fate of the message with the ID `msg_id`, if it is a text the
+    /// traffic made.
+    pub(crate) fn message_fate(&self, msg_id: u32) -> Option<Fate> {
+        let &tag = self.msg_tags.get(&msg_id)?;
+        Some(self.origins[tag as usize].fate)
+    }
+
     /// Fate of every originated message, in origination order.
     pub fn fates(&self) -> impl Iterator<Item = Fate> + '_ {
         self.originated().map(|(_, f)| f)
@@ -4339,7 +3120,7 @@ impl Sim {
         let mut s = String::from(
             "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s,dst_walking,src_relay,dst_relay,to_twin,src_moving,dst_anchor,src_x,dst_x,entered_s,holder_beats,holder_tries,queued_s,holder_knew,holder_anchor,holder_long,holder_dbm,best_dbm,dst_sleepy,dst_carried",
         );
-        for n in beat_fate::NAMES {
+        for n in BeatFate::NAMES {
             s.push_str(",b_");
             s.push_str(n);
         }
@@ -4396,10 +3177,7 @@ impl Sim {
             for b in w.beats {
                 s.push_str(&format!(",{b}"));
             }
-            let (offers, hops, flaps) = self
-                .offer_log
-                .get(&r.tag)
-                .map_or((0, 0, 0), |l| (l.to.len(), l.next_hops(), l.flaps));
+            let (offers, hops, flaps) = self.offers_of(r.tag);
             let (dst_hops, dst_wrong) =
                 r.at_dst.map_or((String::new(), String::new()), |(h, w)| {
                     (h.to_string(), w.to_string())
@@ -4994,7 +3772,7 @@ impl Sim {
         let per_day = |r: std::ops::Range<usize>| {
             let w: Vec<f64> = self.store_writes[r]
                 .iter()
-                .map(|w| w[1] as f64 / window.max(1e-9))
+                .map(|w| w.settled as f64 / window.max(1e-9))
                 .collect();
             let mean = w.iter().sum::<f64>() / w.len().max(1) as f64;
             (mean, w.iter().cloned().fold(0.0, f64::max))
@@ -5003,7 +3781,7 @@ impl Sim {
         crate::summary::StoreWrites {
             relays_per_day: per_day(0..n),
             sleepy_per_day: per_day(n..self.node_count()),
-            total: self.store_writes.iter().map(|w| w[0] as u64).sum(),
+            total: self.store_writes.iter().map(|w| w.all as u64).sum(),
         }
     }
 
@@ -5267,15 +4045,6 @@ impl Sim {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn distinct_next_hops_count_each_relay_and_neighbour_once() {
-        let log = OfferLog {
-            to: vec![(1, 10), (1, 10), (2, 20), (1, 11)],
-            flaps: 0,
-        };
-        assert_eq!(log.next_hops(), 3);
-    }
 
     /// A clock off by 50 ppm reads 50 µs more or less a second, and a
     /// timer set on it fires at the first true microsecond it reads the

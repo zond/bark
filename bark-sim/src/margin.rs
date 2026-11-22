@@ -20,7 +20,7 @@ use bark_proto::tables::neighbours::Neighbours;
 use bark_proto::tables::neighbours::{Neighbour, NeighbourParams};
 use bark_proto::wire::Data;
 
-use crate::metrics::Outcome;
+use crate::metrics::{AddrFate, AddrKind, LostHow};
 use crate::sim::{key, Lock, Sim};
 
 /// Thresholds above the noise floor, dB of averaged packet RSSI, for the
@@ -58,10 +58,10 @@ impl Alt {
 pub(crate) struct Row {
     head: String,
     dst: u32,
-    state: u8,
+    state: AddrFate,
     rx_dbm: Option<f64>,
     symbols: u64,
-    how: Option<u8>,
+    how: Option<LostHow>,
 }
 
 /// The log.
@@ -111,21 +111,13 @@ impl Sim {
         else {
             return;
         };
-        // The receiver's state as the frame starts, as `metrics::Addressed`
-        // classes it: 1 listening and free, 2 receiving, 3 deaf, 4 on
-        // another channel.
-        let st = &self.nodes[dst as usize];
-        let state = if st.resting != Some(ch) {
-            4
-        } else if st.ex.as_ref().is_some_and(|e| e.deaf) || self.now < st.listen_from {
-            3
-        } else if matches!(st.lock, Lock::Rx(_)) {
-            2
-        } else {
-            1
-        };
+        let state = self.rx_state(dst, ch);
         let sender = self.relay(src);
-        let kind = if sender.sleepy() { 2 } else { 0 };
+        let kind = if sender.sleepy() {
+            AddrKind::SleepyData
+        } else {
+            AddrKind::RelayData
+        };
         let walks = |n: u32| self.walks.as_ref().is_some_and(|w| w.walks(n));
         let flags = format!(
             "{},{},{},{},{}",
@@ -222,12 +214,14 @@ impl Sim {
         }
 
         let head = format!(
-            "{:.3},{kind},{src},{dst},{},{},{},{},{state},{flags},{sender_side},{:.1},{:.1},{:.2},{floor_dst},{:.0},{:.0},{n_alt},{n_alt_margin}{cells}",
+            "{:.3},{},{src},{dst},{},{},{},{},{},{flags},{sender_side},{:.1},{:.1},{:.2},{floor_dst},{:.0},{:.0},{n_alt},{n_alt_margin}{cells}",
             now.as_micros() as f64 / 1e6,
+            kind as u8,
             d.msg_id().0,
             d.hops,
             ch.index(),
             src_home.index(),
+            state as u8,
             base,
             base_back,
             fade_src_ch,
@@ -284,19 +278,14 @@ impl Sim {
         }
     }
 
-    /// Node `b` lost the frame `tx_key` to `o`; `how` classes what it met
-    /// (`Sim::how_of`).
-    pub(crate) fn margin_lost(&mut self, tx_key: u64, b: u32, o: Outcome, how: u8) {
+    /// Node `b` lost the frame `tx_key`; `how` classes what it met.
+    pub(crate) fn margin_lost(&mut self, tx_key: u64, b: u32, how: LostHow) {
         let Some(log) = self.margin.as_mut() else {
             return;
         };
         if let Some(r) = log.pending.get_mut(&tx_key) {
             if r.dst == b {
-                r.how = Some(match o {
-                    Outcome::BelowSensitivity => 0,
-                    Outcome::LostCapture | Outcome::LostToLater | Outcome::SinrFail { .. } => how,
-                    _ => 6,
-                });
+                r.how = Some(how);
             }
         }
     }
@@ -311,14 +300,14 @@ impl Sim {
             return;
         };
         let fate = if got.iter().any(|g| g.0 == r.dst) {
-            0
+            AddrFate::Received
         } else {
             r.state
         };
-        let how = if fate == 0 {
+        let how = if fate == AddrFate::Received {
             -1
         } else {
-            r.how.unwrap_or(6) as i8
+            r.how.unwrap_or(LostHow::Other) as i8
         };
         let (rx, p_loss) = match r.rx_dbm {
             Some(dbm) => {
@@ -327,7 +316,12 @@ impl Sim {
             }
             None => (f64::NAN, 1.0),
         };
-        writeln!(log.out, "{},{rx:.1},{p_loss:.4},{fate},{how}", r.head).expect("margin log");
+        writeln!(
+            log.out,
+            "{},{rx:.1},{p_loss:.4},{},{how}",
+            r.head, fate as u8
+        )
+        .expect("margin log");
     }
 
     /// Whether a margin log is on and `now` is past the settle time.

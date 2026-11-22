@@ -9,10 +9,15 @@
 
 #![forbid(unsafe_code)]
 
+mod addressed;
 mod battery;
 pub mod boots;
+mod carried;
+mod counts;
 pub mod geo;
 mod gps;
+mod handovers;
+mod holders;
 pub mod install;
 pub mod links;
 pub mod margin;
@@ -24,7 +29,9 @@ mod radio;
 pub mod rng;
 pub mod scenario;
 pub mod sim;
+mod sleepy_data;
 pub mod summary;
+mod tables;
 mod trace;
 mod update;
 mod walk;

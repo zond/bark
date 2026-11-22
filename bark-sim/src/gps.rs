@@ -145,18 +145,9 @@ impl Sim {
             // It had its fixes until now: its next start is hot.
             self.receivers[i].fixed_at = Some(self.now);
         }
-        let r = &mut self.receivers[i];
-        if let Some((since, battery, on)) = r.acct.take() {
-            if self.now > self.settle {
-                let us = self.now.since(since.max(self.settle)).as_micros();
-                let g = &mut self.metrics.nodes[i].gps;
-                g.relay_us[usize::from(battery)] += us;
-                if on {
-                    g.relay_on_us[usize::from(battery)] += us;
-                }
-            }
-        }
-        r.acct = state.map(|(battery, on)| (self.now, battery, on));
+        self.gps_flush(node);
+        let now = self.now;
+        self.receivers[i].acct = state.map(|(battery, on)| (now, battery, on));
     }
 
     /// The time `node`'s receiver ran after the settle time, a search
@@ -184,7 +175,7 @@ impl Sim {
     }
 
     /// Count `node`'s time as a relay up to now (`gps_account`), as at
-    /// the end of the run.
+    /// a change of its state and at the end of the run.
     pub(crate) fn gps_flush(&mut self, node: u32) {
         if let Some((since, battery, on)) = self.receivers[node as usize].acct.as_mut() {
             if self.now > self.settle {

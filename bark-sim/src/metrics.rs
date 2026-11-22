@@ -301,47 +301,129 @@ pub struct CoreCounts {
     pub rejections: u64,
 }
 
+/// The kind of a frame [`Addressed`] follows, its first index. The
+/// numbers are the indices, which the outputs print.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AddrKind {
+    /// DATA from a relay.
+    RelayData = 0,
+    /// An ACK from a relay.
+    RelayAck = 1,
+    /// DATA from a sleepy node.
+    SleepyData = 2,
+    /// A sleepy node's beat at its anchor.
+    Beat = 3,
+}
+
+impl AddrKind {
+    pub const N: usize = 4;
+}
+
+/// What became of a frame addressed to a node, [`Addressed`]'s second
+/// index: received, or lost in the state its receiver was in when the
+/// frame started.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AddrFate {
+    Received = 0,
+    /// Listening and free.
+    Free = 1,
+    /// Receiving another frame.
+    Receiving = 2,
+    /// Deaf on the channel: checking, transmitting, retuning.
+    Deaf = 3,
+    /// On another channel.
+    OffChannel = 4,
+}
+
+impl AddrFate {
+    pub const N: usize = 5;
+}
+
+/// What a frame lost at the node it was addressed to met, the last index
+/// of [`Addressed::lost_how`]: noise was the larger part of what it
+/// faced, or else the strongest frame on the air at the receiver while it
+/// was lost was the one named.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LostHow {
+    Noise = 0,
+    /// A DATA addressed to that receiver from a sender the later of the
+    /// two senders could not hear (its link from the earlier one, in the
+    /// link table, below sensitivity: a hidden pair). Links with a walker
+    /// are not in the table, so such a pair counts as hidden.
+    HiddenData = 1,
+    /// A DATA to another node.
+    OtherData = 2,
+    Ack = 3,
+    /// A relay's heartbeat.
+    Heartbeat = 4,
+    /// A sleepy node's beat.
+    Beat = 5,
+    /// None of these: the receiver deaf after a frame it lost past its
+    /// header, which the fates count as free, adjacent-channel leakage, or
+    /// an interferer.
+    Other = 6,
+    /// A DATA addressed to that receiver from a sender the later sender
+    /// could hear.
+    HeardData = 7,
+}
+
+impl LostHow {
+    pub const N: usize = 8;
+
+    /// How a frame lost to `o` is classed, where `met` classes the
+    /// strongest frame it met.
+    pub fn of(o: Outcome, met: LostHow) -> LostHow {
+        match o {
+            Outcome::BelowSensitivity => LostHow::Noise,
+            Outcome::LostCapture | Outcome::LostToLater | Outcome::SinrFail { .. } => met,
+            _ => LostHow::Other,
+        }
+    }
+}
+
+/// The answer to a DATA a relay received, [`Addressed::replies`]'s
+/// second index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reply {
+    /// An ACK that takes it.
+    Taken = 0,
+    /// One that refuses it.
+    Refused = 1,
+    /// Either, started later than the ACK timeout after the frame's end.
+    Late = 2,
+    None = 3,
+}
+
+impl Reply {
+    pub const N: usize = 4;
+}
+
 /// What became of frames addressed to one node that is not sleepy, by
-/// what that node was doing when the frame started: `[kind][fate]`.
-/// Kinds: DATA from a relay, an ACK from one, DATA from a sleepy node, a
-/// sleepy node's beat at its anchor. Fates: received; lost although the
-/// receiver was listening and free; lost while it received another frame;
-/// lost while it was deaf on the channel (checking, transmitting,
-/// retuning); lost while it was on another channel.
+/// what that node was doing when the frame started: `[kind][fate]`, by
+/// [`AddrKind`] and [`AddrFate`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Addressed {
-    pub counts: [[u64; 5]; 4],
+    pub counts: [[u64; AddrFate::N]; AddrKind::N],
     /// Of `counts`, the frames during which a sleepy node's heartbeat was
     /// on the air at the receiver: a presence frame sent at a time its
     /// sender chose is a hidden-terminal risk.
-    pub with_beat: [[u64; 5]; 4],
+    pub with_beat: [[u64; AddrFate::N]; AddrKind::N],
     /// The same for the heartbeat of a node that is not sleepy.
-    pub with_heartbeat: [[u64; 5]; 4],
-    /// Of `counts`, the frames lost, `[kind][fate][how]`: 0 noise was the
-    /// larger part of what the frame faced; else the strongest frame on
-    /// the air at the receiver while it was lost was 1 a DATA addressed to
-    /// that receiver from a sender the later of the two senders could not
-    /// hear (its link from the earlier one, in the link table, below
-    /// sensitivity: a hidden pair), 7 one it could hear, 2 a DATA to
-    /// another node, 3 an ACK, 4 a relay's heartbeat, 5 a sleepy node's
-    /// beat; 6 none of these: the receiver deaf after a frame it lost
-    /// past its header, which the fates count as free, adjacent-channel
-    /// leakage, or an interferer. Links with a walker are not in the
-    /// table, so such a pair counts as hidden.
-    pub lost_how: [[[u64; 8]; 5]; 4],
+    pub with_heartbeat: [[u64; AddrFate::N]; AddrKind::N],
+    /// Of `counts`, the frames lost, `[kind][fate][how]`, by [`LostHow`].
+    pub lost_how: [[[u64; LostHow::N]; AddrFate::N]; AddrKind::N],
     /// Of `lost_how`, `[kind][fate]`, the frames a later frame broke by
     /// arriving past their preamble no weaker than the harmless level
     /// (`Outcome::LostToLater`); counted under that frame's class.
-    pub lost_to_later: [[u64; 5]; 4],
+    pub lost_to_later: [[u64; AddrFate::N]; AddrKind::N],
     /// A relay's heartbeats in their slots after the settle time, by how
     /// far behind its slot grid each started, in its own clock: 40 ms
     /// bins, the last holding 960 ms and more. The grid is the earliest
-    /// phase seen (`Sim::hb_grid`).
+    /// phase seen (`addressed.rs`).
     pub heartbeat_late: [u64; 25],
-    /// Of the DATA frames received, `[relay's, leaf's][answer]`: an ACK that
-    /// takes it, one that refuses it, either started later than the ACK
-    /// timeout after the frame's end, or none.
-    pub replies: [[u64; 4]; 2],
+    /// Of the DATA frames received, `[relay's, leaf's][answer]`, by
+    /// [`Reply`].
+    pub replies: [[u64; Reply::N]; 2],
     /// Refusing ACKs by the wait they ask for, in bans: 0, 1, 2–3, 4–7 and
     /// so on doubling, 64 and more.
     pub refusal_steps: [u64; 8],
@@ -507,52 +589,86 @@ impl LoadStats {
 /// happened.
 pub use bark_proto::DropReason;
 
-/// Drop counters by reason.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-pub struct DropCounts {
+/// `DropCounts`, its counter per reason and its methods, from one list
+/// of the reasons.
+macro_rules! drop_counts {
+    ($($(#[$attr:meta])* $field:ident: $reason:ident,)*) => {
+        /// Drop counters by reason.
+        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+        pub struct DropCounts {
+            $($(#[$attr])* pub $field: u64,)*
+        }
+
+        impl DropCounts {
+            /// The number of reasons.
+            pub const N: usize = [$(stringify!($field),)*].len();
+
+            pub fn add(&mut self, r: DropReason) {
+                let c = match r {
+                    $(DropReason::$reason => &mut self.$field,)*
+                };
+                *c += 1;
+            }
+
+            /// Every counter with its name, as in the JSON output.
+            pub fn fields(&self) -> [(&'static str, u64); Self::N] {
+                [$((stringify!($field), self.$field),)*]
+            }
+
+            /// These counts less `other`'s, counter by counter.
+            pub fn minus(&self, other: &DropCounts) -> DropCounts {
+                DropCounts {
+                    $($field: self.$field.saturating_sub(other.$field),)*
+                }
+            }
+        }
+    };
+}
+
+drop_counts! {
     /// No neighbour left at the origin (spec "Return to parent").
-    pub no_route: u64,
+    no_route: NoRoute,
     /// The hop cap (spec "Hop count").
-    pub hop_cap: u64,
+    hop_cap: HopCap,
     /// The wrong-hop cap (spec "Hop count"); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
-    pub wrong_hop_cap: u64,
+    wrong_hop_cap: WrongHopCap,
     /// No place for its record (spec "Message records").
-    pub no_record: u64,
+    no_record: NoRecord,
     /// The send queue was full (spec "Send queue").
-    pub send_queue_full: u64,
+    send_queue_full: SendQueueFull,
     /// The duty-cycle budget (spec "Duty cycle cap").
-    pub budget: u64,
+    budget: Budget,
     /// Fresh work refused while every way on was banned
     /// (spec "Receiving DATA").
-    pub banned: u64,
+    banned: Banned,
     /// Refused while another message here went to the same next hop
     /// (spec "Receiving DATA"); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
-    pub same_hop: u64,
+    same_hop: SameHop,
     /// The return to the parent failed (spec "Return to parent").
-    pub return_failed: u64,
+    return_failed: ReturnFailed,
     /// The parent answered the return seen (spec "Return to parent");
     /// left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
-    pub return_seen: u64,
+    return_seen: ReturnSeen,
     /// The delivery TTL ran out (spec "Delivery queue").
-    pub queue_expired: u64,
+    queue_expired: QueueExpired,
     /// The delivery queue was full (spec "Delivery queue").
-    pub delivery_full: u64,
+    delivery_full: DeliveryFull,
     /// The payload was too long (spec "Packet formats").
-    pub payload_too_long: u64,
+    payload_too_long: PayloadTooLong,
     /// A sleepy node's own message given back to its application with a
     /// wait (spec "A sleepy node's own message").
-    pub pushback: u64,
+    pushback: Pushback,
     /// Received and not taken because the ACK that takes it could not go
     /// out (spec "The ACK"); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
-    pub unanswered: u64,
+    unanswered: Unanswered,
     /// Refused while the node drained for a reboot into a new image
     /// (spec "Send queue"); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
-    pub draining: u64,
+    draining: Draining,
 }
 
 /// Whether a counter is zero: counters of what only some scenarios do are
@@ -562,83 +678,9 @@ pub(crate) fn is_zero(n: &u64) -> bool {
 }
 
 impl DropCounts {
-    pub fn add(&mut self, r: DropReason) {
-        let c = match r {
-            DropReason::NoRoute => &mut self.no_route,
-            DropReason::HopCap => &mut self.hop_cap,
-            DropReason::WrongHopCap => &mut self.wrong_hop_cap,
-            DropReason::NoRecord => &mut self.no_record,
-            DropReason::SendQueueFull => &mut self.send_queue_full,
-            DropReason::Budget => &mut self.budget,
-            DropReason::Banned => &mut self.banned,
-            DropReason::SameHop => &mut self.same_hop,
-            DropReason::ReturnFailed => &mut self.return_failed,
-            DropReason::ReturnSeen => &mut self.return_seen,
-            DropReason::QueueExpired => &mut self.queue_expired,
-            DropReason::DeliveryFull => &mut self.delivery_full,
-            DropReason::PayloadTooLong => &mut self.payload_too_long,
-            DropReason::Pushback => &mut self.pushback,
-            DropReason::Unanswered => &mut self.unanswered,
-            DropReason::Draining => &mut self.draining,
-        };
-        *c += 1;
-    }
-
-    /// Every counter with its name, as in the JSON output.
-    pub fn fields(&self) -> [(&'static str, u64); 16] {
-        [
-            ("no_route", self.no_route),
-            ("hop_cap", self.hop_cap),
-            ("wrong_hop_cap", self.wrong_hop_cap),
-            ("no_record", self.no_record),
-            ("send_queue_full", self.send_queue_full),
-            ("budget", self.budget),
-            ("banned", self.banned),
-            ("same_hop", self.same_hop),
-            ("return_failed", self.return_failed),
-            ("return_seen", self.return_seen),
-            ("queue_expired", self.queue_expired),
-            ("delivery_full", self.delivery_full),
-            ("payload_too_long", self.payload_too_long),
-            ("pushback", self.pushback),
-            ("unanswered", self.unanswered),
-            ("draining", self.draining),
-        ]
-    }
-
     /// The counters that are not zero, with their names.
     pub fn nonzero(&self) -> Vec<(&'static str, u64)> {
         self.fields().into_iter().filter(|&(_, n)| n > 0).collect()
-    }
-
-    /// These counts less `other`'s, counter by counter.
-    pub fn minus(&self, other: &DropCounts) -> DropCounts {
-        let mut out = *self;
-        let o = other.fields();
-        for (c, (_, n)) in [
-            &mut out.no_route,
-            &mut out.hop_cap,
-            &mut out.wrong_hop_cap,
-            &mut out.no_record,
-            &mut out.send_queue_full,
-            &mut out.budget,
-            &mut out.banned,
-            &mut out.same_hop,
-            &mut out.return_failed,
-            &mut out.return_seen,
-            &mut out.queue_expired,
-            &mut out.delivery_full,
-            &mut out.payload_too_long,
-            &mut out.pushback,
-            &mut out.unanswered,
-            &mut out.draining,
-        ]
-        .into_iter()
-        .zip(o)
-        {
-            *c = c.saturating_sub(n);
-        }
-        out
     }
 
     pub fn total(&self) -> u64 {
@@ -805,13 +847,27 @@ pub struct HeartbeatFates {
     pub lost_weak: u64,
 }
 
+/// What became of a DATA addressed to a sleepy node, the index of
+/// [`SleepMetrics::to_sleepy`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToSleepyFate {
+    Received = 0,
+    /// Sent while the node could not hear it.
+    Unheard = 1,
+    /// Lost otherwise.
+    Lost = 2,
+}
+
+impl ToSleepyFate {
+    pub const N: usize = 3;
+}
+
 /// What sleepy nodes do and what is sent to them, counted after the
 /// settle time.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct SleepMetrics {
-    /// DATA addressed to a sleepy node: received, sent while it could not
-    /// hear it, lost otherwise.
-    pub to_sleepy: [u64; 3],
+    /// DATA addressed to a sleepy node, by [`ToSleepyFate`].
+    pub to_sleepy: [u64; ToSleepyFate::N],
     /// DATA sent to a sleepy node receiving duty-cycled with a short
     /// preamble: by its anchor, and by any other node; and whether it had
     /// been so under 5 s or longer.
@@ -1025,6 +1081,68 @@ pub struct Research {
     pub power: Option<PowerMetrics>,
 }
 
+/// Frames and their airtime, seconds; printed as the pair.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Frames {
+    pub frames: u64,
+    pub airtime_s: f64,
+}
+
+impl Frames {
+    /// Count a frame of `airtime_s`.
+    pub fn add(&mut self, airtime_s: f64) {
+        self.frames += 1;
+        self.airtime_s += airtime_s;
+    }
+}
+
+impl Serialize for Frames {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        (self.frames, self.airtime_s).serialize(s)
+    }
+}
+
+/// How a text a relay held when it left went first, the index of
+/// [`PowerMetrics::held`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LeftFate {
+    /// By the flush.
+    Flush = 0,
+    /// At its node's beat, in or outside its window.
+    Beat = 1,
+    /// To its node as a relay.
+    AsRelay = 2,
+    /// Handed on toward its address at the turn to sleepy.
+    HandedOn = 3,
+    /// Dropped by its holder.
+    Dropped = 4,
+    None = 5,
+}
+
+impl LeftFate {
+    pub const N: usize = 6;
+}
+
+/// How the holder of a text held at a first far fix delivered it, the
+/// second index of [`Carried::held`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FarFate {
+    /// By the flush.
+    Flush = 0,
+    /// At a later beat, or outside the window as before.
+    Beat = 1,
+    /// To the node as a relay.
+    AsRelay = 2,
+    /// Not at all, and the text did not reach its node.
+    None = 3,
+    /// Not at all, and the text reached its node otherwise.
+    Otherwise = 4,
+}
+
+impl FarFate {
+    pub const N: usize = 5;
+}
+
 /// What the nodes whose power switches do (`Research::power`). Times in
 /// seconds.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -1047,13 +1165,11 @@ pub struct PowerMetrics {
     /// battery, with no grace.
     pub carried: u64,
     /// The texts a relay held when it left after the settle time, by how
-    /// they went first: by the flush, at their node's beat in or outside
-    /// its window, to their node as a relay, handed on toward their
-    /// address at the turn to sleepy, dropped by their holder, none.
-    pub held: [u64; 6],
+    /// they went first, by [`LeftFate`].
+    pub held: [u64; LeftFate::N],
     /// Heartbeats for a change of flags or map point after the settle
-    /// time: how many, and their airtime.
-    pub changed: (u64, f64),
+    /// time.
+    pub changed: Frames,
     /// Anchor changes after the settle time of sleepy nodes whose old
     /// anchor was sleepy, or leaving after its grace, by then.
     pub anchors_left: u64,
@@ -1071,12 +1187,10 @@ pub struct Carried {
     /// whether it is sleepy.
     pub fixed: Vec<(f64, u32, bool, bool)>,
     /// The texts a relay held in its delivery queue at a first far fix
-    /// after the settle time, by how their holder delivered them: by the
-    /// flush, at a later beat or outside the window as before, to the
-    /// node as a relay, or not at all, and of the last those that reached
-    /// their node otherwise; at the relay's first far fix, then at a
-    /// later one, after it had turned fixed again.
-    pub held: [[u64; 5]; 2],
+    /// after the settle time, by how their holder delivered them
+    /// ([`FarFate`]); at the relay's first far fix, then at a later one,
+    /// after it had turned fixed again.
+    pub held: [[u64; FarFate::N]; 2],
     /// Sleepy nodes that left an anchor that turned carried, after the
     /// settle time.
     pub anchors_left: u64,
@@ -1085,16 +1199,15 @@ pub struct Carried {
     /// node as a relay.
     pub delivered_by: [u64; 4],
     /// Frames of the flush, and to a node as a relay, after the settle
-    /// time: how many, and their airtime.
-    pub flush: (u64, f64),
+    /// time.
+    pub flush: Frames,
     /// See `flush`.
-    pub to_relay: (u64, f64),
-    /// Heartbeats flagged sleepy and carried after the settle time: how
-    /// many, and their airtime.
-    pub beats: (u64, f64),
+    pub to_relay: Frames,
+    /// Heartbeats flagged sleepy and carried after the settle time.
+    pub beats: Frames,
     /// Heartbeats for a change sent by sleepy nodes whose carried flag
-    /// changed, after the settle time: how many, and their airtime.
-    pub sleepy_changed: (u64, f64),
+    /// changed, after the settle time.
+    pub sleepy_changed: Frames,
     /// Nodes plugged in while carried, after the settle time.
     pub plugged_in: u64,
     /// Every plug-in of a fixed node with a place, and of those whose

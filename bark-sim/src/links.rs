@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 const NCH: usize = CHANNELS as usize;
 
 /// Speed of light, m/s.
-const C_M_PER_S: f64 = 299_792_458.0;
+pub(crate) const C_M_PER_S: f64 = 299_792_458.0;
 
 /// Free-space loss at 1 m for the band centre (channel 6, 433.92 MHz):
 /// 20·log10(4π f / c) ≈ 25.2 dB.
@@ -504,7 +504,7 @@ impl Fading {
 
 /// Key of an unordered pair, independent of table layout, so that the same
 /// two nodes see the same fading whatever else is in the scenario.
-fn pair_key(a: u32, b: u32) -> u64 {
+pub(crate) fn pair_key(a: u32, b: u32) -> u64 {
     let (lo, hi) = if a < b { (a, b) } else { (b, a) };
     ((lo as u64) << 32) | hi as u64
 }
