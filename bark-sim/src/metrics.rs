@@ -419,7 +419,7 @@ pub struct Addressed {
     /// A relay's heartbeats in their slots after the settle time, by how
     /// far behind its slot grid each started, in its own clock: 40 ms
     /// bins, the last holding 960 ms and more. The grid is the earliest
-    /// phase seen (`Sim::hb_grid`).
+    /// phase seen (`addressed.rs`).
     pub heartbeat_late: [u64; 25],
     /// Of the DATA frames received, `[relay's, leaf's][answer]`, by
     /// [`Reply`].
