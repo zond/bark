@@ -9,6 +9,7 @@
 
 #![forbid(unsafe_code)]
 
+mod addressed;
 mod battery;
 pub mod boots;
 mod carried;

@@ -249,7 +249,7 @@ impl Sim {
     /// relays is counted by whether it reached the relay it was for.
     pub(crate) fn tables_air_end(&mut self, tx_key: u64, got: &[(u32, f64, f64)]) {
         if let Some((m, b)) = self.tables.reach_of.remove(&tx_key) {
-            let d = self.addressed.get(&tx_key).map(|a| a.0);
+            let d = self.addressed_to(tx_key);
             let got = d.is_some_and(|d| got.iter().any(|g| g.0 == d));
             if let Some(t) = &mut self.metrics.research.tables {
                 t.data_by_reach[m][b][0] += 1;

@@ -13,9 +13,7 @@
 //! at, it is first brought up to the present (`settle`), and a loss found
 //! then is dated to when the budget ran out.
 
-use crate::metrics::{
-    AddrFate, AddrKind, FirstTry, LostHow, Outcome, Reply, ToSleepyFate, BOOT_MINUTE,
-};
+use crate::metrics::{AddrFate, FirstTry, LostHow, Outcome, ToSleepyFate, BOOT_MINUTE};
 use crate::phy::{self, Deaf, Loss};
 use crate::sim::{key, Arrival, ExKind, FrameKind, Lock, Rx, Sim, ToSleepy};
 use crate::walk::MovingLink;
@@ -51,19 +49,6 @@ fn interference(
         }
     }
     (co, adj)
-}
-
-/// What a frame on the air is, for [`LostHow`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum AirKind {
-    Data,
-    Ack,
-    /// A heartbeat of a node that is not sleepy.
-    Heartbeat,
-    /// A sleepy node's beat.
-    Beat,
-    /// An update piece or a status frame.
-    Other,
 }
 
 /// A packet's receiver-independent facts.
@@ -124,47 +109,11 @@ impl Sim {
         let air = end.since(start).as_micros();
         let frame = tx.frame;
         let decoded = WirePacket::decode(frame.payload()).ok();
-        let kind = match decoded {
-            Some(WirePacket::Data(_)) => AirKind::Data,
-            Some(WirePacket::Ack(_)) => AirKind::Ack,
-            Some(WirePacket::Heartbeat(h)) if !h.sleepy => AirKind::Heartbeat,
-            Some(WirePacket::Heartbeat(_)) => AirKind::Beat,
-            Some(WirePacket::Update(_) | WirePacket::Status(_)) | None => AirKind::Other,
-        };
-        self.air_kinds.insert(tx_key, (kind, src));
-        if let Some(WirePacket::Heartbeat(h)) = decoded {
-            let in_slot = !h.sleepy
-                && !h.anchorless
-                && preamble < sniff::LONG_PREAMBLE_SYMBOLS
-                && src < self.relays()
-                && start >= self.settle;
-            if in_slot {
-                self.note_heartbeat_phase(src, start, h.id);
-            }
-        }
         let msg = match decoded {
             Some(WirePacket::Data(d)) => Some((d.msg_id(), d.hops, FrameKind::Data)),
             Some(WirePacket::Ack(a)) if a.refused => Some((a.msg_id, 0, FrameKind::Refused)),
             Some(WirePacket::Ack(a)) if a.seen => Some((a.msg_id, 0, FrameKind::Seen)),
             Some(WirePacket::Ack(a)) => Some((a.msg_id, 0, FrameKind::Taken)),
-            _ => None,
-        };
-        let to = match decoded {
-            Some(WirePacket::Data(d)) => Some((
-                key(d.dst_hop),
-                if src < self.relays() {
-                    AddrKind::RelayData
-                } else {
-                    AddrKind::SleepyData
-                },
-            )),
-            Some(WirePacket::Ack(a)) if src < self.relays() => {
-                Some((key(a.to), AddrKind::RelayAck))
-            }
-            Some(WirePacket::Heartbeat(h)) if h.sleepy => self
-                .relay(src)
-                .anchor()
-                .map(|a| (key(a.id), AddrKind::Beat)),
             _ => None,
         };
         let beat = match decoded {
@@ -256,63 +205,9 @@ impl Sim {
             let to_dst = matches!(decoded, Some(WirePacket::Data(d)) if d.dst_hop == d.dst_id);
             self.message_frame(id, hops, air, src, kind, to_dst);
         }
-        match decoded {
-            Some(WirePacket::Data(d)) => {
-                self.answer_of
-                    .insert(tx_key, (d.msg_id().0, key(d.src_hop)));
-                self.tables_data(src, d.dst_hop, tx_key);
-                if self
-                    .relay_index
-                    .get(&key(d.dst_hop))
-                    .is_some_and(|&r| r < self.relays())
-                {
-                    self.data_hops
-                        .insert((d.msg_id().0, key(d.dst_hop)), d.hops);
-                }
-            }
-            Some(WirePacket::Ack(a)) if src < self.relays() => {
-                let hops = self.data_hops.remove(&(a.msg_id.0, key(a.from)));
-                if hops == Some(0) {
-                    let c = &mut self.metrics.nodes[src as usize].core;
-                    if a.refused {
-                        c.fresh_refused += 1;
-                    } else {
-                        c.fresh_taken += 1;
-                    }
-                }
-                if a.refused {
-                    use bark_proto::tables::budget::{told, BAN};
-                    let bans = told(a.wait).as_micros() / BAN.as_micros();
-                    let w = (u64::BITS - bans.leading_zeros()).min(7) as usize;
-                    self.metrics.addressed.refusal_steps[w] += 1;
-                    if let Some(h) = hops {
-                        let k = match h {
-                            0 => 0,
-                            1 => 1,
-                            2 | 3 => 2,
-                            _ => 3,
-                        };
-                        self.metrics.addressed.refusal_by_hops[k][w] += 1;
-                    }
-                }
-                let k = (src, a.msg_id.0, key(a.to));
-                if let Some((deadline, leaf)) = self.awaiting.remove(&k) {
-                    let answer = if self.now > deadline {
-                        Reply::Late
-                    } else if a.refused {
-                        Reply::Refused
-                    } else {
-                        Reply::Taken
-                    };
-                    self.metrics.addressed.replies[leaf as usize][answer as usize] += 1;
-                }
-            }
-            _ => {}
-        }
-        if let Some(d) = to.and_then(|(name, kind)| self.relay_index.get(&name).map(|&d| (d, kind)))
-        {
-            let state = self.rx_state(d.0, ch);
-            self.addressed.insert(tx_key, (d.0, d.1, state));
+        self.addressed_air_start(tx_key, src, start, preamble, ch, decoded);
+        if let Some(WirePacket::Data(d)) = decoded {
+            self.tables_data(src, d.dst_hop, tx_key);
         }
         if let Some(WirePacket::Data(d)) = &decoded {
             self.margin_start(tx_key, src, d, ch, air);
@@ -374,32 +269,6 @@ impl Sim {
         }
     }
 
-    /// A relay's heartbeat in a slot started at `start`: where it falls
-    /// against the relay's grid, in the relay's own clock. The grid is the
-    /// earliest phase seen, so a first heartbeat that was late shows the
-    /// ones before the earliest as later than they were, by its lateness.
-    fn note_heartbeat_phase(&mut self, src: u32, start: Instant, id: bark_proto::NodeId) {
-        let local = self.clocks[src as usize].local(start);
-        if self.hb_grid.len() <= src as usize {
-            self.hb_grid.resize(src as usize + 1, None);
-        }
-        let interval = bark_proto::node::heartbeat_interval(id, self.relay(src).config());
-        let Some((t0, t)) = self.hb_grid[src as usize] else {
-            self.hb_grid[src as usize] = Some((local, interval));
-            return;
-        };
-        let off = local.since(t0).as_micros() % t.as_micros().max(1);
-        let off = if off * 2 > t.as_micros() {
-            // Earlier than the grid: the grid moves to it.
-            self.hb_grid[src as usize] = Some((t0 - Duration::from_micros(t.as_micros() - off), t));
-            0
-        } else {
-            off
-        };
-        let bin = (off / 40_000).min(24) as usize;
-        self.metrics.addressed.heartbeat_late[bin] += 1;
-    }
-
     /// What `node` is doing as a frame on `ch` starts there, as the fate
     /// of the frame if `node` loses it (`metrics::Addressed`).
     pub(crate) fn rx_state(&self, node: u32, ch: Channel) -> AddrFate {
@@ -412,57 +281,6 @@ impl Sim {
             AddrFate::Receiving
         } else {
             AddrFate::Free
-        }
-    }
-
-    /// How the frame `key` on the air at `b` is classed for
-    /// `Addressed::lost_how`, where it meets the frame `other`; `later`
-    /// says whether `key` started after `other`.
-    fn how_of(&self, b: u32, key: Option<u64>, other: u64, later: bool) -> LostHow {
-        let Some(k) = key else {
-            return LostHow::Other;
-        };
-        match self.air_kinds.get(&k) {
-            Some(&(AirKind::Data, src)) => {
-                if self.addressed.get(&k).is_some_and(|a| a.0 == b) {
-                    let Some(&(_, other_src)) = self.air_kinds.get(&other) else {
-                        return LostHow::HiddenData;
-                    };
-                    // Whether the later sender could hear the earlier
-                    // frame when it checked the channel.
-                    let (from, to) = if later {
-                        (other_src, src)
-                    } else {
-                        (src, other_src)
-                    };
-                    let audible = self
-                        .links
-                        .get(from, to)
-                        .is_some_and(|l| l.base_dbm as f64 >= self.sens_dbm);
-                    if audible {
-                        LostHow::HeardData
-                    } else {
-                        LostHow::HiddenData
-                    }
-                } else {
-                    LostHow::OtherData
-                }
-            }
-            Some(&(AirKind::Ack, _)) => LostHow::Ack,
-            Some(&(AirKind::Heartbeat, _)) => LostHow::Heartbeat,
-            Some(&(AirKind::Beat, _)) => LostHow::Beat,
-            Some(&(AirKind::Other, _)) | None => LostHow::Other,
-        }
-    }
-
-    /// Note how `b` lost the frame `key`, if it was addressed to `b`.
-    fn note_addressed_loss(&mut self, key: u64, b: u32, o: Outcome, met: LostHow) {
-        let how = LostHow::of(o, met);
-        if self.margin.is_some() {
-            self.margin_lost(key, b, how);
-        }
-        if self.addressed.get(&key).is_some_and(|a| a.0 == b) {
-            self.lost_how.insert(key, (how, o == Outcome::LostToLater));
         }
     }
 
@@ -609,40 +427,8 @@ impl Sim {
                 }
             }
         }
-        let answer = self.answer_of.remove(&tx.key);
         self.tables_air_end(tx.key, &got);
-        if let Some((d, kind, state)) = self.addressed.remove(&tx.key) {
-            let fate = if got.iter().any(|g| g.0 == d) {
-                AddrFate::Received
-            } else {
-                state
-            };
-            if let (AddrFate::Received, Some((msg, to))) = (fate, answer) {
-                if matches!(kind, AddrKind::RelayData | AddrKind::SleepyData) {
-                    let deadline = self.now + self.relay(d).config().ack_timeout;
-                    let leaf = kind == AddrKind::SleepyData;
-                    self.awaiting.insert((d, msg, to), (deadline, leaf));
-                }
-            }
-            self.metrics.addressed.counts[kind as usize][fate as usize] += 1;
-            let how = self.lost_how.remove(&tx.key);
-            if fate != AddrFate::Received {
-                let (how, later) = how.unwrap_or((LostHow::Other, false));
-                let a = &mut self.metrics.addressed;
-                a.lost_how[kind as usize][fate as usize][how as usize] += 1;
-                a.lost_to_later[kind as usize][fate as usize] += u64::from(later);
-            }
-
-            let beats = &self.nodes[d as usize].beats;
-            let (k, f, c) = (kind as usize, fate as usize, ch.index());
-            if beats.during(tx.start, tx.end, c, true) {
-                self.metrics.addressed.with_beat[k][f] += 1;
-            }
-            if beats.during(tx.start, tx.end, c, false) {
-                self.metrics.addressed.with_heartbeat[k][f] += 1;
-            }
-        }
-        self.air_kinds.remove(&tx.key);
+        self.addressed_air_end(&tx, &got);
         self.margin_end(tx.key, &got);
         let mut bytes = [0u8; MAX_FRAME];
         let len = tx.frame.len as usize;

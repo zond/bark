@@ -829,9 +829,6 @@ pub struct Sim {
     msg_tags: HashMap<u32, u32>,
     /// What each application offered, to offer again when given back.
     offered: HashMap<u32, Offer>,
-    /// The count of the last DATA of each message to each node, to read
-    /// the count a refusing ACK answers.
-    pub(crate) data_hops: HashMap<(u32, u64), u32>,
     /// Per minute and message tag, airtime by frame kind, when asked for.
     msg_minutes: Option<HashMap<(u32, u32), [u64; 5]>>,
     /// The beats of sleepy nodes at the holders of messages for them
@@ -859,30 +856,13 @@ pub struct Sim {
     component: Vec<u32>,
     /// The per-minute series, when asked for (`Sim::series_on`).
     series: Option<String>,
-    /// Frames on air addressed to a relay: key to (relay, kind, its
-    /// fate if lost, by its state at the start), for
-    /// [`crate::metrics::Addressed`].
-    pub(crate) addressed: HashMap<u64, (u32, crate::metrics::AddrKind, crate::metrics::AddrFate)>,
-    /// Frames on air: key to kind and the sender, for
-    /// [`crate::metrics::Addressed::lost_how`].
-    pub(crate) air_kinds: HashMap<u64, (crate::radio::AirKind, u32)>,
-    /// Frames on air addressed to a relay that lost them: key to how, and
-    /// whether to a later frame within the harmless level.
-    pub(crate) lost_how: HashMap<u64, (crate::metrics::LostHow, bool)>,
-    /// Per relay, its heartbeat grid's phase in its own clock and its
-    /// interval, for [`crate::metrics::Addressed::heartbeat_late`].
-    pub(crate) hb_grid: Vec<Option<(Instant, Duration)>>,
+    /// What becomes of frames addressed to relays (`addressed.rs`).
+    pub(crate) addressed: crate::addressed::AddressedWatch,
     /// What the neighbour tables hold, with `tables_on` (`tables.rs`).
     pub(crate) tables: crate::tables::TablesWatch,
     /// The log of what each DATA's sender knew of its next hop, when asked
     /// for (`Sim::margin_to`).
     pub(crate) margin: Option<crate::margin::MarginLog>,
-    /// DATA on air addressed to a relay: key to the ACK that would answer
-    /// it, message ID and `to`.
-    pub(crate) answer_of: HashMap<u64, (u32, u64)>,
-    /// DATA a relay received and has not answered yet: (relay, message,
-    /// `to`) to the answer's deadline and whether a leaf sent it.
-    pub(crate) awaiting: HashMap<(u32, u32, u64), (Instant, bool)>,
     /// How hand-overs go (`handovers.rs`).
     pub(crate) handovers: crate::handovers::HandOverWatch,
     /// Every boot, watched until the node takes part (`boots.rs`).
@@ -1334,7 +1314,6 @@ impl Sim {
             replies: Vec::new(),
             msg_tags: HashMap::new(),
             offered: HashMap::new(),
-            data_hops: HashMap::new(),
             msg_minutes: None,
             holder_beats: Default::default(),
             script: Vec::new(),
@@ -1356,14 +1335,9 @@ impl Sim {
             tracer: None,
             component: Vec::new(),
             series: None,
-            addressed: HashMap::new(),
-            air_kinds: HashMap::new(),
-            lost_how: HashMap::new(),
-            hb_grid: Vec::new(),
+            addressed: Default::default(),
             tables: Default::default(),
             margin: None,
-            answer_of: HashMap::new(),
-            awaiting: HashMap::new(),
             handovers: Default::default(),
             boots: Boots::new(n),
             next_tx: vec![TxMark::None; n],
@@ -2010,16 +1984,7 @@ impl Sim {
                 rec.1.map_or(-1, |d| (d.as_micros() / 1_000_000) as i64)
             ));
         }
-        let now = self.now;
-        let replies = &mut self.metrics.addressed.replies;
-        self.awaiting.retain(|_, (deadline, leaf)| {
-            // An ACK may still come late; give it a second.
-            let gone = now > *deadline + Duration::from_secs(1);
-            if gone {
-                replies[*leaf as usize][crate::metrics::Reply::None as usize] += 1;
-            }
-            !gone
-        });
+        self.addressed_unanswered();
         let mut a = crate::metrics::LeafSums::default();
         for (k, leaf) in self.relays[self.n_relays as usize..].iter().enumerate() {
             let n = self.n_relays as usize + k;
