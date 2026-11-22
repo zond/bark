@@ -29,6 +29,7 @@ pub mod rng;
 pub mod scenario;
 pub mod sim;
 pub mod summary;
+mod tables;
 mod trace;
 mod update;
 mod walk;
