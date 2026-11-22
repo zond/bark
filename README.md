@@ -18,7 +18,7 @@ spider that builds the largest orb webs known, anchored on bridge lines up to
 25 m long across rivers, out of the toughest biological silk measured. A big
 web from small, cheap threads.
 
-## Status (2026-11-10)
+## Status (2026-11-22)
 
 The protocol core, the simulator, the firmware and the Android app are
 written. The simulator runs a city's collision domain, 28 km² with 270
@@ -30,7 +30,7 @@ carried, behind a loader that swaps in new images, which reach a node
 signed from the phone, from its neighbours over the mesh, or over USB.
 A node serves up to eight paired phones and, unless they make it
 private, any other phone as a guest. Releases carry the firmware and
-the app, v46 the latest (Releases, below).
+the app, v47 the latest (Releases, below).
 
 The bench has measured the radio's timings, capture and a still link's
 fading (`docs/bench-*.md`), the swap under resets, pairing, and updates
