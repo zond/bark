@@ -121,6 +121,12 @@ bark-sim (std)
   scenario              builder API + TOML file
   metrics, summary      counters, JSON and CSV
   trace                 per-node event trace
+  power, battery, gps,  what the driver gives a node besides the radio
+  update, install
+  carried, handovers,   what a run counts for a question, each called by
+  holders, tables,      sim at named points and removable with its module
+  addressed, margin,
+  sleepy_data, counts
   main                  bark-sim: run a scenario file, print a summary
 ```
 
@@ -130,9 +136,9 @@ The core's interface is `core-interface.md`. Firmware maps its actions onto `lor
 
 | module | keyed by | bound | purpose |
 |---|---|---|---|
-| message records | message ID (spec "Packet formats") | 1613 records, least recently active given up, never one of a message held (spec "Message records") | DFS parent and tried set; recognises repeats |
-| `tables::neighbours` | 4-byte node ID | 64 entries | position, channel, last-heard, `fail_count`; expire after three rotations, a sleepy node's after two beat periods |
-| `tables::heard` | 4-byte node ID | 256 entries | sleepy nodes heard beating, their channel and window (spec "Heard table") |
+| message records | message ID (spec "Packet formats") | 649 records, least recently active given up, never one of a message held (spec "Message records") | DFS parent and tried set; recognises repeats |
+| `tables::neighbours` | 6-byte node ID | 64 entries | position, channel, last-heard, `fail_count`; expire after three rotations, a sleepy node's after two beat periods |
+| `tables::heard` | 6-byte node ID | 256 entries | sleepy nodes heard beating, their channel and window (spec "Heard table") |
 | `tables::delivery` | message ID | 41 messages; when the queue is full, the oldest queued 10 min or longer makes way for a new one (spec "Delivery queue") | messages waiting for a sleepy node |
 
 `relay::forward` chooses the next hop from (destination, neighbour table, message record, own position) as in spec "Next hop", and applies the owner rule of spec "Owner".
