@@ -54,12 +54,15 @@ impl MsgId {
 /// records' checks and the phone's own copies of both use it, so one
 /// definition keeps them the same.
 pub fn fnv1a(parts: &[&[u8]]) -> u32 {
-    parts
-        .iter()
-        .flat_map(|p| p.iter())
-        .fold(0x811c_9dc5, |h, &b| {
-            (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
-        })
+    // Plain loops: an unoptimised build, as the simulator's tests are,
+    // hashes every message through here.
+    let mut h: u32 = 0x811c_9dc5;
+    for part in parts {
+        for &b in *part {
+            h = (h ^ u32::from(b)).wrapping_mul(0x0100_0193);
+        }
+    }
+    h
 }
 
 #[cfg(test)]
