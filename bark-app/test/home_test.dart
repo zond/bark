@@ -119,7 +119,7 @@ void main() {
   test('no home node, connected to it: the node forgets the key', () {
     run((async, app) {
       said(async, app.mailbox.makeHome(app.session.address!));
-      expect(said(async, app.mailbox.noHome()), 'No home node');
+      expect(said(async, app.mailbox.noHome()), 'Home removed');
       expect(app.fakeNode!.homeKey, isNull);
       expect(app.session.nodeHome!.set, isFalse);
       expect(app.me.home, isNull);
@@ -136,7 +136,7 @@ void main() {
       async.flushMicrotasks();
       expect(
         said(async, app.mailbox.noHome()),
-        'No home node. Your old home sends you its mail, then forgets you.',
+        'Home removed. Your old home sends you its mail, then forgets you.',
       );
       expect(app.me.home, isNull);
       expect(app.me.leaving!.home.toString(), home.toString());
@@ -216,20 +216,85 @@ void main() {
     });
   });
 
-  test('a node that kept the key from when it was the home can be told to '
-      'stop', () {
+  test('a home that was out of reach when the person left is left by '
+      'itself once the phone is on it, with no word from the person', () {
     run((async, app) {
+      final f = app.fakeNode!;
       said(async, app.mailbox.makeHome(app.session.address!));
+      final home = app.me.home!;
       app.session.disconnect();
       async.flushMicrotasks();
-      // The home away never hears the leave: its node still holds the key.
-      app.fakeNode!.homeAnswers = false;
+      // The home never hears the fetch or the leave: it keeps the key.
+      f.homeAnswers = false;
       said(async, app.mailbox.noHome());
       app.connectFake();
       async.flushMicrotasks();
+      // While the leave is under way nothing is asked of the person.
+      expect(app.mailbox.holdsOtherKey, isFalse);
+      async.elapse(Session.fetchAnswerWait * 2 + const Duration(minutes: 1));
+      expect(app.me.leaving, isNull);
+      expect(app.me.left.single.home.toString(), home.toString());
+      expect(f.homeRecords, isNotEmpty);
+      app.session.disconnect();
+      async.flushMicrotasks();
+
+      // On it again, and it hears now: the leave is taken up and ends.
+      f.homeAnswers = true;
+      app.connectFake();
+      async.flushMicrotasks();
+      expect(app.me.left, isEmpty);
+      expect(app.me.leaving!.home.toString(), home.toString());
+      expect(app.mailbox.holdsOtherKey, isFalse);
+      async.elapse(const Duration(minutes: 2));
+      expect(f.homeRecords, isEmpty);
+      expect(app.me.leaving, isNull);
+      expect(app.me.left, isEmpty);
+      expect(log(app), contains(contains('still holds the key')));
+    });
+  });
+
+  test('a home left that no longer holds the key is forgotten as left', () {
+    run((async, app) {
+      final f = app.fakeNode!;
+      said(async, app.mailbox.makeHome(app.session.address!));
+      app.session.disconnect();
+      async.flushMicrotasks();
+      said(async, app.mailbox.noHome());
+      // The leave is taken, its answer lost.
+      f.losesAnswer = (c) => c is LeaveCommand;
+      app.connectFake();
+      async.flushMicrotasks();
+      async.elapse(Session.fetchAnswerWait * 2 + const Duration(minutes: 1));
+      expect(f.homeRecords, isEmpty);
+      expect(app.me.leaving, isNull);
+      app.session.disconnect();
+      async.flushMicrotasks();
+      app.connectFake();
+      async.flushMicrotasks();
+      expect(app.me.left, isEmpty);
+      expect(app.me.leaving, isNull);
+    });
+  });
+
+  test('a node that holds a key the app never left is told to forget it '
+      'only on the person\'s word', () {
+    run((async, app) {
+      final f = app.fakeNode!;
+      said(async, app.mailbox.makeHome(app.session.address!));
+      app.session.disconnect();
+      async.flushMicrotasks();
+      // As after an identity moved to another phone: this phone's has no
+      // home and has left none, and the node still holds the key.
+      app.me.setHome(null);
+      async.flushMicrotasks();
+      app.connectFake();
+      async.flushMicrotasks();
+      async.elapse(const Duration(minutes: 2));
+      expect(app.me.leaving, isNull);
+      expect(f.homeRecords, isNotEmpty);
       expect(app.mailbox.holdsOtherKey, isTrue);
-      expect(said(async, app.mailbox.clearKey()), contains('no longer'));
-      expect(app.fakeNode!.homeKey, isNull);
+      expect(said(async, app.mailbox.clearKey()), 'It forgot you');
+      expect(f.homeKey, isNull);
       expect(app.mailbox.holdsOtherKey, isFalse);
     });
   });

@@ -80,6 +80,11 @@ class MeState {
   /// told to forget them.
   Leaving? leaving;
 
+  /// The homes left whose leave was not answered, each with the key it
+  /// may still hold: the leave is taken up again when the phone is next
+  /// on one that says it holds the key.
+  List<LeftHome> left;
+
   MeState(
     this.seed, {
     this.name = '',
@@ -99,11 +104,14 @@ class MeState {
     this.owner = false,
     this.homeReads,
     this.leaving,
-  }) : rounds = [...rounds];
+    List<LeftHome> left = const [],
+  }) : rounds = [...rounds],
+       left = [...left];
 
-  /// A file without the home's key, the owner's mark, what the home reads
-  /// or a home being left has the person's own home, if any, of which
-  /// they are not known as the owner, and leaves none.
+  /// A file without the home's key, the owner's mark, what the home reads,
+  /// a home being left or the homes left has the person's own home, if
+  /// any, of which they are not known as the owner, and leaves and has
+  /// left none.
   static MeState fromJson(Map<String, dynamic> j) => MeState(
     parseHex(j['seed'] as String)!,
     name: j['name'] as String,
@@ -129,6 +137,10 @@ class MeState {
       null => null,
       final l => Leaving.fromJson(l as Map<String, dynamic>),
     },
+    left: [
+      for (final l in j['left'] as List? ?? const [])
+        LeftHome.fromJson(l as Map<String, dynamic>),
+    ],
   );
 
   static Address? _address(Object? s) =>
@@ -153,6 +165,7 @@ class MeState {
     'owner': owner,
     'homeReads': ?homeReads,
     if (leaving case final l?) 'leaving': l.toJson(),
+    if (left.isNotEmpty) 'left': [for (final l in left) l.toJson()],
   };
 }
 
@@ -434,6 +447,42 @@ class Me extends ChangeNotifier {
 
   /// The leaving's state changed.
   Future<void> leavingChanged() => _changed();
+
+  List<LeftHome> get left => List.unmodifiable(_s.left);
+
+  /// Whether the node `id` is a home left whose leave was not answered.
+  LeftHome? leftAt(List<int> id) =>
+      _s.left.where((l) => hex(l.home.id) == hex(id)).firstOrNull;
+
+  /// Notes `l` as left without an answer, in place of what was noted of
+  /// its node.
+  Future<void> addLeft(LeftHome l) async {
+    _s.left
+      ..removeWhere((o) => hex(o.home.id) == hex(l.home.id))
+      ..add(l);
+    await _changed();
+  }
+
+  /// Forgets what was noted of the node `id` as left.
+  Future<void> dropLeft(List<int> id) async {
+    _s.left.removeWhere((l) => hex(l.home.id) == hex(id));
+    await _changed();
+  }
+}
+
+/// A home left whose leave was not answered, and the key it may still
+/// hold.
+class LeftHome {
+  final Address home;
+  final Uint8List key;
+  LeftHome(this.home, List<int> key) : key = Uint8List.fromList(key);
+
+  Map<String, dynamic> toJson() => {'home': home.toString(), 'key': hex(key)};
+
+  static LeftHome fromJson(Map<String, dynamic> j) => LeftHome(
+    Address.parse(j['home'] as String)!,
+    parseHex(j['key'] as String)!,
+  );
 }
 
 /// A home the person is leaving: its address and the key it holds. The

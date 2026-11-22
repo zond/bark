@@ -57,6 +57,7 @@ class Mailbox extends ChangeNotifier {
     _nodeAddress();
     unawaited(sendQueuedFetch());
     _ownerSeen();
+    _leftHere();
     // Leaving a home waits for a node with a place for the answers.
     _leaveNow();
   }
@@ -97,11 +98,15 @@ class Mailbox extends ChangeNotifier {
     return n != null && messenger.isHome(n.id);
   }
 
-  /// The connected node holds a mailbox key the phone can clear and is
-  /// not the person's home: a former home of theirs.
+  /// The connected node holds a mailbox key the phone can clear, is not
+  /// the person's home and is not one the app is leaving by itself
+  /// ([_leftHere]): the app does not know why it holds it, so the person
+  /// says whether it forgets them.
   bool get holdsOtherKey {
-    final h = session.nodeHome;
-    return !atHome && h != null && h.mine;
+    final h = session.nodeHome, n = session.node;
+    final leaving =
+        n != null && hex(me.leaving?.home.id ?? const []) == hex(n.id);
+    return !atHome && h != null && h.mine && !leaving;
   }
 
   /// The connected node, not the person's home, is someone else's. Only
@@ -187,10 +192,10 @@ class Mailbox extends ChangeNotifier {
         : 'This node is your home';
   }
 
-  /// No home node. Connected to the home, it forgets the mailbox key;
+  /// Removes the home. Connected to the home, it forgets the mailbox key;
   /// elsewhere the home is left ([_leave]).
   Future<String> noHome() async {
-    if (me.home == null) return 'No home node';
+    if (me.home == null) return 'No home';
     final at = atHome;
     final h = at ? await session.writeHome(null) : null;
     if (h != null && h.mine) {
@@ -198,7 +203,7 @@ class Mailbox extends ChangeNotifier {
     }
     final left = !at && await _leave();
     if (await me.setHome(null)) await messenger.sendCardToAll();
-    return left ? 'No home node. $_oldHomeLets' : 'No home node';
+    return left ? 'Home removed. $_oldHomeLets' : 'Home removed';
   }
 
   /// Makes the home that `c`, its owner, gave the person theirs, with the
@@ -319,6 +324,7 @@ class Mailbox extends ChangeNotifier {
     final was = me.leaving;
     if (was != null) {
       session.note('Leaving: ${nodeName(was.home.id)} given up for another');
+      await me.addLeft(LeftHome(was.home, was.key));
     }
     await me.setLeaving(Leaving(h, me.mailboxKey.extractBytes()));
     session.note('Leaving: ${nodeName(h.id)}');
@@ -338,8 +344,49 @@ class Mailbox extends ChangeNotifier {
   /// comes or its wait is over.
   Future<void> _leaveStep() => _leaving ??= _stepLeaving().whenComplete(() {
     _leaving = null;
+    _leftHere();
     _leaveLater();
   });
+
+  /// On a home left whose leave was not answered, takes the leave up
+  /// again if the node, read afresh, still holds the key, once no other
+  /// leave is under way: the home was off or out of reach when the person
+  /// left. A node that no longer holds the key, or is the home again, is
+  /// forgotten as left. Once a connection: a node that holds the key and
+  /// does not answer a leave on its own link is not asked over and over.
+  void _leftHere() {
+    final n = session.node;
+    if (n == null || !session.connected) {
+      _takenUp = false;
+      return;
+    }
+    if (_readingLeft || _takenUp) return;
+    final l = me.leftAt(n.id);
+    if (l == null || me.leaving != null) return;
+    _readingLeft = true;
+    unawaited(
+      _takeUp(l)
+          .whenComplete(() => _readingLeft = false)
+          .catchError((Object e) {
+            session.note('Leaving: $e');
+          }),
+    );
+  }
+
+  bool _readingLeft = false;
+  bool _takenUp = false;
+
+  Future<void> _takeUp(LeftHome l) async {
+    final h = await session.readHomeAgain();
+    if (h == null || me.leaving != null) return;
+    final holds = h.mine && !messenger.isHome(l.home.id);
+    await me.dropLeft(l.home.id);
+    if (!holds) return;
+    _takenUp = true;
+    session.note('Leaving: ${nodeName(l.home.id)} still holds the key');
+    await me.setLeaving(Leaving(l.home, l.key));
+    unawaited(_leaveStep());
+  }
 
   /// Wakes the leave once the wait of its fetch or of the leave is over.
   Timer? _leaveTimer;
@@ -369,6 +416,10 @@ class Mailbox extends ChangeNotifier {
     if (l.leaveRound != null) {
       if (!over(l.leaveAt)) return;
       session.note('Leaving: ${nodeName(l.home.id)} did not answer the leave');
+      // On the node itself it is not taken up again in this connection.
+      final n = session.node;
+      if (n != null && hex(n.id) == hex(l.home.id)) _takenUp = true;
+      await me.addLeft(LeftHome(l.home, l.key));
       await me.setLeaving(null);
       return;
     }
@@ -423,12 +474,13 @@ class Mailbox extends ChangeNotifier {
     unawaited(me.leavingChanged().then((_) => _leaveStep()));
   }
 
-  /// Takes the mailbox key from a connected node that is not the home.
+  /// Takes the mailbox key from a connected node that is not the home,
+  /// on the person's word ([holdsOtherKey]).
   Future<String> clearKey() async {
     final h = await session.writeHome(null);
     return h.mine
         ? 'The node refused. It still keeps your mail.'
-        : 'It no longer keeps your mail';
+        : 'It forgot you';
   }
 
   /// The node the phone uses as a guest is the person's home, as after

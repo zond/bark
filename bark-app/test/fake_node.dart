@@ -536,6 +536,8 @@ class FakeNode implements NodeLink {
         );
       case LeaveCommand():
         homeRecords.remove(from);
+        // The home away is this node's mailbox: it holds the key no more.
+        if (homeKey case final k? when hex(k) == hex(from.key)) homeKey = null;
         return (Outcome.ok, null);
     }
   }

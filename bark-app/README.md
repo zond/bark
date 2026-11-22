@@ -232,8 +232,8 @@ is a prototype for the bench, not the app people will carry.
     call a node out of reach, else after a scan of one round, saying it
     was not found if it is not in reach.
   - **Home node**: "None: your card is temporary." or "At" and its
-    address, with **Make this node my home** where the node is not
-    the home, **No home node** while one is set, and **Send my card**
+    address, with **Set home** where the node is not
+    the home, **Remove home** while one is set, and **Send my card**
     as on the first screen. The dialog names its action on the button,
     **Make it my home** or **No home**, and says what happens to the
     card: "Your new card goes to your N contacts", "Your card stays the
@@ -245,8 +245,8 @@ is a prototype for the bench, not the app people will carry.
     sleepy or carried node cannot be made home, the button is off, and
     a line says "A home must stay on power in one place" (spec
     "Mailbox"). On a node that keeps the person's mail and is not
-    their home, a line says so with **Stop keeping my mail** (Making a
-    node the home, below). While an old home is being left, a line says
+    their home nor one the app is leaving, a line says so with **Forget
+    me here** (Making a node the home, below). While an old home is being left, a line says
     "Leaving ID …: it sends you its mail, then forgets you." When the
     last fetch to the home had no answer, a line says "Your home did not
     answer your last fetch." (A home removed, below). With no
@@ -618,7 +618,7 @@ in the ring meanwhile, so the interval delays it and loses none.
 (spec "Phone link", Pairing), so a home is a node the phone has paired
 with. While the phone uses a public node as a guest and has no home,
 and the node has a place and can be a home, the first screen offers
-**Make this node my home**, its line adding "You pair first, with the
+**Set home**, its line adding "You pair first, with the
 code on its screen". Settings has the same button under the home node, its dialog
 saying the same. The link
 is down between errands, so the app keeps the node's address, whether
@@ -1121,11 +1121,11 @@ Settings; roadmap D236). Every write of a key does so, in one place
 back, and makes the node the home only if it then says it holds the
 person's (`mine`); otherwise it says so and changes nothing. A key
 written takes the owner's seat if it is empty, so the first person to
-make a node their home is its owner. **No home node** while
+make a node their home is its owner. **Remove home** while
 connected to the home writes 0, and the node forgets the key.
 
-**Leaving a home.** Away from the old home, when the person chooses No
-home node, makes another node the home or uses a home given, the app
+**Leaving a home.** Away from the old home, when the person chooses Remove
+home, makes another node the home or uses a home given, the app
 leaves the old one by itself, and says "Your old home sends you its
 mail, then forgets you.": it keeps the old home's address and key
 (`me.json`, `leaving`), fetches from it, from the node the phone is on
@@ -1138,10 +1138,17 @@ round, and a leave's round carries no item. The leave's summary may be
 lost, and asked again the home would not answer, as it holds the key no
 more; so the leave is sent once, and the old home is forgotten when its
 summary comes or its wait is over, the log saying which. A leave that
-never reached the home leaves the key there: Settings shows **Stop
-keeping my mail** on any node that holds the person's key and is not
-their home, with the line "This node still keeps your mail from when it
-was your home", which writes 0 at the node. A node that holds another person's key says "This node is someone else's
+never reached the home leaves the key there. The app keeps such a home
+and its key (`me.json`, `left`), as it does one whose leave was given up
+for another, and when the phone is next on that node and the node, read
+afresh, says it still holds the key, it takes the leave up again by
+itself, once a connection; a node that holds the key no more is
+forgotten as left (`Mailbox._leftHere`). A node that says it holds this
+phone's key and is neither the home nor one the app left gets no such
+leave: the key may be that of an identity that moved to another phone,
+whose home it still is. There Settings shows **Forget me here** with
+the line "This node keeps mail for this phone, and is not your home",
+which writes 0 at the node. A node that holds another person's key says "This node is someone else's
 home", with no button: a phone writes and clears only its own person's
 key, and another's goes only by a removal (Phones at the node, The
 home's owner).
@@ -1201,11 +1208,11 @@ not theirs and no other phone of theirs keeps it (above), as the phone
 links or while it is linked: the app keeps
 the home, as the person is there to set it again, a notice says "Your
 home no longer keeps your mail. Set it again in Settings.", and Settings
-shows **Make this node my home** on the home, with the line "Your home
+shows **Set home** on the home, with the line "Your home
 no longer keeps your mail". Away from it, the node answers their next
 fetch, with a command or not, by a summary that says so and nothing
 else (spec "Mailbox", The answer). To a fetch to the home, the app then has no
-home, as after **No home node**, sends the card without it to every
+home, as after **Remove home**, sends the card without it to every
 contact, and tells "Your home no longer keeps your mail. Choose a new
 home in Settings."; to the old home while leaving it, the old home has
 forgotten the person already, and no leave goes; to a home named under
@@ -1215,8 +1222,7 @@ its memory or gave the person's place to another, is not told from one
 that is off or out of reach: once the last fetch to the home had no
 answer within its wait, Home node says "Your home did not answer your
 last fetch.", and its help says to fetch again later and, if it still
-does not answer, to make another node the home or choose **No home
-node**. Nothing changes by itself.
+does not answer, to make another node the home or choose **Remove home**. Nothing changes by itself.
 
 
 ## Where a text goes
@@ -1462,8 +1468,7 @@ a phone (Trying it).
 2. In **Settings**, press **Scan** and allow
    Bluetooth. The node shows within about a second as `ID` and those
    digits, as its screen shows them. Tap it: the phone uses it as a
-   guest, and Settings says so. Under the home node, **Make this node my
-   home**, whose dialog says the phone pairs first, or **Pair** on its
+   guest, and Settings says so. Under the home node, **Set home**, whose dialog says the phone pairs first, or **Pair** on its
    row in the scan. Android asks for a code and the node's screen shows
    `PAIR CODE` and six digits within a few seconds: type them. A wrong
    code says "Not paired", and the phone goes on as a guest. Settings
@@ -1616,7 +1621,7 @@ a phone (Trying it).
     its own in reach, the second phone goes on an errand there within a
     round, without asking anything, its first screen saying "Connected
     to ID … as a guest", with an errand once a minute,
-    and, with no home set, offering **Make this node my home**; **Not
+    and, with no home set, offering **Set home**; **Not
     now** hides it until the app is started again. No pairing dialog
     shows, at the connect or later. Its log shows `Recipient: tag …`, a
     `Guest: item …` line for each item read, and `Disconnected`.
@@ -1739,8 +1744,8 @@ a phone (Trying it).
     Q's row: "Q is your home's owner now"; P's "People with a home here"
     goes, as P is no longer the owner, and a share from P now says "Your
     home says you are not its owner".
-25. Leaving. On Q, whose home is A, connected to B: **Settings**, **No
-    home node**, **No home**: "No home node. Your old home sends you its
+25. Leaving. On Q, whose home is A, connected to B: **Settings**, **Remove
+    home**, **Remove**: "Home removed. Your old home sends you its
     mail, then forgets you.", and the line "Leaving ID …" shows. Q's log
     says `Leaving: a fetch to bark-…`, A's log a fetch taken and its
     items, then `Leaving: the leave to bark-…`, A's log a fetch with the
@@ -1759,8 +1764,8 @@ a phone (Trying it).
     card that arrived at A is read at the next errand, though A's record
     for P claims it; **Fetch my mail** says "At your home, your mail comes
     by itself".
-28. Home's start. On a phone whose home is A, at A: **No home node**,
-    then **Make this node my home** again: the node's log shows `ble:
+28. Home's start. On a phone whose home is A, at A: **Remove home**,
+    then **Set home** again: the node's log shows `ble:
     home of record … set`; a **Fetch my mail** from B right after is
     answered as usual.
 29. GPS signal. **Nearby nodes**, a tap on this node: the GPS signal row

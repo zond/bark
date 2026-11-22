@@ -70,7 +70,7 @@ class HomeSection extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.only(top: 8),
           child: const Text(
-            'This node still keeps your mail from when it was your home.',
+            'This node keeps mail for this phone, and is not your home.',
           ),
         ),
       if (app.mailbox.othersHome)
@@ -91,12 +91,12 @@ class HomeSection extends StatelessWidget {
               onPressed: homeable && !app.links.connecting && (paired || !full)
                   ? () => _setHome(context, here, pair: !paired)
                   : null,
-              child: const Text('Make this node my home'),
+              child: const Text('Set home'),
             ),
           if (home != null)
             OutlinedButton(
               onPressed: () => _setHome(context, null),
-              child: const Text('No home node'),
+              child: const Text('Remove home'),
             ),
           if (paired && app.mailbox.holdsOtherKey)
             OutlinedButton(
@@ -104,7 +104,7 @@ class HomeSection extends StatelessWidget {
                 final r = await app.mailbox.clearKey();
                 if (context.mounted) say(context, r);
               }, 'Failed'),
-              child: const Text('Stop keeping my mail'),
+              child: const Text('Forget me here'),
             ),
           if (home == null && app.mailbox.tried?.over != false)
             OutlinedButton(
@@ -198,7 +198,7 @@ class HomeSection extends StatelessWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(a == null ? 'No home node?' : 'Make this node my home?'),
+        title: Text(a == null ? 'Remove home?' : 'Set this node as home?'),
         content: Text(
           (pair ? 'First you pair: type the code on its screen. ' : '') +
               (!changes && app.cardUnsent
@@ -219,7 +219,7 @@ class HomeSection extends StatelessWidget {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text(a == null ? 'No home' : 'Make it my home'),
+            child: Text(a == null ? 'Remove' : 'Set'),
           ),
         ],
       ),
@@ -259,7 +259,7 @@ class HomeSection extends StatelessWidget {
       'mail it keeps, then forgets you.\n\n'
       'A home that stops answering may be off or out of reach, or may have '
       'lost your place there. Fetch again later; if it still does not '
-      'answer, make another node your home, or choose No home node.\n\n'
+      'answer, make another node your home, or choose Remove home.\n\n'
       'Use my existing home is for a phone that got your identity back from '
       'your 12 words: give your home\'s address, and once your home answers '
       'it is your home again.';

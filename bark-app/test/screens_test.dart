@@ -537,7 +537,7 @@ void main() {
     expect(find.textContaining('Set it under This node'), findsOne);
     expect(find.text('Use this phone\'s location'), findsOneWidget);
     expect(find.text('Phone location'), findsNothing);
-    expect(find.text('Make this node my home'), findsNothing);
+    expect(find.text('Set home'), findsNothing);
 
     fake
       ..fixed = true
@@ -545,7 +545,7 @@ void main() {
       ..changed();
     await t.pump();
     expect(find.textContaining(noPlace), findsNothing);
-    final make = find.widgetWithText(FilledButton, 'Make this node my home');
+    final make = find.widgetWithText(FilledButton, 'Set home');
     expect(t.widget<FilledButton>(make).enabled, isFalse);
     expect(
       find.text('A home must stay on power in one place.'),
@@ -1105,14 +1105,14 @@ void main() {
     }
 
     // Setting and clearing the home both change the card.
-    await press('Make this node my home', 'goes to your contact.');
+    await press('Set home', 'goes to your contact.');
     expect(app.mailbox.atHome, isTrue);
     // The home at a new place is still the home: no button to make it one.
     await app.session.setMapPoint(Position.fromDegrees(50.46, 30.53));
     await t.pumpAndSettle();
     expect(app.me.home.toString(), app.session.address.toString());
-    expect(find.text('No home node'), findsOneWidget);
-    expect(find.text('Make this node my home'), findsNothing);
+    expect(find.text('Remove home'), findsOneWidget);
+    expect(find.text('Set home'), findsNothing);
     // The changed card waits for the person.
     final sent = app.session.outbox.length;
     expect(find.textContaining('new home address'), findsOneWidget);
@@ -1127,7 +1127,7 @@ void main() {
     await t.tap(find.textContaining('Connected to'));
     await t.pumpAndSettle();
     await t.scrollUntilVisible(
-      find.text('No home node'),
+      find.text('Remove home'),
       100,
       scrollable: find.byType(Scrollable).first,
     );
@@ -1137,7 +1137,7 @@ void main() {
     await app.me.setHome(Address(home.pos, [1, 2, 3, 4, 5, 6]));
     await t.pumpAndSettle();
     expect(app.mailbox.atHome, isFalse);
-    expect(find.text('Make this node my home'), findsOneWidget);
+    expect(find.text('Set home'), findsOneWidget);
     await app.me.setHome(home);
     await t.pumpAndSettle();
     // A move, then the dialog: the dialog sends the card, and the line goes.
@@ -1149,7 +1149,7 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     final before = app.session.outbox.length;
-    await press('No home node', 'goes to your contact.');
+    await press('Remove home', 'goes to your contact.');
     expect(app.me.home, isNull);
     expect(app.session.outbox.length, before + app.contacts.list.length);
     expect(find.text('Send my card'), findsNothing);
@@ -1181,7 +1181,7 @@ void main() {
     expect(app.mailbox.homeKeyGone, isTrue);
     await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
     await t.pump();
-    const make = 'Make this node my home';
+    const make = 'Set home';
     await t.scrollUntilVisible(
       find.text(make),
       100,
@@ -1200,7 +1200,9 @@ void main() {
     );
     expect(find.text('Your card stays the same.'), findsNothing);
     final sent = app.session.outbox.length;
-    await t.tap(find.text('Make it my home'));
+    await t.tap(
+      find.descendant(of: find.byType(AlertDialog), matching: find.text('Set')),
+    );
     await t.runAsync(() => Future<void>.delayed(Duration.zero));
     await t.pumpAndSettle();
     expect(app.mailbox.homeKeyGone, isFalse);
@@ -1818,7 +1820,7 @@ void main() {
       ),
       findsOneWidget,
     );
-    await t.tap(find.text('Make this node my home'));
+    await t.tap(find.text('Set home'));
     for (var i = 0; i < 10; i++) {
       await t.pump(const Duration(milliseconds: 100));
     }
@@ -1844,7 +1846,7 @@ void main() {
     await done(t, app, ble);
   });
 
-  testWidgets('a guest\'s Settings: Make this node my home, saying it pairs '
+  testWidgets('a guest\'s Settings: Set home, saying it pairs '
       'first; Pair on the node\'s row in the scan pairs at once', (t) async {
     final (app, ble) = await guestOnce(t);
     const device = 'aa:bb:cc:dd:ee:04';
@@ -1856,7 +1858,7 @@ void main() {
     );
     await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
     await t.pump();
-    const home = 'Make this node my home';
+    const home = 'Set home';
     expect(find.text(home, skipOffstage: false), findsOneWidget);
     expect(find.text('Pair with this node', skipOffstage: false), findsNothing);
     // Neither the owner's switch nor its unpairing for a guest.

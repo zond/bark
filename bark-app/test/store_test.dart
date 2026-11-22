@@ -238,6 +238,7 @@ void main() {
     await m.fetched(9);
     await m.setOwner(true);
     await m.setLeaving(Leaving(home, Uint8List(32))..round = 9);
+    await m.addLeft(LeftHome(home, Uint8List(32)));
     final saved = store.text!;
     final again = Me(store, sodium, () => at);
     await again.load();
@@ -248,6 +249,7 @@ void main() {
     expect(again.givenKey, Uint8List(32));
     expect(again.rounds, [9]);
     expect(again.leaving!.round, 9);
+    expect(again.left.single.home.toString(), home.toString());
     await again.setName('Ann');
     expect(store.text, saved);
   });

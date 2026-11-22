@@ -1105,6 +1105,19 @@ class Session extends ChangeNotifier {
     return (key: key, sent: await next());
   }
 
+  /// Reads Home again, as the node may have forgotten a key since the
+  /// connection began; null when no node is linked or it gave none.
+  Future<NodeHome?> readHomeAgain() async {
+    final link = _link;
+    if (link == null || nodeHome == null) return null;
+    final h = await link.readHome();
+    if (_link != link) return null;
+    final changed = h.mine != nodeHome!.mine || h.set != nodeHome!.set;
+    nodeHome = h;
+    if (changed) notifyListeners();
+    return h;
+  }
+
   /// Writes Home, the mailbox key or none, with a fresh `sent`, and reads
   /// it back.
   Future<NodeHome> writeHome(List<int>? key) async {

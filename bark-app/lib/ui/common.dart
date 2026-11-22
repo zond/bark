@@ -480,7 +480,7 @@ class HomeOfferLine extends StatelessWidget {
                             if (context.mounted) say(context, notPairedLine(e));
                           }
                         },
-                  child: const Text('Make this node my home'),
+                  child: const Text('Set home'),
                 ),
               ],
             ),
