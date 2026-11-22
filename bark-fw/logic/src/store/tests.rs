@@ -438,20 +438,77 @@ fn the_later_valid_page_holds() {
     assert_eq!(head(&cut), Invalid);
 }
 
-/// A board that kept layout 2, one page at the second page's place, is
-/// read as holding nothing, and says so; its first write turns to the
-/// other page.
+/// The second page as the layout before kept it: this layout's entries
+/// behind that layout's head, the first page as an earlier use left it.
+fn before(steps: &[Step]) -> (Ram, Node) {
+    let ram = Ram::new(LEAVES[0]);
+    let (mut store, _) = ram.boot();
+    let mut node = node();
+    assert_eq!(run(&mut store, &mut node, steps), None);
+    let mut c = ram.0.borrow_mut();
+    assert_eq!(c.erases, [1, 0], "the steps fit one page");
+    let page = PAGE as usize;
+    let (first, second) = c.bytes.split_at_mut(page);
+    second.copy_from_slice(first);
+    second[..SLOT_LEN].copy_from_slice(&word_entry([HEAD, 2, 0, 0]));
+    first.fill(0x5a);
+    drop(c);
+    (ram, node)
+}
+
+/// A node that comes from layout 2 holds what that page held, and its
+/// first write turns to the first page in this layout.
 #[test]
-fn a_page_of_layout_2_is_discarded() {
+fn a_page_of_layout_2_is_carried_over() {
+    let steps = &steps()[..60];
+    let (ram, mut node) = before(steps);
+    let (mut store, kept) = ram.boot();
+    assert!(kept.before && !kept.discarded);
+    assert_eq!(read_back(&kept), node.held());
+    take(&mut store, &mut node, Step::Stored(1000)).unwrap();
+    let kept = ram.boot().1;
+    assert!(!kept.before && !kept.discarded);
+    assert_eq!(read_back(&kept), node.held());
+    assert_eq!(ram.0.borrow().erases, [2, 0]);
+}
+
+/// A power cut anywhere in that first turn leaves the old page to be read
+/// again, or the new one whole.
+#[test]
+fn a_power_cut_while_layout_2_is_carried_over_loses_nothing() {
+    let steps = &steps()[..60];
+    for leaves in LEAVES {
+        for k in 0.. {
+            let (ram, mut node) = before(steps);
+            ram.0.borrow_mut().leaves = leaves;
+            let was = node.held();
+            let (mut store, _) = ram.boot();
+            ram.power(Some(k));
+            let done = take(&mut store, &mut node, Step::Stored(1000)).is_ok();
+            ram.power(None);
+            let back = read_back(&ram.boot().1);
+            assert!(back == was || back == node.held(), "cut at {k}");
+            if done {
+                assert_eq!(back, node.held());
+                break;
+            }
+        }
+    }
+}
+
+/// A page of a layout this one does not know is read as holding nothing,
+/// and says so; its first write turns to the other page.
+#[test]
+fn a_page_of_another_layout_is_discarded() {
     let ram = Ram::new(LEAVES[0]);
     {
         let mut c = ram.0.borrow_mut();
         let old = PAGE as usize;
-        c.bytes[old..old + SLOT_LEN].copy_from_slice(&word_entry([HEAD, 2, 0, 0]));
+        c.bytes[old..old + SLOT_LEN].copy_from_slice(&word_entry([HEAD, 1, 0, 0]));
         c.bytes[old + SLOT_LEN..old + 2 * SLOT_LEN].copy_from_slice(&stored(1).record());
     }
     let (mut store, kept) = ram.boot();
-    assert!(kept.discarded);
+    assert!(kept.discarded && !kept.before);
     assert_eq!(kept.stored, None);
     let mut node = node();
     take(&mut store, &mut node, Step::Stored(2)).unwrap();

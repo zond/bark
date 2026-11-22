@@ -2874,8 +2874,11 @@ layout 3 is valid. At
 boot the valid page of the later generation holds, compared modulo 2^16.
 On a full page: erase the other page, write the latest entry of each
 kind into it from its second slot, then its head, generation + 1; the
-full page stays until the next such turn. No valid page: nothing is kept,
-and the first write turns to the first page (roadmap D188, D241).
+full page stays until the next such turn. No valid page, and the second
+page of layout 2 (the same entries on that page alone): its entries are
+read, and the first write turns to the first page. Otherwise, no valid
+page: nothing is kept, and the first write turns to the first page
+(roadmap D188, D241).
 
 The bring-up order and the test rig: `roadmap.md`, Phase 2.
 

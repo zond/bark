@@ -45,8 +45,13 @@ const ZONE: u8 = 0x80;
 const HEAD: u8 = 0x85;
 
 /// The pages' layout, which their heads say: a change to what any entry
-/// means takes the next. 2 kept one page, with no generation.
+/// means takes the next.
 const LAYOUT: u8 = 3;
+
+/// The layout before: the same entries on the second page alone, with no
+/// generation, erased when full and written again from RAM. A node that
+/// comes from it keeps what it held ([`scan_before`]).
+const LAYOUT_BEFORE: u8 = 2;
 
 /// Slots a turn writes at most: the head, the core's state, the offset,
 /// the settings and every record.
@@ -147,6 +152,9 @@ pub struct Kept {
     /// No page is valid, and one holds something: another layout's state,
     /// read as none.
     pub discarded: bool,
+    /// No page is valid, and the second is of the layout before: what it
+    /// holds is read, and the first write turns to the first page.
+    pub before: bool,
 }
 
 /// The pages as `read` reads them, `read(at, bytes)` the bytes at `at`
@@ -162,7 +170,11 @@ pub fn scan(mut read: impl FnMut(u32, &mut [u8]) -> bool) -> (Log, Kept) {
         }
     });
     let Some((page, generation)) = choose(heads) else {
-        kept.discarded = heads.contains(&Head::Invalid);
+        if scan_before(&mut read, &mut kept) {
+            kept.before = true;
+        } else {
+            kept.discarded = heads.contains(&Head::Invalid);
+        }
         return (
             Log {
                 page: None,
@@ -201,6 +213,50 @@ pub fn scan(mut read: impl FnMut(u32, &mut [u8]) -> bool) -> (Log, Kept) {
         next: SLOTS,
     };
     (log, kept)
+}
+
+/// The second page as the layout before wrote it, into `kept`: false if
+/// its head is not that layout's. The entries are this layout's; only an
+/// entry of four slots cut short differs, whose erased slots that layout
+/// wrote the next entry into.
+///
+/// The log is left with no page, so the first write turns to the first
+/// page, and the page read here stays whole until the turn after: a power
+/// cut in that first turn leaves it to be read again.
+fn scan_before(read: &mut impl FnMut(u32, &mut [u8]) -> bool, kept: &mut Kept) -> bool {
+    let mut first = [0u8; SLOT_LEN];
+    if !read(PAGE, &mut first) || word(&first, HEAD) != Some([HEAD, LAYOUT_BEFORE, 0, 0]) {
+        return false;
+    }
+    let mut slot = 1;
+    while slot < SLOTS {
+        let mut e = [0u8; phones::RECORD_LEN];
+        let at = PAGE + slot * SLOT_LEN as u32;
+        if !read(at, &mut e[..SLOT_LEN]) || e[..SLOT_LEN].iter().all(|&b| b == 0xff) {
+            break;
+        }
+        let len = phones::entry_len(e[0]);
+        let slots = (len / SLOT_LEN) as u32;
+        if slots > 1 {
+            if slot + slots > SLOTS || !read(at + SLOT_LEN as u32, &mut e[SLOT_LEN..len]) {
+                break;
+            }
+            kept.phones.entry(&e[..len]);
+            // Cut short: the next entry is in its first erased slot.
+            let erased = (1..slots).find(|&k| {
+                let k = k as usize * SLOT_LEN;
+                e[k..k + SLOT_LEN].iter().all(|&b| b == 0xff)
+            });
+            slot += erased.unwrap_or(slots);
+            continue;
+        }
+        let one: &[u8; SLOT_LEN] = (&e[..SLOT_LEN]).try_into().expect("a slot");
+        kept.stored = Stored::from_record(one).or(kept.stored);
+        kept.offset_min = zone(one).or(kept.offset_min);
+        kept.phones.entry(one);
+        slot += 1;
+    }
+    true
 }
 
 /// The phones' entries as they stand, which a turn writes again.

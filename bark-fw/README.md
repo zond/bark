@@ -213,7 +213,8 @@ Verified on the host:
   with its head left or not, the next boot reads back everything kept
   before the change the cut fell in, that change whole or not at all, and
   the changes written after that boot all hold at the boot after; a page
-  of layout 2 is read as holding nothing (roadmap D241, 2026-11-22).
+  of layout 2 is carried over, through a power cut at any word or erase
+  of its first turn (roadmap D241, 2026-11-22).
 - The phones' records (`cargo test -p bark-link`, `phones`): each entry
   kept whole or, cut at any word, not at all; the last of each kind
   holding; a pairing
@@ -1232,10 +1233,13 @@ writes every kind's latest there, and last that page's head, which names
 the layout, 3, and a generation one above the full page's. A page is
 valid once its head is whole, and at boot the valid page of the later
 generation holds, so a power cut at any moment leaves every pairing and
-home kept before it (roadmap D241). With neither page valid, as on a
-board that kept layout 2 or earlier, the node holds nothing, logs
-`store: no page of this layout; what the pages held is discarded`, and
-is paired again; its first write erases the first page (roadmap D188).
+home kept before it (roadmap D241). A board that kept layout 2, the
+same entries on the second page alone, has no valid page: the node reads
+that page, logs `store: the page is of the layout before; what it holds
+is carried over`, and its first write turns to the first page in this
+layout, the old page whole until the turn after. With neither, the node
+holds nothing, logs `store: no page of this layout; what the pages held
+is discarded`, and is paired again (roadmap D188).
 
 A pairing that completes, is authenticated and bonds takes a free
 record, or replaces the bond of the record whose bond names the same

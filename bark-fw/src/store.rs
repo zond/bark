@@ -140,6 +140,9 @@ impl Flash {
             .expect("nothing writes before the store opens");
         let (log, kept) = bark_fw_logic::store::scan(|at, r| f.read(STORE.start + at, r).is_ok());
         drop(f);
+        if kept.before {
+            log::info!("store: the page is of the layout before; what it holds is carried over");
+        }
         if kept.discarded {
             log::warn!("store: no page of this layout; what the pages held is discarded");
         }
