@@ -29,6 +29,7 @@ mod radio;
 pub mod rng;
 pub mod scenario;
 pub mod sim;
+mod sleepy_data;
 pub mod summary;
 mod tables;
 mod trace;

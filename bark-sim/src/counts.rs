@@ -1,7 +1,6 @@
 //! What each core reports in its traces, counted per node
 //! (`metrics::CoreCounts`) and for the sleepy nodes (`metrics::SleepMetrics`).
 
-use crate::metrics::FirstTry;
 use crate::sim::{key, Sim};
 use bark_proto::Trace;
 
@@ -57,21 +56,13 @@ impl Sim {
                     s.watch_earliest_us = s.watch_earliest_us.min(offset_us as i64);
                 }
             }
-            Trace::Delivered { msg_id, .. } => {
-                c.delivered += 1;
-                self.first_try.remove(&(node, msg_id.0));
-            }
-            Trace::DeliveryWaits {
-                msg_id,
-                node: to,
-                tried,
-            } => {
+            Trace::Delivered { .. } => c.delivered += 1,
+            Trace::DeliveryWaits { tried, .. } => {
                 if tried {
                     c.deliveries_failed += 1;
                 } else {
                     c.deliveries_late += 1;
                 }
-                self.delivery_waits(node, msg_id.0, key(to), tried)
             }
             Trace::Forwarded { hops, .. } => {
                 c.handed_over += 1;
@@ -112,29 +103,5 @@ impl Sim {
             }
             _ => {}
         }
-    }
-
-    /// A delivery by `holder` of `msg` to the node `to` waits for its next
-    /// beat: count it by its window and its first DATA.
-    fn delivery_waits(&mut self, holder: u32, msg: u32, to: u64, tried: bool) {
-        let first = self.first_try.remove(&(holder, msg));
-        let Some(&n) = self.sleepy_index.get(&to) else {
-            return;
-        };
-        if self.now < self.settle {
-            return;
-        }
-        let (window, how) = match (first, tried) {
-            (Some(f), _) => f,
-            (None, t) => {
-                let how = if t {
-                    FirstTry::NotSent
-                } else {
-                    FirstTry::NotStarted
-                };
-                (self.window_of(n), how)
-            }
-        };
-        self.metrics.sleep.waited[window][how as usize] += 1;
     }
 }

@@ -13,9 +13,9 @@
 //! at, it is first brought up to the present (`settle`), and a loss found
 //! then is dated to when the budget ran out.
 
-use crate::metrics::{AddrFate, FirstTry, LostHow, Outcome, ToSleepyFate, BOOT_MINUTE};
+use crate::metrics::{AddrFate, LostHow, Outcome, BOOT_MINUTE};
 use crate::phy::{self, Deaf, Loss};
-use crate::sim::{key, Arrival, ExKind, FrameKind, Lock, Rx, Sim, ToSleepy};
+use crate::sim::{key, Arrival, ExKind, FrameKind, Lock, Rx, Sim};
 use crate::walk::MovingLink;
 use bark_proto::radio::{header_end, CHANNELS, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::sniff;
@@ -135,48 +135,11 @@ impl Sim {
         {
             self.beat_losses.insert(tx_key, Vec::new());
         }
-        if let Some(WirePacket::Data(d)) = decoded {
-            if let Some(&n) = self.sleepy_index.get(&key(d.dst_hop)) {
-                let st = &self.nodes[n as usize];
-                // Receiving duty-cycled, it catches the long preamble only.
-                let short = preamble < sniff::LONG_PREAMBLE_SYMBOLS;
-                let sniffing = st.sniffing_at(self.now).is_some();
-                let deaf = sniffing && short;
-                let since = st.sniff_since;
-                let to = ToSleepy {
-                    node: n,
-                    deaf,
-                    absent: !st.alive || !st.present,
-                    holder: src,
-                    msg: d.msg_id().0,
-                    window: self.window_of(n),
-                    lost: None,
-                };
-                self.to_sleepy.insert(tx_key, to);
-                if !short {
-                    self.note_long_try(d.msg_id().0, src);
-                    let r = self.relay(n);
-                    let anchor = r.anchor().map(|a| a.id).filter(|_| r.sleepy());
-                    if anchor.is_some() && d.dst_hop == d.dst_id {
-                        let by = usize::from(anchor != Some(d.src_hop));
-                        let l = &mut self.metrics.sleep.long_to_node[by];
-                        l[0] += 1;
-                        l[1] += air;
-                    }
-                }
-                if deaf && self.now >= self.settle {
-                    let anchor = self.relay(n).anchor().map(|a| a.id);
-                    let by = usize::from(anchor != Some(d.src_hop));
-                    // The anchor's retry after the node slept on an ACK
-                    // that was lost: three attempts and their waits.
-                    let late = usize::from(self.now.since(since) >= Duration::from_secs(5));
-                    self.metrics.sleep.to_deaf[by][late] += 1;
-                }
-            }
+        if let Some(WirePacket::Data(d)) = &decoded {
+            self.sleepy_data_starts(tx_key, src, preamble, air, d);
         }
         if beat == Some(true) && src >= self.relays() {
-            let i = (src - self.relays()) as usize;
-            self.beat_took[i].0 = self.now;
+            self.sleepy_data_beat(src);
         }
         let m = &mut self.metrics;
         if let Some(WirePacket::Ack(a)) = decoded {
@@ -346,37 +309,7 @@ impl Sim {
             }
         }
         self.holders_beat_ends(tx.key, tx.src, &got);
-        if let Some(t) = self.to_sleepy.remove(&tx.key) {
-            let received = got.iter().any(|g| g.0 == t.node);
-            let (fate, how) = if received {
-                let i = (t.node - self.relays()) as usize;
-                self.beat_took[i].1 = self.now;
-                (ToSleepyFate::Received, FirstTry::Received)
-            } else if t.deaf {
-                (ToSleepyFate::Unheard, FirstTry::Deaf)
-            } else if t.absent {
-                (ToSleepyFate::Lost, FirstTry::Absent)
-            } else {
-                let how = match t.lost {
-                    Some(Outcome::BelowSensitivity) => FirstTry::Weak,
-                    Some(
-                        Outcome::LostCapture
-                        | Outcome::SinrFail { .. }
-                        | Outcome::Deaf(Deaf::Corrupt),
-                    ) => FirstTry::Collided,
-                    Some(Outcome::Deaf(Deaf::Sniff)) => FirstTry::Deaf,
-                    Some(Outcome::Deaf(_)) => FirstTry::Busy,
-                    _ => FirstTry::Unheard,
-                };
-                (ToSleepyFate::Lost, how)
-            };
-            if self.now >= self.settle {
-                self.metrics.sleep.to_sleepy[fate as usize] += 1;
-            }
-            self.first_try
-                .entry((t.holder, t.msg))
-                .or_insert((t.window, how));
-        }
+        self.sleepy_data_ends(tx.key, &got);
         let heartbeat = matches!(
             WirePacket::decode(tx.frame.payload()),
             Ok(WirePacket::Heartbeat(h)) if !h.sleepy
@@ -550,7 +483,7 @@ impl Sim {
                     Lock::Rx(r) if now < r.preamble_end && a.dbm >= r.dbm + cap - DB_EPS => {
                         // Stronger preamble during the locked one's: steal.
                         self.metrics.outcome(b, r.channel, Outcome::LostCapture);
-                        self.note_to_sleepy(r.key, b, Outcome::LostCapture);
+                        self.note_lost(r.key, b, Outcome::LostCapture);
                         locked = true;
                         None
                     }
@@ -563,7 +496,7 @@ impl Sim {
             if let Some(o) = outcome {
                 let how = self.how_of(b, lost_on, a.key, false);
                 self.metrics.outcome(b, a.channel, o);
-                self.note_to_sleepy(a.key, b, o);
+                self.note_lost(a.key, b, o);
                 self.note_addressed_loss(a.key, b, o, how);
             }
             if let Some(r) = overrun {
@@ -577,7 +510,7 @@ impl Sim {
                 let o = Outcome::LostToLater;
                 let how = self.how_of(b, Some(a.key), r.key, true);
                 self.metrics.outcome(b, r.channel, o);
-                self.note_to_sleepy(r.key, b, o);
+                self.note_lost(r.key, b, o);
                 self.note_addressed_loss(r.key, b, o, how);
             }
             if locked {
@@ -650,20 +583,18 @@ impl Sim {
             Loss::Adjacent => Outcome::SinrFail { adjacent: true },
         };
         self.metrics.outcome(b, r.channel, o);
-        self.note_to_sleepy(r.key, b, o);
+        self.note_lost(r.key, b, o);
         self.note_addressed_loss(r.key, b, o, r.max_i_how);
         if r.threshold_ok {
             self.metrics.disagreement(b, r.channel, false);
         }
     }
 
-    /// Note why the DATA `key` to a sleepy node was lost there, if `b` is
-    /// that node.
-    fn note_to_sleepy(&mut self, key: u64, b: u32, o: Outcome) {
+    /// `b` lost the frame `key` to `o`: noted for a heartbeat or a beat
+    /// followed, and for a DATA to `b` if it is sleepy.
+    fn note_lost(&mut self, key: u64, b: u32, o: Outcome) {
         self.note_beat_loss(key, b, o);
-        if let Some(t) = self.to_sleepy.get_mut(&key).filter(|t| t.node == b) {
-            t.lost = Some(o);
-        }
+        self.sleepy_data_lost(key, b, o);
     }
 
     /// Note why `b` lost the frame `key`, if it is a heartbeat followed
