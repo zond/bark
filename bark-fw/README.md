@@ -1060,9 +1060,10 @@ picture, and `qr.py check` decodes it with two more decoders and writes
 it as `target/bark-screen/code.png`. The code is version 3, 29 × 29
 modules, at error correction level H, the smallest version that holds
 the address's 19 bytes at H (24 bytes; version 2 holds 14), drawn 5
-pixels a module, 145 pixels, centred across and near the top, with 2
-modules clear above and below, where the standard asks 4 and phones'
-readers take 2, and more at the sides. Level H restores about 30 % of
+pixels a module, 145 pixels, centred across, with 2 modules clear above
+and below, where the standard asks 4 and phones' readers take 2, and
+more at the sides: the reset button's label is a row above that clear
+zone and the user button's a row under the line. Level H restores about 30 % of
 the codewords (ISO/IEC 18004), so the web over the centre, 61 of the 841
 modules and none of the finder, timing, alignment or format patterns,
 leaves it readable:
@@ -1151,10 +1152,13 @@ release does nothing. A shorter press, let go before the 3 s, flips the
 picture, debounced 40 ms. A press of the reset button resets
 the chip into the image it ran; a double tap within half a second
 enters the bootloader instead (Flash, above), which the screen does not
-say. The lines label both at their left edge, in 1-pixel text on the
-margin nearer each, after an arrow pointing at the button: `REBOOT`
-at the top, and at the bottom the role a hold would give, `SLEEP (3s)`
-or `WAKE (3s)`. The screen says nothing of a forced role. The board's touch pad is
+say. Both pictures label both at their left edge, in 1-pixel text on
+the margin nearer each, after an arrow pointing at the button: `REBOOT`
+at the top, and at the bottom what the user button does there: on the
+code `INFO`, the press that shows the lines, and on the lines the role
+a hold would give, `SLEEP (3s)` or `WAKE (3s)`. A hold flips the role
+from the code too, which the code does not say. The screen says nothing
+of a forced role. The board's touch pad is
 not used: it read differently from board to board, and on one not at
 all (roadmap D206). The ten lines
 start 10 px down to make room.

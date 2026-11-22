@@ -443,15 +443,29 @@ pub const LINES: usize = 10;
 const _: () = assert!(TOP + (LINES * line_height(SCALE)) + GAP <= ROLE_TOP);
 const _: () = assert!(REBOOT_TOP + GLYPH_HEIGHT * LABEL_SCALE < TOP);
 
-/// The buttons' labels on the lines, each with its top row: the user
-/// button's says the role a long press would turn the node to
-/// (spec "Screen and buttons").
-pub fn labels(state: &State) -> [(&'static str, usize); 2] {
-    let role = match state.sleepy {
-        false => "SLEEP (3s)",
-        true => "WAKE (3s)",
+/// The buttons' labels on `face`, each with its top row. The user
+/// button's says what it does there: on the code, that a press shows the
+/// node's state; on the lines, the role a long press would turn the node
+/// to (spec "Screen and buttons").
+pub fn labels(face: Face, state: &State) -> [(&'static str, usize); 2] {
+    let user = match (face, state.sleepy) {
+        (Face::Code, _) => "INFO",
+        (Face::Lines, false) => "SLEEP (3s)",
+        (Face::Lines, true) => "WAKE (3s)",
     };
-    [("REBOOT", REBOOT_TOP), (role, ROLE_TOP)]
+    [("REBOOT", REBOOT_TOP), (user, ROLE_TOP)]
+}
+
+/// The glyphs of the longest label on the code, `REBOOT`.
+const CODE_LABEL: usize = 6;
+
+/// Whether the pixel `(x, y)` is a label's on the code, within a row of
+/// one or within a glyph's width after it: the web's threads stay out of
+/// it (`qr.rs`), so that none reads as a mark of the text.
+pub(crate) fn by_code_label(x: usize, y: usize) -> bool {
+    let right = LABEL_LEFT + ARROW + 2 + (CODE_LABEL + 1) * CELL * LABEL_SCALE;
+    let rows = GLYPH_HEIGHT * LABEL_SCALE;
+    x <= right && (y <= REBOOT_TOP + rows || y + 1 >= ROLE_TOP)
 }
 
 /// The screen's lines, each with the row its top edge is at, for `state`
@@ -632,9 +646,6 @@ pub fn draw(
             for (text, y) in lines(fixed, state, up_min, clock).iter().flatten() {
                 picture.text(text.bytes(), SCALE, *y);
             }
-            for (label, y) in labels(state) {
-                picture.label(label.as_bytes(), y);
-            }
         }
         Face::Code => {
             for part in 0..qr::PARTS {
@@ -642,6 +653,9 @@ pub fn draw(
             }
             picture.text(code_line(fixed, state).bytes(), SCALE, qr::LINE_TOP);
         }
+    }
+    for (label, y) in labels(face, state) {
+        picture.label(label.as_bytes(), y);
     }
 }
 

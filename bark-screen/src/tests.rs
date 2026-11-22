@@ -458,36 +458,61 @@ fn the_code_s_line() {
     assert_eq!(line(Phone::Full), "PHONES      FULL");
 }
 
-/// Beside each button that changes something, what it does: the reset
-/// button reboots; the user button, held, flips the role. Only on the
-/// lines.
+/// Beside each button, what it does: the reset button reboots; the user
+/// button shows the node's state from the code and, held, flips the role
+/// from the lines.
 #[test]
 fn the_buttons_labelled() {
-    let label = |state: State| labels(&state).map(|(t, _)| t);
-    assert_eq!(label(State::default()), ["REBOOT", "SLEEP (3s)"]);
+    let label = |face, state: State| labels(face, &state).map(|(t, _)| t);
+    assert_eq!(
+        label(Face::Lines, State::default()),
+        ["REBOOT", "SLEEP (3s)"]
+    );
     let sleepy = State {
         sleepy: true,
         battery: Battery::Low,
         ..State::default()
     };
-    assert_eq!(label(sleepy), ["REBOOT", "WAKE (3s)"]);
-    for (t, _) in labels(&State::default()) {
-        assert!(t.bytes().all(|c| glyph(c).is_some()));
+    assert_eq!(label(Face::Lines, sleepy), ["REBOOT", "WAKE (3s)"]);
+    assert_eq!(label(Face::Code, State::default()), ["REBOOT", "INFO"]);
+    assert_eq!(label(Face::Code, sleepy), ["REBOOT", "INFO"]);
+    for face in [Face::Code, Face::Lines] {
+        for (t, _) in labels(face, &State::default()) {
+            assert!(t.bytes().all(|c| glyph(c).is_some()));
+        }
+        // At the left edge, in the margins.
+        let mut p = Picture::white();
+        draw(&mut p, face, &FIXED, &State::default(), 3, CLOCKS[1]);
+        for top in [REBOOT_TOP, ROLE_TOP] {
+            let rows = top..top + GLYPH_HEIGHT * LABEL_SCALE;
+            let left = (0..WIDTH).find(|&x| rows.clone().any(|y| p.black(x, y)));
+            assert_eq!(left, Some(LABEL_LEFT));
+        }
+        if let (Face::Lines, Some(path)) = (face, std::env::var_os("BARK_SCREEN_LINES")) {
+            std::fs::write(path, crate::qr::tests::pbm(&p)).unwrap();
+        }
     }
-    // At the left edge, in the margins; and not on the code.
+    // On the code nothing but a label is beside one, and the labels are
+    // out of the code's quiet zone.
+    let mut only = Picture::white();
+    for (t, top) in labels(Face::Code, &State::default()) {
+        assert!(t.len() <= CODE_LABEL);
+        only.label(t.as_bytes(), top);
+    }
     let mut p = Picture::white();
-    draw(&mut p, Face::Lines, &FIXED, &State::default(), 3, CLOCKS[1]);
-    let left = (0..WIDTH).find(|&x| (ROLE_TOP..HEIGHT).any(|y| p.black(x, y)));
-    assert_eq!(left, Some(LABEL_LEFT));
-    if let Some(path) = std::env::var_os("BARK_SCREEN_LINES") {
-        std::fs::write(path, crate::qr::tests::pbm(&p)).unwrap();
+    draw(&mut p, Face::Code, &FIXED, &State::default(), 3, None);
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            if by_code_label(x, y) {
+                assert_eq!(p.black(x, y), only.black(x, y), "({x}, {y})");
+            } else {
+                assert!(!only.black(x, y), "({x}, {y})");
+            }
+        }
     }
-    let mut q = Picture::white();
-    draw(&mut q, Face::Code, &FIXED, &State::default(), 3, None);
-    let mut with = Picture::white();
-    with.bytes = q.bytes;
-    with.label(b"REBOOT", REBOOT_TOP);
-    assert!(with.bytes != q.bytes, "the code shows no label");
+    let quiet = crate::qr::QUIET * crate::qr::MODULE;
+    assert!(REBOOT_TOP + GLYPH_HEIGHT * LABEL_SCALE < crate::qr::TOP - quiet);
+    assert!(crate::qr::TOP + crate::qr::SIDE + quiet <= ROLE_TOP);
 }
 
 /// The one lowercase letter is its own, not the capital.

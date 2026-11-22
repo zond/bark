@@ -2410,6 +2410,7 @@ protocol needs this of them:
 | | |
 |---|---|
 | by default | a QR code of the project's page, `zond.github.io/bark`, and the node's ID under it |
+| beside each button | what it does: `REBOOT` at the reset button; at the user button `INFO` on the code and, on the node's state, the role a hold would give, `SLEEP (3s)` or `WAKE (3s)` |
 | while a phone pairs | `PAIR CODE` and the passkey, drawn as soon as the pairing asks for it ([pairing](#pairing)), until the pairing ends or is abandoned |
 | while a change to the phones waits | `CONFIRM` and its code ([phones](#phones)), at most 30 s |
 | after a pairing refused for want of room | `PHONES FULL`, 30 s |

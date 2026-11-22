@@ -7,7 +7,8 @@
 //! 14 (ISO/IEC 18004, the data capacity table). Level H restores about 30 %
 //! of the codewords, so the emblem may cover some modules: it covers about
 //! 7 % of them, which the decoders read through (`scripts/qr.py check`).
-//! The threads stay out of the code and the quiet zone around it.
+//! The threads stay out of the code, the quiet zone around it and the
+//! buttons' labels.
 
 use crate::{Picture, HEIGHT, WIDTH};
 
@@ -24,15 +25,16 @@ pub const SIDE: usize = SIZE * MODULE;
 /// and below beside the line of text, and phones' readers take 2; there
 /// are more than 4 at the sides.
 pub const QUIET: usize = 2;
-/// The code's top left corner: centred across, and high enough that the
-/// line under it is clear of the quiet zone.
+/// The code's top left corner: centred across, and as high as leaves its
+/// quiet zone a row clear of the reset button's label above it.
 pub const LEFT: usize = (WIDTH - SIDE) / 2;
-pub const TOP: usize = 12;
-/// The top of the line under the code.
-pub const LINE_TOP: usize = TOP + SIDE + QUIET * MODULE + 5;
+pub const TOP: usize =
+    crate::REBOOT_TOP + crate::GLYPH_HEIGHT * crate::LABEL_SCALE + 1 + QUIET * MODULE;
+/// The top of the line under the code: two rows under the quiet zone,
+/// which ends the line a row above the user button's label.
+pub const LINE_TOP: usize = TOP + SIDE + QUIET * MODULE + 2;
 
-const _: () = assert!(TOP >= QUIET * MODULE);
-const _: () = assert!(LINE_TOP + crate::line_height(crate::SCALE) <= HEIGHT);
+const _: () = assert!(LINE_TOP + crate::line_height(crate::SCALE) <= crate::ROLE_TOP);
 
 /// The emblem's radius, pixels from the code's centre, inside which the
 /// modules are cleared: a module whose centre falls inside is one of
@@ -121,16 +123,19 @@ fn emblem(picture: &mut Picture) {
 }
 
 /// The web beyond the code: the radials continued to the panel's edge and
-/// two frame threads across them, drawn only outside the code's quiet zone
-/// and the line of text.
+/// two frame threads across them, drawn only outside the code's quiet
+/// zone, the line of text and the buttons' labels.
 fn threads(picture: &mut Picture) {
     let (hx, hy) = hub();
     let clear = (QUIET * MODULE) as i32;
     let (l, t) = (LEFT as i32 - clear, TOP as i32 - clear);
     let (r, b) = (l + (SIDE as i32) + 2 * clear, t + (SIDE as i32) + 2 * clear);
     let text = LINE_TOP as i32 - 2..(LINE_TOP + crate::line_height(crate::SCALE)) as i32;
-    let margin =
-        |x: i32, y: i32| !((l..r).contains(&x) && (t..b).contains(&y)) && !text.contains(&y);
+    let margin = |x: i32, y: i32| {
+        !((l..r).contains(&x) && (t..b).contains(&y))
+            && !text.contains(&y)
+            && !crate::by_code_label(x as usize, y as usize)
+    };
     // Past the panel's farthest corner from the hub, 100 √2 pixels.
     let far = 150 * 1000;
     for k in 0..12 {

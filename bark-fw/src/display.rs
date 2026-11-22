@@ -496,9 +496,6 @@ mod node {
                         picture.text(text.bytes(), bark_screen::SCALE, *y);
                         embassy_futures::yield_now().await;
                     }
-                    for (label, y) in bark_screen::labels(&state) {
-                        picture.label(label.as_bytes(), y);
-                    }
                 }
                 Face::Code => {
                     for part in 0..bark_screen::qr::PARTS {
@@ -508,6 +505,9 @@ mod node {
                     let line = bark_screen::code_line(&fixed, &state);
                     picture.text(line.bytes(), bark_screen::SCALE, bark_screen::qr::LINE_TOP);
                 }
+            }
+            for (label, y) in bark_screen::labels(face, &state) {
+                picture.label(label.as_bytes(), y);
             }
             let outcome = screen.draw(picture).await;
             // The boot's outcome is the first picture's.
