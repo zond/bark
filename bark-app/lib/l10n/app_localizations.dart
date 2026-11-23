@@ -970,6 +970,474 @@ abstract class AppLocalizations {
   /// **'part {part} of {total} not yet here'**
   String threadPartMissing(int part, int total);
 
+  /// The words of the mark on a received text that came as a first message, read as its tooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Came as a first message, which anyone could have made'**
+  String get threadUnverifiedMark;
+
+  /// A sent text's details: the node it went to.
+  ///
+  /// In en, this message translates to:
+  /// **'To node'**
+  String get threadToNode;
+
+  /// A sent text's details: the position of the node it went to.
+  ///
+  /// In en, this message translates to:
+  /// **'At'**
+  String get threadAt;
+
+  /// A text's details: how it was encrypted, such as threadSealedForThem.
+  ///
+  /// In en, this message translates to:
+  /// **'Sealed'**
+  String get threadSealed;
+
+  /// How a sent text was encrypted, after threadSealed. Lower case, as it follows other words; so are the other threadSealed… values.
+  ///
+  /// In en, this message translates to:
+  /// **'for them alone'**
+  String get threadSealedForThem;
+
+  /// No description provided for @threadSealedIntroOut.
+  ///
+  /// In en, this message translates to:
+  /// **'as a first message, with your card'**
+  String get threadSealedIntroOut;
+
+  /// How a received text was encrypted.
+  ///
+  /// In en, this message translates to:
+  /// **'by them, for you alone'**
+  String get threadSealedForYou;
+
+  /// No description provided for @threadSealedIntroIn.
+  ///
+  /// In en, this message translates to:
+  /// **'to you, as a first message'**
+  String get threadSealedIntroIn;
+
+  /// A text's details: the label of its parts' message IDs; count is how many.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Message ID} other{Message IDs}}'**
+  String threadMessageIds(int count);
+
+  /// A received text's details: when the sender wrote it.
+  ///
+  /// In en, this message translates to:
+  /// **'Written'**
+  String get threadWritten;
+
+  /// A received text's details: how many of its parts have come, as threadPartsOf.
+  ///
+  /// In en, this message translates to:
+  /// **'Parts here'**
+  String get threadPartsHere;
+
+  /// No description provided for @threadPartsOf.
+  ///
+  /// In en, this message translates to:
+  /// **'{here} of {total}'**
+  String threadPartsOf(int here, int total);
+
+  /// The title of the choice where a text goes.
+  ///
+  /// In en, this message translates to:
+  /// **'Send to'**
+  String get threadSendTo;
+
+  /// {ago} is how long ago, such as timeMinutesAgo.
+  ///
+  /// In en, this message translates to:
+  /// **'Last seen there {ago}'**
+  String threadLastSeenThere(String ago);
+
+  /// Send the text to where the contact last was. {ago} is how long ago, such as timeMinutesAgo.
+  ///
+  /// In en, this message translates to:
+  /// **'Where {name} was {ago}'**
+  String threadWhereWas(String name, String ago);
+
+  /// Under the choice threadWhereWas: the text goes to the node where the contact last was.
+  ///
+  /// In en, this message translates to:
+  /// **'Fast if they are still near there'**
+  String get threadThereHow;
+
+  /// One of the two places a text can be sent to; the other is threadWhereWas.
+  ///
+  /// In en, this message translates to:
+  /// **'Their home node'**
+  String get threadTheirHome;
+
+  /// Under the choice threadTheirHome: the text goes to the contact's home node.
+  ///
+  /// In en, this message translates to:
+  /// **'Waits at their home until they fetch it'**
+  String get threadHomeHow;
+
+  /// No description provided for @threadNotSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Not sent: {error}'**
+  String threadNotSent(String error);
+
+  /// Under the contact's name at the top of a conversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Has not written yet'**
+  String get threadNotWritten;
+
+  /// Under the contact's name. {ago} is how long ago, such as timeMinutesAgo.
+  ///
+  /// In en, this message translates to:
+  /// **'Last wrote {ago}'**
+  String threadLastWrote(String ago);
+
+  /// No description provided for @threadLastWroteHome.
+  ///
+  /// In en, this message translates to:
+  /// **'Last wrote {ago}, from their home'**
+  String threadLastWroteHome(String ago);
+
+  /// No description provided for @threadLastWroteAway.
+  ///
+  /// In en, this message translates to:
+  /// **'Last wrote {ago}, away from home'**
+  String threadLastWroteAway(String ago);
+
+  /// No description provided for @threadRename.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename'**
+  String get threadRename;
+
+  /// No description provided for @threadShareHome.
+  ///
+  /// In en, this message translates to:
+  /// **'Share my home node'**
+  String get threadShareHome;
+
+  /// No description provided for @threadArchiveConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Archive conversation'**
+  String get threadArchiveConversation;
+
+  /// No description provided for @threadContactArchived.
+  ///
+  /// In en, this message translates to:
+  /// **'{name}: contact archived'**
+  String threadContactArchived(String name);
+
+  /// No description provided for @threadArchiveContact.
+  ///
+  /// In en, this message translates to:
+  /// **'Archive contact'**
+  String get threadArchiveContact;
+
+  /// No description provided for @threadRemoveTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {name}?'**
+  String threadRemoveTitle(String name);
+
+  /// No description provided for @threadRemoveHow.
+  ///
+  /// In en, this message translates to:
+  /// **'Their texts stay; to write again, add their card.'**
+  String get threadRemoveHow;
+
+  /// The button that removes a contact, in the dialog that asks.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get threadRemove;
+
+  /// No description provided for @threadRemoveContact.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove contact'**
+  String get threadRemoveContact;
+
+  /// No description provided for @threadNotVerified.
+  ///
+  /// In en, this message translates to:
+  /// **'Not verified yet: their first reply proves it is them.'**
+  String get threadNotVerified;
+
+  /// No description provided for @threadIsArchived.
+  ///
+  /// In en, this message translates to:
+  /// **'This conversation is archived.'**
+  String get threadIsArchived;
+
+  /// No description provided for @threadWasRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'This contact was removed.'**
+  String get threadWasRemoved;
+
+  /// No description provided for @threadNoNode.
+  ///
+  /// In en, this message translates to:
+  /// **'{name}\'s card names no node yet: ask them for a new one.'**
+  String threadNoNode(String name);
+
+  /// The title of the field that renames a contact.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get threadName;
+
+  /// Under the field being written: how many messages the text takes, two or more.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{{count} part} other{{count} parts}}'**
+  String threadParts(int count);
+
+  /// As threadParts, when the text takes more messages than {max}, the most it may.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{{count} part, {max} at most} other{{count} parts, {max} at most}}'**
+  String threadTooManyParts(int count, int max);
+
+  /// The hint in the empty field where the person writes a text.
+  ///
+  /// In en, this message translates to:
+  /// **'Text'**
+  String get threadHint;
+
+  /// The send button's tooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Send'**
+  String get threadSend;
+
+  /// {emoji} is the emoji's name, in English.
+  ///
+  /// In en, this message translates to:
+  /// **'They reacted: {emoji}'**
+  String threadTheyReacted(String emoji);
+
+  /// {emoji} is the emoji's name, in English.
+  ///
+  /// In en, this message translates to:
+  /// **'You reacted: {emoji}'**
+  String threadYouReacted(String emoji);
+
+  /// No description provided for @threadCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy text'**
+  String get threadCopy;
+
+  /// The mark on a sent text that went to where the contact last was.
+  ///
+  /// In en, this message translates to:
+  /// **'To where they were'**
+  String get threadToWhere;
+
+  /// A mark on a sent text, as threadToWhere is: where it was sent.
+  ///
+  /// In en, this message translates to:
+  /// **'To their home'**
+  String get threadToHome;
+
+  /// The mark on a sent text the node has taken.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent into the network, which does not say when it arrives'**
+  String get threadTakenMark;
+
+  /// No description provided for @threadReactionSeen.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} sees your reaction on their text.'**
+  String threadReactionSeen(String name);
+
+  /// The emoji's names are in English only, so a search finds English words.
+  ///
+  /// In en, this message translates to:
+  /// **'Search emoji by name'**
+  String get emojiSearch;
+
+  /// No description provided for @emojiNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No emoji by that name.'**
+  String get emojiNone;
+
+  /// Unicode's groups of emoji, as the picker shows them.
+  ///
+  /// In en, this message translates to:
+  /// **'Smileys & emotion'**
+  String get emojiSmileys;
+
+  /// No description provided for @emojiPeople.
+  ///
+  /// In en, this message translates to:
+  /// **'People & body'**
+  String get emojiPeople;
+
+  /// No description provided for @emojiAnimals.
+  ///
+  /// In en, this message translates to:
+  /// **'Animals & nature'**
+  String get emojiAnimals;
+
+  /// No description provided for @emojiFood.
+  ///
+  /// In en, this message translates to:
+  /// **'Food & drink'**
+  String get emojiFood;
+
+  /// No description provided for @emojiTravel.
+  ///
+  /// In en, this message translates to:
+  /// **'Travel & places'**
+  String get emojiTravel;
+
+  /// No description provided for @emojiActivities.
+  ///
+  /// In en, this message translates to:
+  /// **'Activities'**
+  String get emojiActivities;
+
+  /// No description provided for @emojiObjects.
+  ///
+  /// In en, this message translates to:
+  /// **'Objects'**
+  String get emojiObjects;
+
+  /// No description provided for @emojiSymbols.
+  ///
+  /// In en, this message translates to:
+  /// **'Symbols'**
+  String get emojiSymbols;
+
+  /// No description provided for @emojiFlags.
+  ///
+  /// In en, this message translates to:
+  /// **'Flags'**
+  String get emojiFlags;
+
+  /// Why a text was not sent; lower case, as it follows other words, such as threadNotSent's.
+  ///
+  /// In en, this message translates to:
+  /// **'no address to answer to yet'**
+  String get sendNoReturnAddress;
+
+  /// Why a text was not sent; follows other words, such as threadNotSent's.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} has no address yet'**
+  String sendNoAddress(String name);
+
+  /// Why a text was not sent; lower case, as it follows other words.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{too long: {count} part, {max} at most} other{too long: {count} parts, {max} at most}}'**
+  String sendTooLong(int count, int max);
+
+  /// Why a text cannot be sent, under the field and after threadNotSent's words; lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'a character too long to send'**
+  String get sendCharTooLong;
+
+  /// No description provided for @sessionBadValue.
+  ///
+  /// In en, this message translates to:
+  /// **'The node sent a value this app cannot read: {error}'**
+  String sessionBadValue(String error);
+
+  /// No description provided for @sessionReadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Reading the node failed: {error}'**
+  String sessionReadFailed(String error);
+
+  /// Why something failed; lower case, as it follows words such as "Setting Public failed: ".
+  ///
+  /// In en, this message translates to:
+  /// **'not connected'**
+  String get sessionNotConnected;
+
+  /// Why something failed for a guest. The value is the English name of what was asked of the node, such as Public or Phones.
+  ///
+  /// In en, this message translates to:
+  /// **'{what} is the paired phone\'s alone'**
+  String sessionPairedOnly(String what);
+
+  /// No description provided for @sessionHomeTaken.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home no longer keeps your mail. Set it again in Settings.'**
+  String get sessionHomeTaken;
+
+  /// {id} is a message ID in hex.
+  ///
+  /// In en, this message translates to:
+  /// **'The node gave back message {id}, which this app did not send.'**
+  String sessionGivenBackUnknown(String id);
+
+  /// No description provided for @sessionSendFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending failed: {error}'**
+  String sessionSendFailed(String error);
+
+  /// No description provided for @sessionConfirmRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'The node refused the inbox confirmation: {error}'**
+  String sessionConfirmRefused(String error);
+
+  /// No description provided for @sessionInboxFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Reading the inbox failed: {error}'**
+  String sessionInboxFailed(String error);
+
+  /// No description provided for @sessionPlaceFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Setting the node\'s place failed: {error}'**
+  String sessionPlaceFailed(String error);
+
+  /// What the home node answered a fetch of the mail.
+  ///
+  /// In en, this message translates to:
+  /// **'No new mail'**
+  String get sessionNoNewMail;
+
+  /// After a fetch of the mail: how many texts the home node still keeps beyond those it sent.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{{count} more at home: fetch again for them} other{{count} more at home: fetch again for them}}'**
+  String sessionMoreAtHome(int count);
+
+  /// The node's clock, on the debug screen: it has no time. {offset} is its offset from UTC, such as UTC+01:00.
+  ///
+  /// In en, this message translates to:
+  /// **'no time, offset {offset}'**
+  String sessionClockNone(String offset);
+
+  /// The node's clock, set from its GPS. {time} is the UTC time in ISO 8601.
+  ///
+  /// In en, this message translates to:
+  /// **'{time} from the gps, offset {offset}'**
+  String sessionClockGps(String time, String offset);
+
+  /// The node's clock, set from a phone.
+  ///
+  /// In en, this message translates to:
+  /// **'{time} from the phone, offset {offset}'**
+  String sessionClockPhone(String time, String offset);
+
   /// The help under the row Role of a node's sheet on the map; the other fact messages are the help of the rows they name.
   ///
   /// In en, this message translates to:

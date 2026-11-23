@@ -9,6 +9,7 @@ import '../app_layer.dart';
 import '../contacts.dart';
 import '../conversations.dart';
 import '../emojis.dart';
+import '../l10n.dart';
 import '../link.dart';
 import '../session.dart';
 import 'archived_screen.dart';
@@ -16,7 +17,7 @@ import 'common.dart';
 
 /// The mark on a received text that came as a first message: only a box
 /// proves its sender, so a verified thread may still hold such a text.
-const unverifiedText = 'Came as a first message, which anyone could have made';
+String get unverifiedText => tr.threadUnverifiedMark;
 
 /// The height of the reaction chip, which sits half over the bubble's
 /// lower edge; its other half is room below the bubble.
@@ -36,17 +37,17 @@ String _at(Position p) =>
 List<(String, String)> sentDetails(List<Outgoing> outs) {
   final o = outs.first;
   final sealed = switch (formOf(o.payload)) {
-    Form.boxed => 'for them alone',
-    Form.introduction => 'as a first message, with your card',
+    Form.boxed => tr.threadSealedForThem,
+    Form.introduction => tr.threadSealedIntroOut,
     _ => null,
   };
   return [
-    ('To node', nodeLabel(o.dst.id)),
-    ('At', _at(o.dst.pos)),
-    if (o.of > 1) ('Parts', '${o.of}'),
-    if (sealed != null) ('Sealed', sealed),
+    (tr.threadToNode, nodeLabel(o.dst.id)),
+    (tr.threadAt, _at(o.dst.pos)),
+    if (o.of > 1) (tr.receivedParts, '${o.of}'),
+    if (sealed != null) (tr.threadSealed, sealed),
     (
-      outs.length > 1 ? 'Message IDs' : 'Message ID',
+      tr.threadMessageIds(outs.length),
       outs.map((o) => msgIdHex(o.id)).join(', '),
     ),
   ];
@@ -59,16 +60,17 @@ List<(String, String)> receivedDetails(Entry e) {
   final r = e.arrived.first;
   final first = r.first;
   final sealed = switch (formOf(r.payload)) {
-    Form.boxed => 'by them, for you alone',
-    Form.introduction => 'to you, as a first message',
+    Form.boxed => tr.threadSealedForYou,
+    Form.introduction => tr.threadSealedIntroIn,
     _ => null,
   };
   return [
-    if (first != null) ('Written', when(timeOfSent(first).toLocal())),
-    if (r.of > 1) ('Parts here', '${e.arrived.length} of ${r.of}'),
-    if (sealed != null) ('Sealed', sealed),
+    if (first != null) (tr.threadWritten, when(timeOfSent(first).toLocal())),
+    if (r.of > 1)
+      (tr.threadPartsHere, tr.threadPartsOf(e.arrived.length, r.of)),
+    if (sealed != null) (tr.threadSealed, sealed),
     (
-      e.arrived.length > 1 ? 'Message IDs' : 'Message ID',
+      tr.threadMessageIds(e.arrived.length),
       e.arrived.map((r) => msgIdHex(r.id)).join(', '),
     ),
   ];
@@ -120,12 +122,12 @@ class _ThreadScreenState extends State<ThreadScreen> {
         : await showDialog<Toward>(
             context: context,
             builder: (context) => SimpleDialog(
-              title: const Text('Send to'),
+              title: Text(tr.threadSendTo),
               children: [
                 if (to.card.home == null && stale != null)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-                    child: Text('Last seen there ${ago(stale)}'),
+                    child: Text(tr.threadLastSeenThere(ago(stale))),
                   ),
                 for (final t in options)
                   SimpleDialogOption(
@@ -133,9 +135,8 @@ class _ThreadScreenState extends State<ThreadScreen> {
                     child: ListTile(
                       title: Text(_option(to, t)),
                       subtitle: Text(switch (t) {
-                        Toward.there => 'Fast if they are still near there',
-                        Toward.home =>
-                          'Waits at their home until they fetch it',
+                        Toward.there => tr.threadThereHow,
+                        Toward.home => tr.threadHomeHow,
                       }),
                     ),
                   ),
@@ -147,28 +148,29 @@ class _ThreadScreenState extends State<ThreadScreen> {
       await app.messenger.sendText(to, text.text, toward: toward);
       text.clear();
     } on BadPayload catch (e) {
-      if (mounted) say(context, 'Not sent: $e');
+      if (mounted) say(context, tr.threadNotSent('$e'));
     }
   }
 
   String _option(Contact c, Toward t) => switch (t) {
-    Toward.there =>
-      'Where ${c.name} was ${ago(app.now().difference(c.placeAt!))}',
-    Toward.home => 'Their home node',
+    Toward.there => tr.threadWhereWas(
+      c.name,
+      ago(app.now().difference(c.placeAt!)),
+    ),
+    Toward.home => tr.threadTheirHome,
   };
 
   /// When they last wrote, and whether from their home.
   String _heard(Contact c) {
     final at = c.heardAt;
-    if (at == null) return 'Has not written yet';
+    if (at == null) return tr.threadNotWritten;
     final from = c.place;
     final home = c.card.home;
-    final where = home == null || from == null
-        ? ''
-        : from.toString() == home.toString()
-        ? ', from their home'
-        : ', away from home';
-    return 'Last wrote ${ago(app.now().difference(at))}$where';
+    final since = ago(app.now().difference(at));
+    if (home == null || from == null) return tr.threadLastWrote(since);
+    return from.toString() == home.toString()
+        ? tr.threadLastWroteHome(since)
+        : tr.threadLastWroteAway(since);
   }
 
   @override
@@ -203,11 +205,11 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 if (contact != null) ...[
                   PopupMenuItem(
                     value: () => _name(contact),
-                    child: const Text('Rename'),
+                    child: Text(tr.threadRename),
                   ),
                   PopupMenuItem(
                     value: () => app.messenger.sendCard(contact),
-                    child: const Text('Send my card'),
+                    child: Text(tr.commonSendCard),
                   ),
                   if (app.mailbox.isOwner)
                     PopupMenuItem(
@@ -216,39 +218,41 @@ class _ThreadScreenState extends State<ThreadScreen> {
                           final r = await app.mailbox.shareHome(contact);
                           if (context.mounted) say(context, r);
                         } catch (e) {
-                          if (context.mounted) say(context, 'Failed: $e');
+                          if (context.mounted) {
+                            say(context, tr.commonFailed('$e'));
+                          }
                         }
                       },
-                      child: const Text('Share my home node'),
+                      child: Text(tr.threadShareHome),
                     ),
                 ],
                 PopupMenuItem(
                   value: () => _archive(
                     app.contacts.archiveConversation(widget.keyHex),
-                    '${c.title}: conversation archived',
+                    tr.conversationsWasArchived(c.title),
                   ),
-                  child: const Text('Archive conversation'),
+                  child: Text(tr.threadArchiveConversation),
                 ),
                 if (contact != null) ...[
                   PopupMenuItem(
                     value: () => _archive(
                       app.contacts.archiveContact(contact),
-                      '${contact.name}: contact archived',
+                      tr.threadContactArchived(contact.name),
                     ),
-                    child: const Text('Archive contact'),
+                    child: Text(tr.threadArchiveContact),
                   ),
                   PopupMenuItem(
                     value: () async {
                       if (await confirm(
                         context,
-                        'Remove ${contact.name}?',
-                        'Their texts stay; to write again, add their card.',
-                        'Remove',
+                        tr.threadRemoveTitle(contact.name),
+                        tr.threadRemoveHow,
+                        tr.threadRemove,
                       )) {
                         await app.contacts.remove(contact);
                       }
                     },
-                    child: const Text('Remove contact'),
+                    child: Text(tr.threadRemoveContact),
                   ),
                 ],
               ],
@@ -262,11 +266,9 @@ class _ThreadScreenState extends State<ThreadScreen> {
             NoticeCard(app),
             GiftLines(app, of: widget.keyHex),
             if (contact != null && contact.unverified)
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
-                child: Text(
-                  'Not verified yet: their first reply proves it is them.',
-                ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Text(tr.threadNotVerified),
               ),
             Expanded(
               child: ListView(
@@ -289,30 +291,25 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 padding: const EdgeInsets.all(16),
                 child: Row(
                   children: [
-                    const Expanded(
-                      child: Text('This conversation is archived.'),
-                    ),
+                    Expanded(child: Text(tr.threadIsArchived)),
                     FilledButton.icon(
                       icon: const Icon(Icons.unarchive),
-                      label: const Text('Unarchive'),
+                      label: Text(tr.archivedUnarchive),
                       onPressed: () => app.contacts.unarchive(widget.keyHex),
                     ),
                   ],
                 ),
               )
             else if (contact == null)
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text('This contact was removed.'),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(tr.threadWasRemoved),
               )
             else if (contact.towards(app.now()).isEmpty)
               // A card made before its phone used any node names none.
               Padding(
                 padding: const EdgeInsets.all(16),
-                child: Text(
-                  '${contact.name}\'s card names no node yet: ask them for a '
-                  'new one.',
-                ),
+                child: Text(tr.threadNoNode(contact.name)),
               )
             else
               _compose(contact),
@@ -333,7 +330,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
   }
 
   Future<void> _name(Contact c) async {
-    final name = await askText(context, 'Name', c.given);
+    final name = await askText(context, tr.threadName, c.given);
     if (name == null || name.isEmpty) return;
     await app.contacts.put(c.copyWith(name: name));
   }
@@ -347,7 +344,9 @@ class _ThreadScreenState extends State<ThreadScreen> {
       return e.why;
     }
     if (n <= 1) return null;
-    return n > maxParts ? '$n parts, $maxParts at most' : '$n parts';
+    return n > maxParts
+        ? tr.threadTooManyParts(n, maxParts)
+        : tr.threadParts(n);
   }
 
   Widget _compose(Contact to) => Padding(
@@ -363,7 +362,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
               maxLines: 5,
               textCapitalization: TextCapitalization.sentences,
               decoration: InputDecoration(
-                hintText: 'Text',
+                hintText: tr.threadHint,
                 border: const OutlineInputBorder(),
                 helperText: _parts(to, v.text),
               ),
@@ -371,7 +370,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
           ),
         ),
         IconButton(
-          tooltip: 'Send',
+          tooltip: tr.threadSend,
           icon: const Icon(Icons.send),
           onPressed: () => _send(to),
         ),
@@ -493,8 +492,8 @@ class _ThreadScreenState extends State<ThreadScreen> {
   Widget _reaction(String r, bool mine, VoidCallback help) {
     final scheme = Theme.of(context).colorScheme;
     final words = mine
-        ? 'They reacted: ${emojiName(r)}'
-        : 'You reacted: ${emojiName(r)}';
+        ? tr.threadTheyReacted(emojiName(r))
+        : tr.threadYouReacted(emojiName(r));
     return Tooltip(
       message: words,
       excludeFromSemantics: true,
@@ -531,7 +530,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final now = e.arrived.map((r) => r.reaction).nonNulls.firstOrNull;
     final copy = ListTile(
       leading: const Icon(Icons.copy),
-      title: const Text('Copy text'),
+      title: Text(tr.threadCopy),
       onTap: () {
         Clipboard.setData(ClipboardData(text: e.text));
         Navigator.pop(context);
@@ -556,7 +555,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     try {
       await app.messenger.react(e.arrived.first, picked);
     } on BadPayload catch (e) {
-      if (mounted) say(context, 'Not sent: $e');
+      if (mounted) say(context, tr.threadNotSent('$e'));
     }
   }
 
@@ -595,7 +594,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     if (verified && e.arrived.any((r) => r.intro))
       _mark(Icons.gpp_maybe, unverifiedText, small, color),
     if (e.arrived.any((r) => r.mailbox))
-      _mark(Icons.markunread_mailbox, 'From your mailbox', small, color),
+      _mark(Icons.markunread_mailbox, tr.receivedMailbox, small, color),
   ];
 
   /// An icon the small text's size, with the words it stands for as its
@@ -617,8 +616,8 @@ class _ThreadScreenState extends State<ThreadScreen> {
       );
 
   Widget _where(Toward t, TextStyle small, Color color) => switch (t) {
-    Toward.there => _mark(Icons.place, 'To where they were', small, color),
-    Toward.home => _mark(Icons.home, 'To their home', small, color),
+    Toward.there => _mark(Icons.place, tr.threadToWhere, small, color),
+    Toward.home => _mark(Icons.home, tr.threadToHome, small, color),
   };
 
   /// A sent text's state, each its own icon (common.dart
@@ -628,28 +627,16 @@ class _ThreadScreenState extends State<ThreadScreen> {
   List<Widget> _state(Outgoing o, TextStyle small, Color color) =>
       switch (o.state) {
         OutState.queued => [
-          _stateMark([o], Icons.schedule, 'Waiting for a node', small, color),
+          _stateMark([o], Icons.schedule, capital(tr.sentQueued), small, color),
         ],
         OutState.writing => [
-          _stateMark([o], Icons.sync, 'Being handed to the node', small, color),
+          _stateMark([o], Icons.sync, capital(tr.sentWriting), small, color),
         ],
         OutState.taken => [
-          _stateMark(
-            [o],
-            Icons.check,
-            'Sent into the network, which does not say when it arrives',
-            small,
-            color,
-          ),
+          _stateMark([o], Icons.check, tr.threadTakenMark, small, color),
         ],
         OutState.givenBack => [
-          _stateMark(
-            [o],
-            Icons.hourglass_bottom,
-            'The network is busy',
-            small,
-            color,
-          ),
+          _stateMark([o], Icons.hourglass_bottom, tr.sentBusy, small, color),
           const SizedBox(width: 4),
           Flexible(
             child: Ticking(
@@ -694,7 +681,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
           await s.drop(o);
         }
       },
-      child: const Text('Cancel'),
+      child: Text(tr.cancel),
     );
   }
 }
@@ -762,7 +749,7 @@ class _ReactionSheetState extends State<_ReactionSheet> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Text('${widget.to.name} sees your reaction on their text.'),
+            child: Text(tr.threadReactionSeen(widget.to.name)),
           ),
           Row(
             key: const ValueKey('frequent'),
@@ -776,9 +763,9 @@ class _ReactionSheetState extends State<_ReactionSheet> {
               key: const ValueKey('emoji search'),
               controller: search,
               onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search),
-                hintText: 'Search emoji by name',
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search),
+                hintText: tr.emojiSearch,
               ),
             ),
           ),
@@ -786,21 +773,19 @@ class _ReactionSheetState extends State<_ReactionSheet> {
             child: CustomScrollView(
               slivers: [
                 if (found == null)
-                  for (final (title, group) in emojiGroups) ...[
+                  for (final (g, group) in emojiGroups) ...[
                     SliverPadding(
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                       sliver: SliverToBoxAdapter(
-                        child: Text(title, style: style),
+                        child: Text(emojiGroupName(g), style: style),
                       ),
                     ),
                     _grid([for (final e in group) e.emoji]),
                   ]
                 else if (found.isEmpty)
-                  const SliverPadding(
-                    padding: EdgeInsets.all(16),
-                    sliver: SliverToBoxAdapter(
-                      child: Text('No emoji by that name.'),
-                    ),
+                  SliverPadding(
+                    padding: const EdgeInsets.all(16),
+                    sliver: SliverToBoxAdapter(child: Text(tr.emojiNone)),
                   )
                 else
                   _grid([for (final e in found) e.emoji]),

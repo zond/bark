@@ -579,6 +579,335 @@ class AppLocalizationsSv extends AppLocalizations {
   }
 
   @override
+  String get threadUnverifiedMark =>
+      'Ett första meddelande, som vem som helst kan ha skickat';
+
+  @override
+  String get threadToNode => 'Till nod';
+
+  @override
+  String get threadAt => 'Plats';
+
+  @override
+  String get threadSealed => 'Krypterat';
+
+  @override
+  String get threadSealedForThem => 'bara för dem';
+
+  @override
+  String get threadSealedIntroOut => 'som ett första meddelande, med ditt kort';
+
+  @override
+  String get threadSealedForYou => 'av dem, bara för dig';
+
+  @override
+  String get threadSealedIntroIn => 'för dig, som ett första meddelande';
+
+  @override
+  String threadMessageIds(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Meddelande-ID',
+      one: 'Meddelande-ID',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get threadWritten => 'Skrivet';
+
+  @override
+  String get threadPartsHere => 'Mottagna delar';
+
+  @override
+  String threadPartsOf(int here, int total) {
+    return '$here av $total';
+  }
+
+  @override
+  String get threadSendTo => 'Skicka till';
+
+  @override
+  String threadLastSeenThere(String ago) {
+    return 'Senast sedd där $ago';
+  }
+
+  @override
+  String threadWhereWas(String name, String ago) {
+    return 'Där $name var $ago';
+  }
+
+  @override
+  String get threadThereHow => 'Snabbt om de är kvar där';
+
+  @override
+  String get threadTheirHome => 'Deras hemnod';
+
+  @override
+  String get threadHomeHow => 'Väntar i deras hem tills de hämtar det';
+
+  @override
+  String threadNotSent(String error) {
+    return 'Inte skickat: $error';
+  }
+
+  @override
+  String get threadNotWritten => 'Har inte skrivit än';
+
+  @override
+  String threadLastWrote(String ago) {
+    return 'Skrev senast $ago';
+  }
+
+  @override
+  String threadLastWroteHome(String ago) {
+    return 'Skrev senast $ago, hemifrån';
+  }
+
+  @override
+  String threadLastWroteAway(String ago) {
+    return 'Skrev senast $ago, inte hemifrån';
+  }
+
+  @override
+  String get threadRename => 'Byt namn';
+
+  @override
+  String get threadShareHome => 'Dela min hemnod';
+
+  @override
+  String get threadArchiveConversation => 'Arkivera samtalet';
+
+  @override
+  String threadContactArchived(String name) {
+    return '$name: kontakten arkiverad';
+  }
+
+  @override
+  String get threadArchiveContact => 'Arkivera kontakten';
+
+  @override
+  String threadRemoveTitle(String name) {
+    return 'Ta bort $name?';
+  }
+
+  @override
+  String get threadRemoveHow =>
+      'Meddelandena blir kvar. Lägg till deras kort för att skriva igen.';
+
+  @override
+  String get threadRemove => 'Ta bort';
+
+  @override
+  String get threadRemoveContact => 'Ta bort kontakten';
+
+  @override
+  String get threadNotVerified =>
+      'Inte verifierad än: deras första svar visar att det är de.';
+
+  @override
+  String get threadIsArchived => 'Samtalet är arkiverat.';
+
+  @override
+  String get threadWasRemoved => 'Kontakten har tagits bort.';
+
+  @override
+  String threadNoNode(String name) {
+    return 'Kortet från $name anger ingen nod än: be om ett nytt.';
+  }
+
+  @override
+  String get threadName => 'Namn';
+
+  @override
+  String threadParts(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count delar',
+      one: '$count del',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String threadTooManyParts(int count, int max) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count delar, högst $max',
+      one: '$count del, högst $max',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get threadHint => 'Meddelande';
+
+  @override
+  String get threadSend => 'Skicka';
+
+  @override
+  String threadTheyReacted(String emoji) {
+    return 'Deras reaktion: $emoji';
+  }
+
+  @override
+  String threadYouReacted(String emoji) {
+    return 'Din reaktion: $emoji';
+  }
+
+  @override
+  String get threadCopy => 'Kopiera text';
+
+  @override
+  String get threadToWhere => 'Dit de var';
+
+  @override
+  String get threadToHome => 'Till deras hem';
+
+  @override
+  String get threadTakenMark =>
+      'Skickat ut i nätet, som inte säger när det kommer fram';
+
+  @override
+  String threadReactionSeen(String name) {
+    return '$name ser din reaktion på sitt meddelande.';
+  }
+
+  @override
+  String get emojiSearch => 'Sök emoji på engelskt namn';
+
+  @override
+  String get emojiNone => 'Ingen emoji med det namnet.';
+
+  @override
+  String get emojiSmileys => 'Smileys och känslor';
+
+  @override
+  String get emojiPeople => 'Människor och kropp';
+
+  @override
+  String get emojiAnimals => 'Djur och natur';
+
+  @override
+  String get emojiFood => 'Mat och dryck';
+
+  @override
+  String get emojiTravel => 'Resor och platser';
+
+  @override
+  String get emojiActivities => 'Aktiviteter';
+
+  @override
+  String get emojiObjects => 'Föremål';
+
+  @override
+  String get emojiSymbols => 'Symboler';
+
+  @override
+  String get emojiFlags => 'Flaggor';
+
+  @override
+  String get sendNoReturnAddress => 'ingen svarsadress än';
+
+  @override
+  String sendNoAddress(String name) {
+    return '$name har ingen adress än';
+  }
+
+  @override
+  String sendTooLong(int count, int max) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'för långt: $count delar, högst $max',
+      one: 'för långt: $count del, högst $max',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get sendCharTooLong => 'ett tecken är för långt för att skickas';
+
+  @override
+  String sessionBadValue(String error) {
+    return 'Noden skickade ett värde som appen inte kan läsa: $error';
+  }
+
+  @override
+  String sessionReadFailed(String error) {
+    return 'Det gick inte att läsa noden: $error';
+  }
+
+  @override
+  String get sessionNotConnected => 'inte ansluten';
+
+  @override
+  String sessionPairedOnly(String what) {
+    return '$what är bara för den parkopplade telefonen';
+  }
+
+  @override
+  String get sessionHomeTaken =>
+      'Ditt hem sparar inte längre din post. Välj det igen i Inställningar.';
+
+  @override
+  String sessionGivenBackUnknown(String id) {
+    return 'Noden gav tillbaka meddelande $id, som appen inte har skickat.';
+  }
+
+  @override
+  String sessionSendFailed(String error) {
+    return 'Det gick inte att skicka: $error';
+  }
+
+  @override
+  String sessionConfirmRefused(String error) {
+    return 'Noden avvisade bekräftelsen av inkorgen: $error';
+  }
+
+  @override
+  String sessionInboxFailed(String error) {
+    return 'Det gick inte att läsa inkorgen: $error';
+  }
+
+  @override
+  String sessionPlaceFailed(String error) {
+    return 'Det gick inte att ange nodens plats: $error';
+  }
+
+  @override
+  String get sessionNoNewMail => 'Ingen ny post';
+
+  @override
+  String sessionMoreAtHome(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count till väntar i ditt hem: hämta igen',
+      one: '$count till väntar i ditt hem: hämta igen',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String sessionClockNone(String offset) {
+    return 'ingen tid, tidszon $offset';
+  }
+
+  @override
+  String sessionClockGps(String time, String offset) {
+    return '$time från GPS, tidszon $offset';
+  }
+
+  @override
+  String sessionClockPhone(String time, String offset) {
+    return '$time från telefonen, tidszon $offset';
+  }
+
+  @override
   String get factRole =>
       'Ett relä har extern ström, till exempel USB, och lyssnar hela tiden och skickar vidare meddelanden åt noderna runt omkring: ju fler reläer, desto längre når meddelandena. En sömnig nod går på batteri: för att räcka sover den och vaknar bara i korta fönster, och den skickar och tar emot genom ett relä nära sig, sitt ankare. Ett stillastående relä som förlorar strömmen fortsätter som relä på batteri tills batteriet börjar ta slut, och blir då sömnigt. Håller du in nodens knapp byter den roll tills dess ström ändras nästa gång.';
 

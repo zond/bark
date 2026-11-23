@@ -568,6 +568,335 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get threadUnverifiedMark =>
+      'Came as a first message, which anyone could have made';
+
+  @override
+  String get threadToNode => 'To node';
+
+  @override
+  String get threadAt => 'At';
+
+  @override
+  String get threadSealed => 'Sealed';
+
+  @override
+  String get threadSealedForThem => 'for them alone';
+
+  @override
+  String get threadSealedIntroOut => 'as a first message, with your card';
+
+  @override
+  String get threadSealedForYou => 'by them, for you alone';
+
+  @override
+  String get threadSealedIntroIn => 'to you, as a first message';
+
+  @override
+  String threadMessageIds(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Message IDs',
+      one: 'Message ID',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get threadWritten => 'Written';
+
+  @override
+  String get threadPartsHere => 'Parts here';
+
+  @override
+  String threadPartsOf(int here, int total) {
+    return '$here of $total';
+  }
+
+  @override
+  String get threadSendTo => 'Send to';
+
+  @override
+  String threadLastSeenThere(String ago) {
+    return 'Last seen there $ago';
+  }
+
+  @override
+  String threadWhereWas(String name, String ago) {
+    return 'Where $name was $ago';
+  }
+
+  @override
+  String get threadThereHow => 'Fast if they are still near there';
+
+  @override
+  String get threadTheirHome => 'Their home node';
+
+  @override
+  String get threadHomeHow => 'Waits at their home until they fetch it';
+
+  @override
+  String threadNotSent(String error) {
+    return 'Not sent: $error';
+  }
+
+  @override
+  String get threadNotWritten => 'Has not written yet';
+
+  @override
+  String threadLastWrote(String ago) {
+    return 'Last wrote $ago';
+  }
+
+  @override
+  String threadLastWroteHome(String ago) {
+    return 'Last wrote $ago, from their home';
+  }
+
+  @override
+  String threadLastWroteAway(String ago) {
+    return 'Last wrote $ago, away from home';
+  }
+
+  @override
+  String get threadRename => 'Rename';
+
+  @override
+  String get threadShareHome => 'Share my home node';
+
+  @override
+  String get threadArchiveConversation => 'Archive conversation';
+
+  @override
+  String threadContactArchived(String name) {
+    return '$name: contact archived';
+  }
+
+  @override
+  String get threadArchiveContact => 'Archive contact';
+
+  @override
+  String threadRemoveTitle(String name) {
+    return 'Remove $name?';
+  }
+
+  @override
+  String get threadRemoveHow =>
+      'Their texts stay; to write again, add their card.';
+
+  @override
+  String get threadRemove => 'Remove';
+
+  @override
+  String get threadRemoveContact => 'Remove contact';
+
+  @override
+  String get threadNotVerified =>
+      'Not verified yet: their first reply proves it is them.';
+
+  @override
+  String get threadIsArchived => 'This conversation is archived.';
+
+  @override
+  String get threadWasRemoved => 'This contact was removed.';
+
+  @override
+  String threadNoNode(String name) {
+    return '$name\'s card names no node yet: ask them for a new one.';
+  }
+
+  @override
+  String get threadName => 'Name';
+
+  @override
+  String threadParts(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count parts',
+      one: '$count part',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String threadTooManyParts(int count, int max) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count parts, $max at most',
+      one: '$count part, $max at most',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get threadHint => 'Text';
+
+  @override
+  String get threadSend => 'Send';
+
+  @override
+  String threadTheyReacted(String emoji) {
+    return 'They reacted: $emoji';
+  }
+
+  @override
+  String threadYouReacted(String emoji) {
+    return 'You reacted: $emoji';
+  }
+
+  @override
+  String get threadCopy => 'Copy text';
+
+  @override
+  String get threadToWhere => 'To where they were';
+
+  @override
+  String get threadToHome => 'To their home';
+
+  @override
+  String get threadTakenMark =>
+      'Sent into the network, which does not say when it arrives';
+
+  @override
+  String threadReactionSeen(String name) {
+    return '$name sees your reaction on their text.';
+  }
+
+  @override
+  String get emojiSearch => 'Search emoji by name';
+
+  @override
+  String get emojiNone => 'No emoji by that name.';
+
+  @override
+  String get emojiSmileys => 'Smileys & emotion';
+
+  @override
+  String get emojiPeople => 'People & body';
+
+  @override
+  String get emojiAnimals => 'Animals & nature';
+
+  @override
+  String get emojiFood => 'Food & drink';
+
+  @override
+  String get emojiTravel => 'Travel & places';
+
+  @override
+  String get emojiActivities => 'Activities';
+
+  @override
+  String get emojiObjects => 'Objects';
+
+  @override
+  String get emojiSymbols => 'Symbols';
+
+  @override
+  String get emojiFlags => 'Flags';
+
+  @override
+  String get sendNoReturnAddress => 'no address to answer to yet';
+
+  @override
+  String sendNoAddress(String name) {
+    return '$name has no address yet';
+  }
+
+  @override
+  String sendTooLong(int count, int max) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'too long: $count parts, $max at most',
+      one: 'too long: $count part, $max at most',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get sendCharTooLong => 'a character too long to send';
+
+  @override
+  String sessionBadValue(String error) {
+    return 'The node sent a value this app cannot read: $error';
+  }
+
+  @override
+  String sessionReadFailed(String error) {
+    return 'Reading the node failed: $error';
+  }
+
+  @override
+  String get sessionNotConnected => 'not connected';
+
+  @override
+  String sessionPairedOnly(String what) {
+    return '$what is the paired phone\'s alone';
+  }
+
+  @override
+  String get sessionHomeTaken =>
+      'Your home no longer keeps your mail. Set it again in Settings.';
+
+  @override
+  String sessionGivenBackUnknown(String id) {
+    return 'The node gave back message $id, which this app did not send.';
+  }
+
+  @override
+  String sessionSendFailed(String error) {
+    return 'Sending failed: $error';
+  }
+
+  @override
+  String sessionConfirmRefused(String error) {
+    return 'The node refused the inbox confirmation: $error';
+  }
+
+  @override
+  String sessionInboxFailed(String error) {
+    return 'Reading the inbox failed: $error';
+  }
+
+  @override
+  String sessionPlaceFailed(String error) {
+    return 'Setting the node\'s place failed: $error';
+  }
+
+  @override
+  String get sessionNoNewMail => 'No new mail';
+
+  @override
+  String sessionMoreAtHome(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count more at home: fetch again for them',
+      one: '$count more at home: fetch again for them',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String sessionClockNone(String offset) {
+    return 'no time, offset $offset';
+  }
+
+  @override
+  String sessionClockGps(String time, String offset) {
+    return '$time from the gps, offset $offset';
+  }
+
+  @override
+  String sessionClockPhone(String time, String offset) {
+    return '$time from the phone, offset $offset';
+  }
+
+  @override
   String get factRole =>
       'A relay has outside power, such as USB, and listens all the time, passing on texts for the nodes around it: the more relays, the farther texts reach. A sleepy node is on battery: to last, it sleeps and wakes only in short windows, and sends and receives through one relay near it, its anchor. A fixed relay that loses its power keeps relaying on battery until the battery runs low, and then turns sleepy. Holding the node\'s button switches its role until its power next changes.';
 

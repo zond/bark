@@ -8,6 +8,7 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 
 import 'asks.dart';
+import 'l10n.dart';
 import 'link.dart';
 import 'node_link.dart';
 import 'nodes.dart';
@@ -699,15 +700,20 @@ class Session extends ChangeNotifier {
     await save(state: true);
   }
 
-  void _badValue(Object e) =>
-      tell('The node sent a value this app cannot read: $e');
+  void _badValue(Object e) => _tell((w) => w.sessionBadValue('$e'));
 
-  /// Tells the person `s` in the notice, and logs it.
-  void tell(String s, {String? about}) {
+  /// Tells the person `s` in the notice, and logs it, or `log` in its
+  /// place: the log stays English, as a fault report carries it.
+  void tell(String s, {String? about, String? log}) {
     notice = (text: s, about: about);
-    note(s);
+    note(log ?? s);
     notifyListeners();
   }
+
+  /// Tells the person `words` in the language spoken, and logs them in
+  /// English.
+  void _tell(String Function(AppLocalizations) words) =>
+      tell(words(tr), log: words(english));
 
   void dismissNotice() {
     notice = null;
@@ -768,7 +774,7 @@ class Session extends ChangeNotifier {
       _onStatus(await link.readStatus());
       _onGivenBack(await link.readGivenBack());
     } catch (e) {
-      tell('Reading the node failed: $e');
+      _tell((w) => w.sessionReadFailed('$e'));
     }
     if (guest) {
       guestRead = await _readGuest(link, n);
@@ -906,8 +912,8 @@ class Session extends ChangeNotifier {
   /// The link, if the paired phone's.
   NodeLink _owned(String what) {
     final link = _link;
-    if (link == null || node == null) throw StateError('not connected');
-    if (guest) throw StateError('$what is the paired phone\'s alone');
+    if (link == null || node == null) throw NotOwned(tr.sessionNotConnected);
+    if (guest) throw NotOwned(tr.sessionPairedOnly(what));
     return link;
   }
 
@@ -1000,7 +1006,7 @@ class Session extends ChangeNotifier {
 
   void _homeTaken() {
     homeRemoved = true;
-    tell('Your home no longer keeps your mail. Set it again in Settings.');
+    _tell((w) => w.sessionHomeTaken);
   }
 
   /// Reads the node's records, page by page, once the read under way, if
@@ -1265,7 +1271,7 @@ class Session extends ChangeNotifier {
         t.timeZoneOffset.inMinutes,
       );
       nodeTime = await link.readClock();
-      note('Clock: ${describeTime(nodeTime!)}');
+      note('Clock: ${describeTime(nodeTime!, english)}');
     } catch (e) {
       note('Clock: $e');
     }
@@ -1338,10 +1344,7 @@ class Session extends ChangeNotifier {
     if (g == null) return notifyListeners();
     final o = outbox.where((o) => o.id == g.msgId).firstOrNull;
     if (o == null) {
-      tell(
-        'The node gave back message ${msgIdHex(g.msgId)}, '
-        'which this app did not send.',
-      );
+      _tell((w) => w.sessionGivenBackUnknown(msgIdHex(g.msgId)));
       return;
     }
     // The value stays until the node takes another message, so it is
@@ -1473,10 +1476,10 @@ class Session extends ChangeNotifier {
         .firstOrNull;
     if (nothingNew) {
       note('Fetch $round: no new mail');
-      fetchNews = 'No new mail';
+      fetchNews = tr.sessionNoNewMail;
     } else if (remaining > 0 && o != null) {
       note('Fetch $round: $remaining more at home');
-      fetchNews = '$remaining more at home: fetch again for them';
+      fetchNews = tr.sessionMoreAtHome(remaining);
     }
     if (o == null || o.answered) {
       notifyListeners();
@@ -1568,7 +1571,7 @@ class Session extends ChangeNotifier {
     } catch (e) {
       o.state = OutState.queued;
       again = false;
-      tell('Sending failed: $e');
+      _tell((w) => w.sessionSendFailed('$e'));
     } finally {
       _writing = false;
     }
@@ -1594,12 +1597,12 @@ class Session extends ChangeNotifier {
         } on AttException catch (e) {
           // The oldest is the one just read, so the node should not
           // refuse its ID; stop rather than read it in a loop.
-          tell('The node refused the inbox confirmation: $e');
+          _tell((w) => w.sessionConfirmRefused('$e'));
           break;
         }
       }
     } catch (e) {
-      tell('Reading the inbox failed: $e');
+      _tell((w) => w.sessionInboxFailed('$e'));
     } finally {
       _draining = false;
       notifyListeners();
@@ -1625,7 +1628,7 @@ class Session extends ChangeNotifier {
       await link.setMapPoint(p);
       note('Map point: ${p ?? 'cleared'}');
     } catch (e) {
-      tell('Setting the node\'s place failed: $e');
+      _tell((w) => w.sessionPlaceFailed('$e'));
     }
   }
 
@@ -1642,14 +1645,31 @@ class Session extends ChangeNotifier {
   }
 }
 
-/// The node's time as a person reads it: UTC, the source, the offset.
-String describeTime(NodeTime t) {
+/// The node's time as a person reads it: UTC, the source, the offset; in
+/// `words`, by default the language spoken.
+String describeTime(NodeTime t, [AppLocalizations? words]) {
+  final w = words ?? tr;
   final o = t.offsetMin;
   final sign = o < 0 ? '-' : '+';
   final offset =
       'UTC$sign${(o.abs() ~/ 60).toString().padLeft(2, '0')}:'
       '${(o.abs() % 60).toString().padLeft(2, '0')}';
-  if (t.source == TimeSource.none) return 'no time, offset $offset';
-  final utc = DateTime.fromMillisecondsSinceEpoch(t.utcS * 1000, isUtc: true);
-  return '${utc.toIso8601String()} from the ${t.source.name}, offset $offset';
+  final utc = DateTime.fromMillisecondsSinceEpoch(
+    t.utcS * 1000,
+    isUtc: true,
+  ).toIso8601String();
+  return switch (t.source) {
+    TimeSource.none => w.sessionClockNone(offset),
+    TimeSource.gps => w.sessionClockGps(utc, offset),
+    TimeSource.phone => w.sessionClockPhone(utc, offset),
+  };
+}
+
+/// Why the node was not asked for something only its paired phone may
+/// ask: said to the person as it is, after what failed.
+class NotOwned extends StateError {
+  NotOwned(super.message);
+
+  @override
+  String toString() => message;
 }

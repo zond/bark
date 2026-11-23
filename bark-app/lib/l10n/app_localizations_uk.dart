@@ -581,6 +581,346 @@ class AppLocalizationsUk extends AppLocalizations {
   }
 
   @override
+  String get threadUnverifiedMark =>
+      'Прийшло як перше повідомлення, яке міг надіслати будь-хто';
+
+  @override
+  String get threadToNode => 'На вузол';
+
+  @override
+  String get threadAt => 'Місце';
+
+  @override
+  String get threadSealed => 'Зашифровано';
+
+  @override
+  String get threadSealedForThem => 'лише для них';
+
+  @override
+  String get threadSealedIntroOut => 'як перше повідомлення, з вашою карткою';
+
+  @override
+  String get threadSealedForYou => 'від них, лише для вас';
+
+  @override
+  String get threadSealedIntroIn => 'для вас, як перше повідомлення';
+
+  @override
+  String threadMessageIds(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'ID повідомлень',
+      many: 'ID повідомлень',
+      few: 'ID повідомлень',
+      one: 'ID повідомлення',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get threadWritten => 'Написано';
+
+  @override
+  String get threadPartsHere => 'Отримані частини';
+
+  @override
+  String threadPartsOf(int here, int total) {
+    return '$here з $total';
+  }
+
+  @override
+  String get threadSendTo => 'Куди надіслати';
+
+  @override
+  String threadLastSeenThere(String ago) {
+    return 'Востаннє їх бачили там $ago';
+  }
+
+  @override
+  String threadWhereWas(String name, String ago) {
+    return 'Туди, де контакт $name був $ago';
+  }
+
+  @override
+  String get threadThereHow => 'Швидко, якщо вони ще там';
+
+  @override
+  String get threadTheirHome => 'Їхній домашній вузол';
+
+  @override
+  String get threadHomeHow =>
+      'Чекає в їхньому домі, доки вони його не заберуть';
+
+  @override
+  String threadNotSent(String error) {
+    return 'Не надіслано: $error';
+  }
+
+  @override
+  String get threadNotWritten => 'Повідомлень від них ще не було';
+
+  @override
+  String threadLastWrote(String ago) {
+    return 'Останнє повідомлення $ago';
+  }
+
+  @override
+  String threadLastWroteHome(String ago) {
+    return 'Останнє повідомлення $ago, з їхнього дому';
+  }
+
+  @override
+  String threadLastWroteAway(String ago) {
+    return 'Останнє повідомлення $ago, не з дому';
+  }
+
+  @override
+  String get threadRename => 'Перейменувати';
+
+  @override
+  String get threadShareHome => 'Поділитися домашнім вузлом';
+
+  @override
+  String get threadArchiveConversation => 'Архівувати розмову';
+
+  @override
+  String threadContactArchived(String name) {
+    return '$name: контакт заархівовано';
+  }
+
+  @override
+  String get threadArchiveContact => 'Архівувати контакт';
+
+  @override
+  String threadRemoveTitle(String name) {
+    return 'Видалити контакт $name?';
+  }
+
+  @override
+  String get threadRemoveHow =>
+      'Повідомлення лишаться. Щоб написати знову, додайте їхню картку.';
+
+  @override
+  String get threadRemove => 'Видалити';
+
+  @override
+  String get threadRemoveContact => 'Видалити контакт';
+
+  @override
+  String get threadNotVerified =>
+      'Ще не перевірено: їхня перша відповідь доведе, що це вони.';
+
+  @override
+  String get threadIsArchived => 'Цю розмову заархівовано.';
+
+  @override
+  String get threadWasRemoved => 'Цей контакт видалено.';
+
+  @override
+  String threadNoNode(String name) {
+    return 'У картці контакту $name ще немає вузла: попросіть нову.';
+  }
+
+  @override
+  String get threadName => 'Ім\'я';
+
+  @override
+  String threadParts(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count частини',
+      many: '$count частин',
+      few: '$count частини',
+      one: '$count частина',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String threadTooManyParts(int count, int max) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count частини, щонайбільше $max',
+      many: '$count частин, щонайбільше $max',
+      few: '$count частини, щонайбільше $max',
+      one: '$count частина, щонайбільше $max',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get threadHint => 'Повідомлення';
+
+  @override
+  String get threadSend => 'Надіслати';
+
+  @override
+  String threadTheyReacted(String emoji) {
+    return 'Їхня реакція: $emoji';
+  }
+
+  @override
+  String threadYouReacted(String emoji) {
+    return 'Ваша реакція: $emoji';
+  }
+
+  @override
+  String get threadCopy => 'Копіювати текст';
+
+  @override
+  String get threadToWhere => 'Туди, де вони були';
+
+  @override
+  String get threadToHome => 'До їхнього дому';
+
+  @override
+  String get threadTakenMark =>
+      'Надіслано в мережу; вона не каже, коли воно дійде';
+
+  @override
+  String threadReactionSeen(String name) {
+    return '$name побачить вашу реакцію на своє повідомлення.';
+  }
+
+  @override
+  String get emojiSearch => 'Шукати емодзі за англійською назвою';
+
+  @override
+  String get emojiNone => 'Немає емодзі з такою назвою.';
+
+  @override
+  String get emojiSmileys => 'Смайлики та емоції';
+
+  @override
+  String get emojiPeople => 'Люди та тіло';
+
+  @override
+  String get emojiAnimals => 'Тварини та природа';
+
+  @override
+  String get emojiFood => 'Їжа та напої';
+
+  @override
+  String get emojiTravel => 'Подорожі та місця';
+
+  @override
+  String get emojiActivities => 'Дозвілля';
+
+  @override
+  String get emojiObjects => 'Предмети';
+
+  @override
+  String get emojiSymbols => 'Символи';
+
+  @override
+  String get emojiFlags => 'Прапори';
+
+  @override
+  String get sendNoReturnAddress => 'ще немає адреси для відповіді';
+
+  @override
+  String sendNoAddress(String name) {
+    return 'у контакту $name ще немає адреси';
+  }
+
+  @override
+  String sendTooLong(int count, int max) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'задовге: $count частини, щонайбільше $max',
+      many: 'задовге: $count частин, щонайбільше $max',
+      few: 'задовге: $count частини, щонайбільше $max',
+      one: 'задовге: $count частина, щонайбільше $max',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get sendCharTooLong => 'символ задовгий для надсилання';
+
+  @override
+  String sessionBadValue(String error) {
+    return 'Вузол надіслав значення, яке застосунок не може прочитати: $error';
+  }
+
+  @override
+  String sessionReadFailed(String error) {
+    return 'Не вдалося зчитати дані з вузла: $error';
+  }
+
+  @override
+  String get sessionNotConnected => 'немає підключення';
+
+  @override
+  String sessionPairedOnly(String what) {
+    return '$what доступне лише спареному телефону';
+  }
+
+  @override
+  String get sessionHomeTaken =>
+      'Ваш дім більше не зберігає вашу пошту. Задайте його знову в Налаштуваннях.';
+
+  @override
+  String sessionGivenBackUnknown(String id) {
+    return 'Вузол повернув повідомлення $id, якого застосунок не надсилав.';
+  }
+
+  @override
+  String sessionSendFailed(String error) {
+    return 'Не вдалося надіслати: $error';
+  }
+
+  @override
+  String sessionConfirmRefused(String error) {
+    return 'Вузол відхилив підтвердження вхідних: $error';
+  }
+
+  @override
+  String sessionInboxFailed(String error) {
+    return 'Не вдалося зчитати вхідні: $error';
+  }
+
+  @override
+  String sessionPlaceFailed(String error) {
+    return 'Не вдалося задати місце вузла: $error';
+  }
+
+  @override
+  String get sessionNoNewMail => 'Нової пошти немає';
+
+  @override
+  String sessionMoreAtHome(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Ще $count чекають у вашому домі: заберіть пошту знову',
+      many: 'Ще $count чекають у вашому домі: заберіть пошту знову',
+      few: 'Ще $count чекають у вашому домі: заберіть пошту знову',
+      one: 'Ще $count чекає у вашому домі: заберіть пошту знову',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String sessionClockNone(String offset) {
+    return 'часу немає, часовий пояс $offset';
+  }
+
+  @override
+  String sessionClockGps(String time, String offset) {
+    return '$time з GPS, часовий пояс $offset';
+  }
+
+  @override
+  String sessionClockPhone(String time, String offset) {
+    return '$time з телефону, часовий пояс $offset';
+  }
+
+  @override
   String get factRole =>
       'Ретранслятор має зовнішнє живлення, наприклад USB, і слухає весь час, передаючи повідомлення для вузлів довкола: що більше ретрансляторів, то далі сягають повідомлення. Сонний вузол працює від батареї: щоб її вистачило, він спить і прокидається лише на короткі вікна, а надсилає й отримує через один ретранслятор поблизу, свій якір. Нерухомий ретранслятор, що втратив живлення, далі ретранслює від батареї, доки вона не почне сідати, а тоді стає сонним. Якщо утримувати кнопку вузла, він змінює роль до наступної зміни живлення.';
 

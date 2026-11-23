@@ -12,6 +12,7 @@ import 'package:crypto/crypto.dart' as hash;
 import 'package:sodium/sodium.dart';
 import 'package:sodium/sodium.ffi.dart' show LibSodiumFFI, SodiumPointer;
 
+import 'l10n.dart';
 import 'link.dart';
 import 'words.dart';
 
@@ -1078,7 +1079,7 @@ List<String> splitText(String text, int room) {
       (n1251, nUtf8) = (b1251, bUtf8);
       end++;
     }
-    if (end == i) throw const BadPayload('a character too long to send');
+    if (end == i) throw BadPayload(tr.sendCharTooLong);
     if (end < cs.length) {
       for (var j = end - 1; j >= end - (end - i) ~/ 4 && j > i; j--) {
         if (cs[j].trim().isEmpty) {

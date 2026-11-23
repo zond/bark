@@ -5,6 +5,7 @@
 import 'package:emojis/emoji.dart';
 
 import 'app_layer.dart';
+import 'l10n.dart';
 
 /// The first row before the person has a history, and what fills it out
 /// while they have used fewer: they say yes, love, funny, surprised,
@@ -20,27 +21,41 @@ typedef EmojiChoice = ({String emoji, String name, String words});
 bool _toned(String emoji) =>
     emoji.runes.any((r) => r >= 0x1F3FB && r <= 0x1F3FF);
 
-/// What each of Unicode's groups is called; the skin tones and hair
-/// styles group is not offered, as it holds parts of emoji.
-const Map<EmojiGroup, String> _groupNames = {
-  EmojiGroup.smileysEmotion: 'Smileys & emotion',
-  EmojiGroup.peopleBody: 'People & body',
-  EmojiGroup.animalsNature: 'Animals & nature',
-  EmojiGroup.foodDrink: 'Food & drink',
-  EmojiGroup.travelPlaces: 'Travel & places',
-  EmojiGroup.activities: 'Activities',
-  EmojiGroup.objects: 'Objects',
-  EmojiGroup.symbols: 'Symbols',
-  EmojiGroup.flags: 'Flags',
+/// Unicode's groups the picker offers, in its order; the skin tones and
+/// hair styles group is not offered, as it holds parts of emoji.
+const List<EmojiGroup> _groups = [
+  EmojiGroup.smileysEmotion,
+  EmojiGroup.peopleBody,
+  EmojiGroup.animalsNature,
+  EmojiGroup.foodDrink,
+  EmojiGroup.travelPlaces,
+  EmojiGroup.activities,
+  EmojiGroup.objects,
+  EmojiGroup.symbols,
+  EmojiGroup.flags,
+];
+
+/// What one of [_groups] is called, in the language now spoken.
+String emojiGroupName(EmojiGroup g) => switch (g) {
+  EmojiGroup.smileysEmotion => tr.emojiSmileys,
+  EmojiGroup.peopleBody => tr.emojiPeople,
+  EmojiGroup.animalsNature => tr.emojiAnimals,
+  EmojiGroup.foodDrink => tr.emojiFood,
+  EmojiGroup.travelPlaces => tr.emojiTravel,
+  EmojiGroup.activities => tr.emojiActivities,
+  EmojiGroup.objects => tr.emojiObjects,
+  EmojiGroup.symbols => tr.emojiSymbols,
+  EmojiGroup.flags => tr.emojiFlags,
+  EmojiGroup.component => throw ArgumentError.value(g, 'g', 'not offered'),
 };
 
 /// Unicode's emoji, by its groups, in its order. Each person and hand is
 /// offered once, without a skin tone. One past [maxReaction] bytes is
 /// left out; Unicode 17.0 has none.
-final List<(String, List<EmojiChoice>)> emojiGroups = [
-  for (final MapEntry(key: g, value: title) in _groupNames.entries)
+final List<(EmojiGroup, List<EmojiChoice>)> emojiGroups = [
+  for (final g in _groups)
     (
-      title,
+      g,
       [
         for (final e in Emoji.byGroup(g))
           if (!_toned(e.char) && isReaction(e.char))

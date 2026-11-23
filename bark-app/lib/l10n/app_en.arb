@@ -334,6 +334,272 @@
     "placeholders": {"part": {"type": "int"}, "total": {"type": "int"}}
   },
 
+  "threadUnverifiedMark": "Came as a first message, which anyone could have made",
+  "@threadUnverifiedMark": {
+    "description": "The words of the mark on a received text that came as a first message, read as its tooltip."
+  },
+  "threadToNode": "To node",
+  "@threadToNode": {
+    "description": "A sent text's details: the node it went to."
+  },
+  "threadAt": "At",
+  "@threadAt": {
+    "description": "A sent text's details: the position of the node it went to."
+  },
+  "threadSealed": "Sealed",
+  "@threadSealed": {
+    "description": "A text's details: how it was encrypted, such as threadSealedForThem."
+  },
+  "threadSealedForThem": "for them alone",
+  "@threadSealedForThem": {
+    "description": "How a sent text was encrypted, after threadSealed. Lower case, as it follows other words; so are the other threadSealed… values."
+  },
+  "threadSealedIntroOut": "as a first message, with your card",
+  "threadSealedForYou": "by them, for you alone",
+  "@threadSealedForYou": {
+    "description": "How a received text was encrypted."
+  },
+  "threadSealedIntroIn": "to you, as a first message",
+  "threadMessageIds": "{count, plural, =1{Message ID} other{Message IDs}}",
+  "@threadMessageIds": {
+    "description": "A text's details: the label of its parts' message IDs; count is how many.",
+    "placeholders": {"count": {"type": "int"}}
+  },
+  "threadWritten": "Written",
+  "@threadWritten": {
+    "description": "A received text's details: when the sender wrote it."
+  },
+  "threadPartsHere": "Parts here",
+  "@threadPartsHere": {
+    "description": "A received text's details: how many of its parts have come, as threadPartsOf."
+  },
+  "threadPartsOf": "{here} of {total}",
+  "@threadPartsOf": {
+    "placeholders": {"here": {"type": "int"}, "total": {"type": "int"}}
+  },
+  "threadSendTo": "Send to",
+  "@threadSendTo": {
+    "description": "The title of the choice where a text goes."
+  },
+  "threadLastSeenThere": "Last seen there {ago}",
+  "@threadLastSeenThere": {
+    "description": "{ago} is how long ago, such as timeMinutesAgo.",
+    "placeholders": {"ago": {"type": "String"}}
+  },
+  "threadWhereWas": "Where {name} was {ago}",
+  "@threadWhereWas": {
+    "description": "Send the text to where the contact last was. {ago} is how long ago, such as timeMinutesAgo.",
+    "placeholders": {"name": {"type": "String"}, "ago": {"type": "String"}}
+  },
+  "threadThereHow": "Fast if they are still near there",
+  "@threadThereHow": {
+    "description": "Under the choice threadWhereWas: the text goes to the node where the contact last was."
+  },
+  "threadTheirHome": "Their home node",
+  "@threadTheirHome": {
+    "description": "One of the two places a text can be sent to; the other is threadWhereWas."
+  },
+  "threadHomeHow": "Waits at their home until they fetch it",
+  "@threadHomeHow": {
+    "description": "Under the choice threadTheirHome: the text goes to the contact's home node."
+  },
+  "threadNotSent": "Not sent: {error}",
+  "@threadNotSent": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "threadNotWritten": "Has not written yet",
+  "@threadNotWritten": {
+    "description": "Under the contact's name at the top of a conversation."
+  },
+  "threadLastWrote": "Last wrote {ago}",
+  "@threadLastWrote": {
+    "description": "Under the contact's name. {ago} is how long ago, such as timeMinutesAgo.",
+    "placeholders": {"ago": {"type": "String"}}
+  },
+  "threadLastWroteHome": "Last wrote {ago}, from their home",
+  "@threadLastWroteHome": {
+    "placeholders": {"ago": {"type": "String"}}
+  },
+  "threadLastWroteAway": "Last wrote {ago}, away from home",
+  "@threadLastWroteAway": {
+    "placeholders": {"ago": {"type": "String"}}
+  },
+  "threadRename": "Rename",
+  "threadShareHome": "Share my home node",
+  "threadArchiveConversation": "Archive conversation",
+  "threadContactArchived": "{name}: contact archived",
+  "@threadContactArchived": {
+    "placeholders": {"name": {"type": "String"}}
+  },
+  "threadArchiveContact": "Archive contact",
+  "threadRemoveTitle": "Remove {name}?",
+  "@threadRemoveTitle": {
+    "placeholders": {"name": {"type": "String"}}
+  },
+  "threadRemoveHow": "Their texts stay; to write again, add their card.",
+  "threadRemove": "Remove",
+  "@threadRemove": {
+    "description": "The button that removes a contact, in the dialog that asks."
+  },
+  "threadRemoveContact": "Remove contact",
+  "threadNotVerified": "Not verified yet: their first reply proves it is them.",
+  "threadIsArchived": "This conversation is archived.",
+  "threadWasRemoved": "This contact was removed.",
+  "threadNoNode": "{name}'s card names no node yet: ask them for a new one.",
+  "@threadNoNode": {
+    "placeholders": {"name": {"type": "String"}}
+  },
+  "threadName": "Name",
+  "@threadName": {
+    "description": "The title of the field that renames a contact."
+  },
+  "threadParts": "{count, plural, one{{count} part} other{{count} parts}}",
+  "@threadParts": {
+    "description": "Under the field being written: how many messages the text takes, two or more.",
+    "placeholders": {"count": {"type": "int"}}
+  },
+  "threadTooManyParts": "{count, plural, one{{count} part, {max} at most} other{{count} parts, {max} at most}}",
+  "@threadTooManyParts": {
+    "description": "As threadParts, when the text takes more messages than {max}, the most it may.",
+    "placeholders": {"count": {"type": "int"}, "max": {"type": "int"}}
+  },
+  "threadHint": "Text",
+  "@threadHint": {
+    "description": "The hint in the empty field where the person writes a text."
+  },
+  "threadSend": "Send",
+  "@threadSend": {
+    "description": "The send button's tooltip."
+  },
+  "threadTheyReacted": "They reacted: {emoji}",
+  "@threadTheyReacted": {
+    "description": "{emoji} is the emoji's name, in English.",
+    "placeholders": {"emoji": {"type": "String"}}
+  },
+  "threadYouReacted": "You reacted: {emoji}",
+  "@threadYouReacted": {
+    "description": "{emoji} is the emoji's name, in English.",
+    "placeholders": {"emoji": {"type": "String"}}
+  },
+  "threadCopy": "Copy text",
+  "threadToWhere": "To where they were",
+  "@threadToWhere": {
+    "description": "The mark on a sent text that went to where the contact last was."
+  },
+  "threadToHome": "To their home",
+  "@threadToHome": {
+    "description": "A mark on a sent text, as threadToWhere is: where it was sent."
+  },
+  "threadTakenMark": "Sent into the network, which does not say when it arrives",
+  "@threadTakenMark": {
+    "description": "The mark on a sent text the node has taken."
+  },
+  "threadReactionSeen": "{name} sees your reaction on their text.",
+  "@threadReactionSeen": {
+    "placeholders": {"name": {"type": "String"}}
+  },
+
+  "emojiSearch": "Search emoji by name",
+  "@emojiSearch": {
+    "description": "The emoji's names are in English only, so a search finds English words."
+  },
+  "emojiNone": "No emoji by that name.",
+  "emojiSmileys": "Smileys & emotion",
+  "@emojiSmileys": {
+    "description": "Unicode's groups of emoji, as the picker shows them."
+  },
+  "emojiPeople": "People & body",
+  "emojiAnimals": "Animals & nature",
+  "emojiFood": "Food & drink",
+  "emojiTravel": "Travel & places",
+  "emojiActivities": "Activities",
+  "emojiObjects": "Objects",
+  "emojiSymbols": "Symbols",
+  "emojiFlags": "Flags",
+
+  "sendNoReturnAddress": "no address to answer to yet",
+  "@sendNoReturnAddress": {
+    "description": "Why a text was not sent; lower case, as it follows other words, such as threadNotSent's."
+  },
+  "sendNoAddress": "{name} has no address yet",
+  "@sendNoAddress": {
+    "description": "Why a text was not sent; follows other words, such as threadNotSent's.",
+    "placeholders": {"name": {"type": "String"}}
+  },
+  "sendTooLong": "{count, plural, one{too long: {count} part, {max} at most} other{too long: {count} parts, {max} at most}}",
+  "@sendTooLong": {
+    "description": "Why a text was not sent; lower case, as it follows other words.",
+    "placeholders": {"count": {"type": "int"}, "max": {"type": "int"}}
+  },
+  "sendCharTooLong": "a character too long to send",
+  "@sendCharTooLong": {
+    "description": "Why a text cannot be sent, under the field and after threadNotSent's words; lower case."
+  },
+
+  "sessionBadValue": "The node sent a value this app cannot read: {error}",
+  "@sessionBadValue": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "sessionReadFailed": "Reading the node failed: {error}",
+  "@sessionReadFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "sessionNotConnected": "not connected",
+  "@sessionNotConnected": {
+    "description": "Why something failed; lower case, as it follows words such as \"Setting Public failed: \"."
+  },
+  "sessionPairedOnly": "{what} is the paired phone's alone",
+  "@sessionPairedOnly": {
+    "description": "Why something failed for a guest. The value is the English name of what was asked of the node, such as Public or Phones.",
+    "placeholders": {"what": {"type": "String"}}
+  },
+  "sessionHomeTaken": "Your home no longer keeps your mail. Set it again in Settings.",
+  "sessionGivenBackUnknown": "The node gave back message {id}, which this app did not send.",
+  "@sessionGivenBackUnknown": {
+    "description": "{id} is a message ID in hex.",
+    "placeholders": {"id": {"type": "String"}}
+  },
+  "sessionSendFailed": "Sending failed: {error}",
+  "@sessionSendFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "sessionConfirmRefused": "The node refused the inbox confirmation: {error}",
+  "@sessionConfirmRefused": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "sessionInboxFailed": "Reading the inbox failed: {error}",
+  "@sessionInboxFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "sessionPlaceFailed": "Setting the node's place failed: {error}",
+  "@sessionPlaceFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "sessionNoNewMail": "No new mail",
+  "@sessionNoNewMail": {
+    "description": "What the home node answered a fetch of the mail."
+  },
+  "sessionMoreAtHome": "{count, plural, one{{count} more at home: fetch again for them} other{{count} more at home: fetch again for them}}",
+  "@sessionMoreAtHome": {
+    "description": "After a fetch of the mail: how many texts the home node still keeps beyond those it sent.",
+    "placeholders": {"count": {"type": "int"}}
+  },
+  "sessionClockNone": "no time, offset {offset}",
+  "@sessionClockNone": {
+    "description": "The node's clock, on the debug screen: it has no time. {offset} is its offset from UTC, such as UTC+01:00.",
+    "placeholders": {"offset": {"type": "String"}}
+  },
+  "sessionClockGps": "{time} from the gps, offset {offset}",
+  "@sessionClockGps": {
+    "description": "The node's clock, set from its GPS. {time} is the UTC time in ISO 8601.",
+    "placeholders": {"time": {"type": "String"}, "offset": {"type": "String"}}
+  },
+  "sessionClockPhone": "{time} from the phone, offset {offset}",
+  "@sessionClockPhone": {
+    "description": "The node's clock, set from a phone.",
+    "placeholders": {"time": {"type": "String"}, "offset": {"type": "String"}}
+  },
+
   "factRole": "A relay has outside power, such as USB, and listens all the time, passing on texts for the nodes around it: the more relays, the farther texts reach. A sleepy node is on battery: to last, it sleeps and wakes only in short windows, and sends and receives through one relay near it, its anchor. A fixed relay that loses its power keeps relaying on battery until the battery runs low, and then turns sleepy. Holding the node's button switches its role until its power next changes.",
   "@factRole": {
     "description": "The help under the row Role of a node's sheet on the map; the other fact messages are the help of the rows they name."

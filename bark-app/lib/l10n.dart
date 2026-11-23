@@ -15,6 +15,10 @@ export 'l10n/app_localizations.dart' show AppLocalizations;
 /// The app's words in the language it now speaks.
 AppLocalizations tr = AppLocalizationsEn();
 
+/// The debug log's words, which stay English: a fault report carries
+/// them.
+final AppLocalizations english = AppLocalizationsEn();
+
 /// The first of the phone's languages the app has, else English.
 Locale languageOf(List<Locale> phone) {
   for (final want in phone) {
