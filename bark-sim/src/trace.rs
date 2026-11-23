@@ -162,10 +162,15 @@ impl Tracer {
             Action::App(AppEvent::Message { msg_id }) => {
                 let _ = write!(what, "app message {}", self.msg(*msg_id, tags));
             }
-            Action::App(AppEvent::GivenBack { msg_id, retry_at }) => {
+            Action::App(AppEvent::GivenBack {
+                msg_id,
+                retry_at,
+                why,
+                tag,
+            }) => {
                 let _ = write!(
                     what,
-                    "app given back {} to {:.3} s",
+                    "app given back {} {why:?}, tag {tag}, to {:.3} s",
                     self.msg(*msg_id, tags),
                     retry_at.as_micros() as f64 / 1e6
                 );
@@ -212,12 +217,14 @@ impl Tracer {
                     Trace::ReturnedToParent {
                         msg_id,
                         to,
+                        sleepy,
                         attempts,
                     } => write!(
                         what,
-                        "returned {} to {}, attempt {attempts}",
+                        "returned {} to {}{}, attempt {attempts}",
                         self.msg(msg_id, tags),
-                        n.node(to)
+                        n.node(to),
+                        if sleepy { " in its window" } else { "" }
                     ),
                     Trace::Seen { msg_id, by } => write!(
                         what,

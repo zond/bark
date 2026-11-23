@@ -63,9 +63,12 @@ pub struct Config {
     pub neighbour_expiry_rotations: u8,
     /// Rotations a demotion lasts without an ACK (spec "Neighbour table").
     pub demotion_rotations: u8,
-    /// How long a sleepy node's own message waits before it is routed again
-    /// when it has no live neighbour or its anchor did not answer
-    /// (spec "A sleepy node's own message": the length of a fade).
+    /// The length of a fade: how long a sleepy node's own message waits
+    /// before it is offered again to an anchor that did not answer, the
+    /// first of the doubling waits (spec "A sleepy node's own message");
+    /// how often mail handed on at turning sleepy is routed again with no
+    /// live neighbour (spec "Sleepy nodes"); and the gap between a relay's
+    /// answers to an anchorless beat (spec "Sleepy nodes alone").
     pub fade_retry: Duration,
     /// The delivery queue's stale age and the least the network keeps a
     /// node's mail (spec "Sleepy nodes").

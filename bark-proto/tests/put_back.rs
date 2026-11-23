@@ -55,6 +55,7 @@ fn sent_to_m(h: &mut Harness<Relay>, dst: (Position, NodeId)) -> MsgId {
             dst_pos: dst.0,
             dst_id: dst.1,
             payload,
+            tag: 0,
         },
     );
     let id = MsgId::of(dst.0, dst.1, payload);
@@ -124,6 +125,7 @@ fn the_applications_own_message_stays_its_own() {
             dst_pos: dst.0,
             dst_id: dst.1,
             payload,
+            tag: 0,
         },
     );
     let id = MsgId::of(dst.0, dst.1, payload);
@@ -138,6 +140,7 @@ fn the_applications_own_message_stays_its_own() {
             dst_pos: own[0].dst_pos,
             dst_id: own[0].dst_id,
             payload: &own[0].payload,
+            tag: 0,
         },
     );
     assert!(h.nodes[s].core.knows(id));

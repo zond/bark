@@ -9,6 +9,7 @@ import 'package:sodium/sodium.dart';
 import 'app_layer.dart';
 import 'card.dart';
 import 'contacts.dart';
+import 'l10n.dart';
 import 'link.dart';
 import 'me.dart';
 import 'session.dart';
@@ -26,6 +27,37 @@ class Messenger {
     session.recipient = (n) => recipientTag(sodium, me.identity, n.id);
     session.name = () => me.name;
     session.nextSent = me.nextSent;
+    session.foundNoWay = _noWay;
+  }
+
+  /// Whether the thread with the contact of this identity, in hex, is on
+  /// the screen now.
+  bool Function(String key) onScreen = (_) => false;
+
+  /// A message given back for no way: nothing sends it again by itself,
+  /// as a search of every relay in reach costs each airtime (roadmap
+  /// D244), so the person is told, once. A text waits in its thread,
+  /// which may not be the last of its conversation, so the notice says it
+  /// unless that thread is on the screen; a reaction or the card the
+  /// person sends again by choosing it again; a fetch by fetching.
+  void _noWay(Outgoing o) {
+    final name = contacts.byKey(o.to)?.name;
+    switch (o.kind) {
+      case OutKind.text when name != null && !onScreen(o.to!):
+        session.tellIn((w) => w.sendTextNoWay(name));
+      case OutKind.text:
+        return;
+      case OutKind.fetch:
+        if (isHome(o.dst.id)) session.fetchNews = tr.mailboxFetchNoWay;
+      case OutKind.reaction when name != null:
+        session.tellIn((w) => w.sendReactionNoWay(o.body ?? '', name));
+      case OutKind.card when name != null:
+        session.tellIn((w) => w.sendCardNoWay(name));
+      case OutKind.home when name != null:
+        session.tellIn((w) => w.sendHomeNoWay(name));
+      case OutKind.reaction || OutKind.card || OutKind.home:
+        return;
+    }
   }
 
   /// Whether the node of `id` is the person's home: a home is known by its
@@ -108,28 +140,78 @@ class Messenger {
   Future<void> sendText(Contact c, String text, {Toward? toward}) async {
     final t = toward ?? c.unasked(now());
     if (t == null) throw BadPayload.said((w) => w.sendNoAddress(c.name));
+    for (final o in await _text(c, text, t, _checked(c, text))) {
+      await session.queue(o);
+    }
+  }
+
+  /// The parts `text` takes to `c` now, or throws [BadPayload] for a text
+  /// that cannot go, before anything is sealed.
+  List<String> _checked(Contact c, String text) {
+    if (!c.hasMine && me.card.home == null && me.nodeAddress == null) {
+      throw BadPayload.said((w) => w.sendNoReturnAddress);
+    }
     final parts = partsOf(c, text);
     final n = parts.length;
     if (n > maxParts) throw BadPayload.said((w) => w.sendTooLong(n, maxParts));
+    return parts;
+  }
+
+  /// `parts` of a text sealed to `c` at `toward`, each with its own
+  /// `sent`, in a row; the first names the IDs it is sent again in place
+  /// of, `replaced`, and the reaction `was` the old text's.
+  Future<List<Outgoing>> _text(
+    Contact c,
+    String text,
+    Toward toward,
+    List<String> parts, {
+    List<int> replaced = const [],
+    Outgoing? was,
+  }) async {
+    final n = parts.length;
     final first = await me.nextSents(n);
-    final dst = c.addressOf(t);
-    for (final (i, part) in parts.indexed) {
-      final (p, sent) = await _seal(c, dst, [
-        TextRecord(part, i + 1, n),
-      ], sent: first + i);
-      await session.queue(
+    final dst = c.addressOf(toward);
+    return [
+      for (final (i, part) in parts.indexed)
         Outgoing(
           dst,
-          p,
+          (await _seal(c, dst, [
+            TextRecord(part, i + 1, n),
+          ], sent: first + i)).$1,
           at: now(),
           kind: OutKind.text,
           to: c.key,
-          sent: sent,
+          sent: first + i,
           body: part,
-          toward: t,
+          toward: toward,
           part: i + 1,
           of: n,
+          replaced: i == 0 ? replaced : const [],
+          reaction: was?.reaction,
+          reactionSent: was?.reactionSent ?? 0,
         ),
+    ];
+  }
+
+  /// Sends the text whose parts are `outs` again, on the person's word,
+  /// after its search found no way, to `c` at the address `toward` names:
+  /// whole, as a new text with new `sent`, at the end of the thread, as
+  /// the relays that searched keep their records of each part's ID (spec
+  /// "Phone link", Given back). A receiver that had it shows both. The
+  /// reaction on it stays; one they give the old text later names a
+  /// `sent` the phone no longer has, and is dropped.
+  Future<void> sendAgain(Contact c, List<Outgoing> outs, Toward toward) async {
+    final text = outs.map((o) => o.body ?? '').join();
+    final parts = _checked(c, text);
+    final again = await session.sendAgain(
+      outs,
+      (replaced) =>
+          _text(c, text, toward, parts, replaced: replaced, was: outs.first),
+    );
+    if (again) {
+      session.note(
+        'Send ${outs.map((o) => msgIdHex(o.id)).join(', ')}: sent again as '
+        'a new text',
       );
     }
   }

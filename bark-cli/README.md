@@ -104,7 +104,9 @@ it needs one, from a random seed kept in `--dir`.
   payload", says. The first message to a contact carries this person's
   card; once one of theirs has opened here, messages go boxed. A text too
   long for one message goes in parts. Each line names a message the node
-  took; one it gives back later shows in `inbox`.
+  took; one it gives back later shows in `inbox`, with why: `busy`, after
+  the wait it gives; `no-neighbour`, the node heard nobody; `no-way`, no
+  node in reach could take it on. The tool sends none again by itself.
 - `inbox <id>`: reads every message waiting at the node, opens it, keeps
   what it says of its sender, and confirms it, as a paired phone does; as
   a guest, it reads the node's ring from the last item it took there. A

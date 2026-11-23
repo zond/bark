@@ -508,14 +508,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.queue.slot_reoccupied(slot);
             if let (Some(ends), false) = (self.boot.ends(), hb.sleepy) {
                 // A relay learned in the first rotation: the application
-                // shows it, and its own message waits no longer.
+                // shows it.
                 emit(Action::App(AppEvent::Boot {
                     relays: self.relays_known(now),
                     ends: Some(ends),
                 }));
-                if let Some(id) = self.own.id {
-                    self.queue.due_now(id, now);
-                }
             }
         }
         if hb.sleepy {

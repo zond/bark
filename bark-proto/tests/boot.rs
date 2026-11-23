@@ -68,6 +68,7 @@ fn send(h: &mut Harness<Relay>, from: usize, to: usize, text: &[u8]) -> MsgId {
             dst_pos,
             dst_id,
             payload: text,
+            tag: 0,
         },
     );
     MsgId::of(dst_pos, dst_id, text)
@@ -137,11 +138,13 @@ fn a_relay_bursts_and_is_answered() {
     assert_eq!(relays[..2], [0, 1]);
 }
 
-/// A relay's application may send from the boot. With no relay known yet
-/// its text waits, and goes at the first relay heard, not dropped; it is
-/// delivered within the burst.
+/// A relay's application may send only while it has a live neighbour,
+/// in its first rotation a relay
+/// (spec "Receiving DATA", "Channel at boot"): booting alone it takes no
+/// text; once it hears a relay it does, and the text is delivered within
+/// the burst.
 #[test]
-fn a_booting_relay_holds_its_text_until_it_hears_a_relay() {
+fn a_booting_relay_takes_a_text_once_it_hears_a_relay() {
     let (a, b) = (0, 1);
     let mut h = Harness::powered(vec![node(0.0, true, 3), node(300.0, true, 4)]);
     h.link(a, b);
@@ -150,14 +153,113 @@ fn a_booting_relay_holds_its_text_until_it_hears_a_relay() {
     h.run_until(planted, |_| false);
     h.run_until(planted + secs(1), |h| !h.nodes[b].boot.is_empty());
     assert!(h.nodes[b].core.booting());
-    assert!(h.accepts(b), "it takes a text at boot");
-    let text = send(&mut h, b, a, b"from the first second");
+    assert!(!h.accepts(b), "alone, it takes no text");
+    assert!(h.run_until(planted + secs(40), |h| h.accepts(b)));
+    assert!(h.nodes[b].core.booting(), "within its first rotation");
+    let text = send(&mut h, b, a, b"from the first relay heard");
     assert!(h.run_until(planted + secs(40), |h| delivered(h, a, text)));
     let dropped = h.nodes[b]
         .traces
         .iter()
         .any(|(_, t)| matches!(t, Trace::Dropped { .. }));
     assert!(!dropped);
+}
+
+/// When the delivery TTL after `since` ends, as the node counts it: from
+/// the whole second, rounded up (spec "Sleepy nodes alone").
+fn alone_ends(since: Instant) -> Instant {
+    let s = since.as_micros().div_ceil(1_000_000);
+    Instant::from_micros(s * 1_000_000) + Config::default().delivery_ttl
+}
+
+/// Run until node `i` turns anchorless; when it did.
+fn turns_anchorless(h: &mut Harness<Relay>, i: usize, within: Instant) -> Instant {
+    assert!(
+        h.run_until(within, |h| h.nodes[i].core.anchorless()),
+        "node {i} never anchorless"
+    );
+    h.now
+}
+
+/// A sleepy node in its first rotation that hears only another sleepy
+/// node, one without an anchor, takes no message from its application: it
+/// knows no relay (spec "Channel at boot"). Once anchorless, it takes none
+/// for a delivery TTL, 600 s, though its neighbour is live, and takes one
+/// at that time's end, woken for it (spec "Sleepy nodes alone").
+#[test]
+fn a_node_newly_anchorless_takes_no_text_for_a_delivery_ttl() {
+    let (a, b) = (0, 1);
+    let mut h = Harness::powered(vec![node(0.0, false, 5), node(50.0, false, 6)]);
+    h.link(a, b);
+    let planted = at(900);
+    h.start_at(b, planted);
+    h.run_until(planted, |_| false);
+    assert!(h.nodes[a].core.anchorless());
+    let heard = |h: &Harness<Relay>| h.nodes[b].core.neighbours().next().is_some();
+    assert!(h.run_until(planted + secs(120), heard), "B never heard A");
+    assert!(h.nodes[b].core.booting());
+    assert!(!h.accepts(b), "it knows no relay");
+    let since = turns_anchorless(&mut h, b, planted + secs(900));
+    let ends = alone_ends(since);
+    let ready = |h: &Harness<Relay>| h.accepts(b);
+    assert!(h.run_until(ends + secs(60), ready));
+    assert_eq!(h.now, ends, "ready at the end, woken for it");
+}
+
+/// The hold starts again each time the node turns anchorless: B, alone,
+/// anchors at relay R when R comes, and is ready at once; when R turns
+/// sleepy, B leaves it, anchorless again, and takes no text for another
+/// delivery TTL (spec "Sleepy nodes alone", "Relay choice").
+#[test]
+fn turning_anchorless_again_starts_the_hold_again() {
+    let (a, b, r) = (0, 1, 2);
+    let mut h = Harness::powered(vec![
+        node(0.0, false, 7),
+        node(50.0, false, 8),
+        node(100.0, true, 9),
+    ]);
+    h.link(a, b);
+    h.link(b, r);
+    h.start_at(r, at(100_000));
+    let first = turns_anchorless(&mut h, b, at(1000));
+    let comes = first + secs(300);
+    h.start_at(r, comes);
+    h.run_until(comes, |_| false);
+    assert!(!h.accepts(b), "held the first time");
+    assert!(h.run_until(comes + secs(1500), |h| h.nodes[b].core.anchor().is_some()));
+    assert!(
+        h.run_until(h.now + secs(30), |h| h.accepts(b)),
+        "anchored, ready"
+    );
+    h.deliver_app(r, AppCommand::ForceRole);
+    let within = h.now + secs(2400);
+    let second = turns_anchorless(&mut h, b, within);
+    assert!(!h.accepts(b), "held again");
+    assert!(h.run_until(alone_ends(second) + secs(60), |h| h.accepts(b)));
+    assert_eq!(h.now, alone_ends(second));
+}
+
+/// The hold keeps only the node's own application waiting: B, newly
+/// anchorless and not ready, forwards A's text to C as ever
+/// (spec "Sleepy nodes alone").
+#[test]
+fn a_node_newly_anchorless_forwards_for_others() {
+    let (a, b, c) = (0, 1, 2);
+    let mut h = Harness::powered(vec![
+        node(0.0, false, 11),
+        node(300.0, false, 12),
+        node(600.0, false, 13),
+    ]);
+    h.link(a, b);
+    h.link(b, c);
+    h.start_at(b, at(1500));
+    let since = turns_anchorless(&mut h, b, at(2500));
+    let ready = |h: &Harness<Relay>| h.accepts(a) && h.nodes[b].core.neighbours().count() == 2;
+    assert!(h.run_until(alone_ends(since) - secs(200), ready));
+    assert!(!h.accepts(b), "B is held");
+    let text = send(&mut h, a, c, b"through B");
+    assert!(h.run_until(h.now + secs(120), |h| delivered(h, c, text)));
+    assert!(h.now < alone_ends(since), "while B was held");
 }
 
 /// A sleepy node that hears no relay in its first rotation, two worst-case

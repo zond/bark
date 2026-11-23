@@ -139,15 +139,20 @@ String ago(Duration d) {
 
 /// What a sent text's state means to the person, in words that claim no
 /// more than the app knows: once the node has taken a message the network
-/// says nothing more until the recipient confirms (spec "Addresses").
+/// says nothing more unless it gives it back (spec "Addresses").
 /// Lower case, as it follows other words; [capital] for a line of its own.
 String stateLabel(Session s, Outgoing o) => switch (o.state) {
   OutState.queued => tr.sentQueued,
   OutState.writing => tr.sentWriting,
   OutState.taken => tr.sentTaken,
-  OutState.givenBack => switch (s.waitLeftS(o)) {
-    0 => tr.sentBusyNow,
-    final w => tr.sentBusyIn(clock(w)),
+  // Given back, it always has a why.
+  OutState.givenBack => switch (o.why!) {
+    Why.noNeighbour => tr.sentNoNeighbour,
+    Why.noWay => tr.sentNoWay,
+    Why.busy => switch (s.waitLeftS(o)) {
+      0 => tr.sentBusyNow,
+      final w => tr.sentBusyIn(clock(w)),
+    },
   },
   OutState.refused => tr.sentRefused,
 };
@@ -179,6 +184,12 @@ List<(IconData, String, String)> get sentStates => [
   (Icons.sync, capital(tr.sentWriting), tr.sentWritingHelp),
   (Icons.check, capital(tr.sentTaken), tr.sentTakenHelp),
   (Icons.hourglass_bottom, tr.sentBusy, tr.sentBusyHelp),
+  (
+    Icons.wifi_tethering_off,
+    capital(tr.sentNoNeighbour),
+    tr.sentNoNeighbourHelp,
+  ),
+  (Icons.wrong_location, capital(tr.sentNoWay), tr.sentNoWayHelp),
   (Icons.block, capital(tr.sentRefused), tr.sentRefusedHelp),
   (Icons.add_reaction_outlined, tr.sentReaction, tr.sentReactionHelp),
 ];
@@ -252,13 +263,15 @@ Future<void> explainMessage(
   },
 );
 
-/// Whether a sent text's parts are all in one state, so that one part's
-/// marks stand for them all.
+/// Whether a sent text's parts are all here and all in one state, for one
+/// reason, so that one part's marks stand for them all: a text whose
+/// other parts were cancelled is not sent whole.
 bool partsAgree(List<Outgoing> outs) =>
-    outs.every((o) => o.state == outs.first.state);
+    outs.length == outs.first.of &&
+    outs.every((o) => o.state == outs.first.state && o.why == outs.first.why);
 
-/// A sent text's parts' states in words when they differ: how many the
-/// node has taken and the first problem.
+/// A sent text's parts' states in words when they differ: how many of its
+/// parts the node has taken and the first problem.
 String partsLabel(Session s, List<Outgoing> outs) {
   final taken = outs.where((o) => o.state == OutState.taken);
   final problem = outs
@@ -267,7 +280,7 @@ String partsLabel(Session s, List<Outgoing> outs) {
       )
       .firstOrNull;
   return [
-    tr.sentPartsSent(taken.length, outs.length),
+    tr.sentPartsSent(taken.length, outs.first.of),
     if (problem != null)
       tr.sentPartProblem(problem.part, stateLabel(s, problem)),
   ].join(', ');

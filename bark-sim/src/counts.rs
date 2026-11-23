@@ -15,6 +15,18 @@ impl Sim {
                 .as_micros(),
             _ => 0,
         };
+        match *t {
+            Trace::ReturnHeld { msg_id, .. } => {
+                self.returns_held.insert((node, msg_id.0));
+                self.metrics.app.returns.held += 1;
+            }
+            Trace::ReturnedToParent {
+                msg_id,
+                sleepy: true,
+                ..
+            } => self.return_ended(node, msg_id, None),
+            _ => {}
+        }
         let c = &mut self.metrics.nodes[node as usize].core;
         match *t {
             Trace::HomeChannelMoved { from, to } if !self.was_booting => {

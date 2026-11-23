@@ -592,16 +592,6 @@ impl SendQueue {
             .position(|o| o.kind.delivers() && !o.held() && o.not_before <= now)
     }
 
-    /// The entry of message `id`, if it waits beyond `now`, is due at
-    /// `now`.
-    pub fn due_now(&mut self, id: MsgId, now: Instant) {
-        for o in self.entries.as_mut_slice() {
-            if !o.held() && o.not_before > now && o.msg_id() == id {
-                o.not_before = now;
-            }
-        }
-    }
-
     /// Queued entries, in the order they arrived.
     pub fn iter(&self) -> impl Iterator<Item = &Outgoing> {
         self.entries.as_slice().iter()

@@ -626,7 +626,8 @@ macro_rules! drop_counts {
 }
 
 drop_counts! {
-    /// No neighbour left at the origin (spec "Return to parent").
+    /// Mail handed on when its node turned sleepy, with no neighbour left
+    /// there (spec "Sleepy nodes", "Return to parent").
     no_route: NoRoute,
     /// The hop cap (spec "Hop count").
     hop_cap: HopCap,
@@ -652,15 +653,35 @@ drop_counts! {
     /// left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
     return_seen: ReturnSeen,
+    /// A return to a sleepy parent found no place in the delivery queue
+    /// (spec "Return to parent"); left out where none was.
+    #[serde(skip_serializing_if = "is_zero")]
+    return_no_place: ReturnNoPlace,
+    /// A return's sleepy parent was no longer heard
+    /// (spec "Return to parent"); left out where none was.
+    #[serde(skip_serializing_if = "is_zero")]
+    return_unheard: ReturnUnheard,
+    /// A return the flush of a relay turning sleepy did not deliver
+    /// (spec "Return to parent"); left out where none was.
+    #[serde(skip_serializing_if = "is_zero")]
+    return_not_flushed: ReturnNotFlushed,
+    /// A held return gave its place up to a message for a node
+    /// (spec "Delivery queue"); left out where none was.
+    #[serde(skip_serializing_if = "is_zero")]
+    return_evicted: ReturnEvicted,
+    /// A return held when its relay rebooted into a new image
+    /// (spec "Return to parent"); left out where none was.
+    #[serde(skip_serializing_if = "is_zero")]
+    return_rebooted: ReturnRebooted,
     /// The delivery TTL ran out (spec "Delivery queue").
     queue_expired: QueueExpired,
     /// The delivery queue was full (spec "Delivery queue").
     delivery_full: DeliveryFull,
     /// The payload was too long (spec "Packet formats").
     payload_too_long: PayloadTooLong,
-    /// A sleepy node's own message given back to its application with a
-    /// wait (spec "A sleepy node's own message").
-    pushback: Pushback,
+    /// The application's message given back to it, for the why the
+    /// application's counters tell (spec "Addresses").
+    given_back: GivenBack,
     /// Received and not taken because the ACK that takes it could not go
     /// out (spec "The ACK"); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
@@ -669,6 +690,73 @@ drop_counts! {
     /// (spec "Send queue"); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
     draining: Draining,
+}
+
+/// What became of the returns to sleepy parents
+/// (spec "Return to parent"): each is in one of these, those `held` in
+/// one of the rest.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct SleepyReturns {
+    /// Dropped before a place: no place in the delivery queue.
+    pub no_place: u64,
+    /// Dropped before a place: no holder for the window it needs.
+    pub unheard: u64,
+    /// Held in a holder's delivery queue; of those:
+    pub held: u64,
+    /// taken by the parent;
+    pub taken: u64,
+    /// gave their place up to a message for a node, stale or not;
+    pub evicted: u64,
+    /// not delivered by the flush of a holder turning sleepy;
+    pub not_flushed: u64,
+    /// held when the holder rebooted into a new image;
+    pub rebooted: u64,
+    /// at a count cap when they went;
+    pub capped: u64,
+    /// dropped otherwise;
+    pub other: u64,
+    /// lost with a holder that went off;
+    pub lost: u64,
+    /// still held at the end.
+    pub at_end: u64,
+}
+
+impl SleepyReturns {
+    /// The held ones' fates, summed, which equal `held`.
+    pub fn held_fates(&self) -> u64 {
+        self.taken
+            + self.evicted
+            + self.not_flushed
+            + self.rebooted
+            + self.capped
+            + self.other
+            + self.lost
+            + self.at_end
+    }
+}
+
+/// Counters by why a message was given back to its application
+/// (spec "Sending", Given back).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct WhyCounts {
+    pub busy: u64,
+    pub no_neighbour: u64,
+    pub no_way: u64,
+}
+
+impl WhyCounts {
+    pub fn add(&mut self, why: bark_proto::Why) {
+        use bark_proto::Why;
+        *match why {
+            Why::Busy => &mut self.busy,
+            Why::NoNeighbour => &mut self.no_neighbour,
+            Why::NoWay => &mut self.no_way,
+        } += 1;
+    }
+
+    pub fn total(&self) -> u64 {
+        self.busy + self.no_neighbour + self.no_way
+    }
 }
 
 /// Whether a counter is zero: counters of what only some scenarios do are
@@ -788,6 +876,14 @@ pub struct AppMetrics {
     /// Drops reported by cores, by reason (events, not messages: two
     /// copies of one message may be dropped in two places).
     pub drops: DropCounts,
+    /// Messages given back to their applications, by why (events: one
+    /// message may come back more than once; spec "Addresses").
+    pub given_back: WhyCounts,
+    /// Returns to a sleepy parent (spec "Return to parent").
+    pub returns: SleepyReturns,
+    /// Replies of a mailbox given back as no way, which it drops
+    /// (spec "Mailbox").
+    pub replies_no_way: u64,
     /// Origination to destination application, µs, in arrival order.
     #[serde(skip)]
     pub latencies_us: Vec<u64>,

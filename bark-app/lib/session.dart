@@ -24,7 +24,9 @@ enum OutState {
   /// The node has it.
   taken,
 
-  /// The node gave it back; it may be offered again once the wait is over.
+  /// The node gave it back, for [Outgoing.why]: offered again by itself
+  /// once the node can take it, busy or with no neighbour, and for no way
+  /// only on the person's word (spec "Phone link", Given back).
   givenBack,
 
   /// The node will never take it as written: it answered the write with
@@ -100,8 +102,16 @@ class Outgoing {
   String? reaction;
   int reactionSent;
   OutState state;
+
+  /// Why the node gave it back, while [state] is [OutState.givenBack].
+  Why? why;
   DateTime? retryAt;
   String? error;
+
+  /// The IDs of the parts of a text this one's text was sent again in
+  /// place of (`Messenger.sendAgain`): one may yet come back, and is no
+  /// stranger's.
+  List<int> replaced;
 
   Outgoing(
     this.dst,
@@ -119,7 +129,19 @@ class Outgoing {
     this.reaction,
     this.reactionSent = 0,
     this.state = OutState.queued,
+    this.why,
+    this.replaced = const [],
   }) : id = msgId(dst, payload);
+
+  /// Given back because its search found no way: it waits for the person.
+  bool get noWay => state == OutState.givenBack && why == Why.noWay;
+
+  /// Leaves the given-back state to be offered to the node again.
+  void requeue() {
+    state = OutState.queued;
+    why = null;
+    retryAt = null;
+  }
 
   /// The `sent` of its text's first part, which names the text.
   int get first => sent - part + 1;
@@ -150,12 +172,15 @@ class Outgoing {
     // An answer the app did not hear may have been a take; offered again,
     // the same message has the same ID and is one message to every node.
     'state': (state == OutState.writing ? OutState.queued : state).name,
+    if (why case final w?) 'why': w.name,
     'retryAt': retryAt?.toIso8601String(),
     'error': error,
+    if (replaced.isNotEmpty) 'replaced': replaced,
   };
 
   static Outgoing fromJson(Map<String, dynamic> j) {
     final kind = OutKind.values.byName(j['kind'] as String);
+    final state = OutState.values.byName(j['state'] as String);
     return Outgoing(
         Address.parse(j['dst'] as String)!,
         parseHex(j['payload'] as String)!,
@@ -177,7 +202,12 @@ class Outgoing {
         answered: j['answered'] as bool,
         reaction: j['reaction'] as String?,
         reactionSent: j['reactionSent'] as int,
-        state: OutState.values.byName(j['state'] as String),
+        state: state,
+        // Before the node said why, every message came back busy.
+        why: state != OutState.givenBack
+            ? null
+            : Why.values.byName(j['why'] as String? ?? Why.busy.name),
+        replaced: [for (final i in j['replaced'] as List? ?? []) i as int],
       )
       ..retryAt = j['retryAt'] == null
           ? null
@@ -435,6 +465,9 @@ class Session extends ChangeNotifier {
 
   bool _writing = false;
   bool _draining = false;
+
+  /// Given back was read on this link; nothing is written before.
+  bool _givenBackRead = false;
   final List<StreamSubscription<dynamic>> _subs = [];
 
   bool get connected => _link != null;
@@ -770,8 +803,16 @@ class Session extends ChangeNotifier {
     unawaited(link.closed.then((_) => _detach(link)));
     if (!await _setRecipient(link, n)) return false;
     try {
+      // Before anything is written: the node empties Given back when it
+      // takes the next message, and a queued one may be the one it names.
+      try {
+        _onGivenBack(await link.readGivenBack());
+      } finally {
+        if (_link == link) _givenBackRead = true;
+      }
       await link.subscribe();
       _onStatus(await link.readStatus());
+      // Changed before the subscription, it was not notified.
       _onGivenBack(await link.readGivenBack());
     } catch (e) {
       tellIn((w) => w.sessionReadFailed(said(e, w)));
@@ -1299,6 +1340,7 @@ class Session extends ChangeNotifier {
     status = null;
     node = null;
     givenBack = null;
+    _givenBackRead = false;
     nodeTime = null;
     nodeHome = null;
     homeRemoved = false;
@@ -1333,32 +1375,94 @@ class Session extends ChangeNotifier {
     if (!guest && link != null && at != null && s.phones != at) {
       unawaited(_readPhones(link));
     }
+    _neighbourBack(s);
     _pump();
   }
 
+  /// Told of each message given back for no way, once, before the
+  /// listeners: a text waits in its thread for the person, and what else
+  /// comes back so is said where the person looks for it.
+  void Function(Outgoing)? foundNoWay;
+
+  /// Takes the node's Given back. The value stays until the node takes
+  /// another message from this phone and is read again at every connect,
+  /// so the last one handled from each node is kept ([NodeRecord]) and a
+  /// value is new only when it differs.
   void _onGivenBack(GivenBack? g) {
     givenBack = g;
     note(
       g == null
           ? 'Given back: empty'
-          : 'Given back: ${msgIdHex(g.msgId)}, wait ${g.waitS} s',
+          : 'Given back: ${msgIdHex(g.msgId)}, ${g.why.name}, '
+                'wait ${g.waitS} s',
     );
-    if (g == null) return notifyListeners();
+    final n = node;
+    final r = n == null ? null : nodes.of(nodeName(n.id));
+    final seen = r?.givenBackSeen;
+    r?.givenBackSeen = g?.msgId;
+    if (g != null && seen == g.msgId) {
+      note('Given back: ${msgIdHex(g.msgId)} read before');
+    }
+    final o = g == null || seen == g.msgId ? null : _givenBack(g);
+    notifyListeners();
+    if (seen != g?.msgId || o != null) {
+      unawaited(save(out: [?o], state: seen != g?.msgId));
+    }
+  }
+
+  /// Acts on `g`, read for the first time: the message it names, if the
+  /// node had it, given back. Queued counts as had: a write whose answer
+  /// was lost was put back in the queue, and the give-back proves the
+  /// node took it.
+  Outgoing? _givenBack(GivenBack g) {
+    final id = msgIdHex(g.msgId);
     final o = outbox.where((o) => o.id == g.msgId).firstOrNull;
     if (o == null) {
-      tellIn((w) => w.sessionGivenBackUnknown(msgIdHex(g.msgId)));
-      return;
+      if (outbox.any((o) => o.replaced.contains(g.msgId))) {
+        note('Given back: $id was sent again already');
+      } else {
+        tellIn((w) => w.sessionGivenBackUnknown(id));
+      }
+      return null;
     }
-    // The value stays until the node takes another message, so it is
-    // read again at every connect; only a message the node has means it.
-    if (o.state != OutState.taken && o.state != OutState.givenBack) {
-      return notifyListeners();
+    if (o.state != OutState.taken && o.state != OutState.queued) {
+      note('Given back: $id is ${o.state.name} here');
+      return null;
     }
     o.state = OutState.givenBack;
-    o.retryAt = now().add(Duration(seconds: g.waitS));
-    _retryWhenDue();
+    o.why = g.why;
+    switch (g.why) {
+      case Why.busy:
+        o.retryAt = now().add(Duration(seconds: g.waitS));
+        _retryWhenDue();
+      case Why.noNeighbour:
+        // Status may have said so before this came.
+        if (status case final s?) _neighbourBack(s);
+      case Why.noWay:
+        foundNoWay?.call(o);
+    }
+    return o;
+  }
+
+  /// Offers again each message given back for no neighbour once the node
+  /// is ready, or hears a neighbour: ready is the turn, which may be
+  /// another phone's until this one asks for it by a write (spec "Phone
+  /// link", Sending). A write answered not ready then waits for ready as
+  /// any message does.
+  void _neighbourBack(Status s) {
+    if (!s.ready && s.heard == 0) return;
+    final again = [
+      for (final o in outbox)
+        if (o.state == OutState.givenBack && o.why == Why.noNeighbour) o,
+    ];
+    if (again.isEmpty) return;
+    for (final o in again) {
+      o.requeue();
+      note('Send ${msgIdHex(o.id)}: the node hears a neighbour, sent again');
+    }
     notifyListeners();
-    unawaited(save(out: [o]));
+    unawaited(save(out: again));
+    _pump();
   }
 
   /// Sends again, by itself, each message given back once the wait the
@@ -1371,7 +1475,7 @@ class Session extends ChangeNotifier {
     _retry?.cancel();
     final due = [
       for (final o in outbox)
-        if (o.state == OutState.givenBack && o.retryAt != null) o.retryAt!,
+        if (o.state == OutState.givenBack && o.why == Why.busy) ?o.retryAt,
     ];
     if (due.isEmpty) return;
     final first = due.reduce((a, b) => a.isBefore(b) ? a : b);
@@ -1381,9 +1485,11 @@ class Session extends ChangeNotifier {
       final again = <Outgoing>[];
       for (final o in outbox) {
         final at = o.retryAt;
-        if (o.state == OutState.givenBack && at != null && !at.isAfter(t)) {
-          o.state = OutState.queued;
-          o.retryAt = null;
+        if (o.state == OutState.givenBack &&
+            o.why == Why.busy &&
+            at != null &&
+            !at.isAfter(t)) {
+          o.requeue();
           again.add(o);
           note('Send ${msgIdHex(o.id)}: its wait is over, sent again');
         }
@@ -1421,15 +1527,14 @@ class Session extends ChangeNotifier {
   );
 
   /// The newest fetch while it waits for its answer: the node has not
-  /// given it back or refused it, no reply of its round has come, and
-  /// [fetchAnswerWait] has not passed since it was queued. Stored with
-  /// the queue, so it is still waited for after a restart.
+  /// refused it or given it back for no way, no reply of its round has
+  /// come, and [fetchAnswerWait] has not passed since it was queued; one
+  /// given back busy or with no neighbour goes again by itself. Stored
+  /// with the queue, so it is still waited for after a restart.
   Outgoing? get fetchWaiting {
     final o = outbox.where((o) => o.kind == OutKind.fetch).lastOrNull;
     if (o == null || o.answered) return null;
-    if (o.state == OutState.givenBack || o.state == OutState.refused) {
-      return null;
-    }
+    if (o.noWay || o.state == OutState.refused) return null;
     return now().difference(o.at) < fetchAnswerWait ? o : null;
   }
 
@@ -1521,6 +1626,46 @@ class Session extends ChangeNotifier {
     ]);
   }
 
+  /// Sends the text whose parts are `old`, one given back for no way, again
+  /// as a new text, the parts `make` seals given the IDs it replaces: the
+  /// old parts leave the queue at once, before anything waits, so none of
+  /// them is offered to the node again and a second ask finds nothing;
+  /// they come back if `make` fails. Whether it was sent again.
+  Future<bool> sendAgain(
+    List<Outgoing> old,
+    Future<List<Outgoing>> Function(List<int> replaced) make,
+  ) async {
+    if (!old.any((o) => o.noWay) ||
+        old.any((o) => o.state == OutState.writing) ||
+        !old.every(outbox.contains)) {
+      return false;
+    }
+    final places = [for (final o in old) outbox.indexOf(o)]..sort();
+    final kept = [for (final i in places) outbox[i]];
+    outbox.removeWhere(old.contains);
+    notifyListeners();
+    final List<Outgoing> parts;
+    try {
+      parts = await make([
+        for (final o in old) ...[o.id, ...o.replaced],
+      ]);
+    } catch (_) {
+      for (final (i, at) in places.indexed) {
+        outbox.insert(at, kept[i]);
+      }
+      notifyListeners();
+      rethrow;
+    }
+    outbox.addAll(parts);
+    notifyListeners();
+    await _save([
+      for (final o in old) {'out': _key(o)},
+      for (final o in parts) _outChange(o),
+    ]);
+    _pump();
+    return true;
+  }
+
   /// How long the app waits for Ready after asking for the turn before it
   /// asks again (spec "Phone link", Sending): a ban, 1.58 s, for each
   /// other of the node's [maxPhones] + 1 links, the longest the turn takes
@@ -1534,7 +1679,8 @@ class Session extends ChangeNotifier {
 
   Future<void> _pump() async {
     final link = _link;
-    if (_writing || link == null) return;
+    final n = node;
+    if (_writing || link == null || n == null || !_givenBackRead) return;
     final o = outbox.where((o) => o.state == OutState.queued).firstOrNull;
     if (o == null) return;
     // Out of turn, the write asks for it, unless it asked lately.
@@ -1547,11 +1693,16 @@ class Session extends ChangeNotifier {
     o.state = OutState.writing;
     notifyListeners();
     var again = true;
+    var seenCleared = false;
     try {
       await link.send(encodeSend(o.dst, o.payload));
       _askedAt = null;
       o.state = OutState.taken;
       note('Send ${msgIdHex(o.id)}: taken');
+      // The node's Given back for this phone is empty from this take on.
+      final r = nodes.of(nodeName(n.id));
+      seenCleared = r.givenBackSeen != null;
+      r.givenBackSeen = null;
     } on AttException catch (e) {
       note('Send ${msgIdHex(o.id)}: $e');
       if (e.code == AttError.notReady) {
@@ -1565,7 +1716,11 @@ class Session extends ChangeNotifier {
         _askedAt = now();
         _askAgain?.cancel();
         _askAgain = Timer(turnWait, _pump);
-        unawaited(link.readStatus().then(_onStatus, onError: (_) {}));
+        unawaited(
+          link.readStatus().then((s) {
+            if (_link == link) _onStatus(s);
+          }, onError: (_) {}),
+        );
       } else {
         o.state = OutState.refused;
         o.error = '$e';
@@ -1578,7 +1733,7 @@ class Session extends ChangeNotifier {
       _writing = false;
     }
     notifyListeners();
-    await save(out: [o]);
+    await save(out: [o], state: seenCleared);
     if (again) _pump();
   }
 

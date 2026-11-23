@@ -10,7 +10,6 @@ import 'archived_screen.dart';
 import '../conversations.dart';
 import '../l10n.dart';
 import '../link.dart';
-import '../session.dart' show OutState;
 import 'card_screen.dart';
 import 'common.dart';
 import 'contacts_screen.dart';
@@ -318,7 +317,8 @@ class ConversationRow extends StatelessWidget {
       ),
       title: Text(c.title, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Ticking(
-        when: last.mine && last.outs.any((o) => o.state == OutState.givenBack),
+        // Only a busy wait counts down.
+        when: last.mine && last.outs.any((o) => o.why == Why.busy),
         (_) => Text(
           last.mine
               ? tr.conversationsYou(

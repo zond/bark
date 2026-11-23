@@ -87,15 +87,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Whether the node, draining, may reboot at `now`: it holds nothing a
-    /// reset would lose, or it has drained for the delivery TTL, by when
-    /// every queued message has waited that long for its node (spec
-    /// "Delivery queue", "Send queue").
+    /// reset would lose but returns, which a reboot drops, or it has
+    /// drained for the delivery TTL, by when every queued message has
+    /// waited that long for its node (spec "Delivery queue", "Send queue").
     pub fn drained(&self, now: Instant) -> bool {
         if !self.draining() {
             return false;
         }
         let since = Instant::from_micros(u64::from(self.forwarding.drain_from_s) * 1_000_000);
-        let empty = self.holding().next().is_none()
+        // A return held for a sleepy parent is lost to the reboot whether
+        // or not it waits (`held_returns`).
+        let returns = |o: &crate::tables::send_queue::Outgoing| {
+            o.kind.delivers() && o.to != o.message.dst_id()
+        };
+        let empty = self.queue.iter().all(returns)
+            && self.delivery.iter().all(Queued::returns)
             && self.inbox.is_empty()
             && !self.radio.replies.taking();
         empty || now.since(since) >= self.config.delivery_ttl
@@ -103,7 +109,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Every message the node holds at `now`, each once, in order: its send
     /// queue, its delivery queue and its inbox. A message on its way to a
-    /// sleepy node is the delivery queue's.
+    /// sleepy node is the delivery queue's. A return held for a sleepy
+    /// parent is not: the reboot drops it ([`Node::held_returns`];
+    /// spec "Return to parent").
     pub fn held(&self, now: Instant) -> impl Iterator<Item = Held<'_>> + '_ {
         let queued = self
             .queue
@@ -135,14 +143,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Held {
                 msg_id: q.msg_id,
                 dst_pos: q.dst_pos,
-                dst_id: q.node,
+                dst_id: q.dst_id,
                 payload: q.payload(),
                 hops: q.hops,
                 wrong: q.wrong,
                 at,
             }
         }
-        let delivery = self.delivery.iter().map(move |q| {
+        let delivery = self.delivery.iter().filter(|q| !q.returns()).map(move |q| {
             let at = HeldAt::Delivery {
                 waits_for: q.waits_for,
                 age: now.since(q.enqueued),
@@ -157,6 +165,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             held(q, at)
         });
         queued.chain(delivery).chain(inbox)
+    }
+
+    /// The returns it holds for sleepy parents: those [`Node::held`] leaves
+    /// out, as a reboot into a new image drops them
+    /// (`DropReason::ReturnRebooted`; spec "Return to parent"), for the
+    /// driver's log.
+    pub fn held_returns(&self) -> impl Iterator<Item = MsgId> + '_ {
+        self.delivery
+            .iter()
+            .filter(|q| q.returns())
+            .map(|q| q.msg_id)
     }
 
     /// Put back a message [`Node::held`] gave, taken `ago` before `now`;

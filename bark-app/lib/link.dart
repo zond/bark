@@ -480,19 +480,36 @@ class InboxMessage {
 /// Inbox, write: the app has this message, the node may forget it.
 Uint8List encodeConfirm(int msgId) => Uint8List.fromList(_be32(msgId));
 
+/// Why the node gave a message back (spec "Addresses"), by its number on
+/// the link.
+enum Why {
+  /// Refused for now; the wait says until when.
+  busy,
+
+  /// The node has no live neighbour left.
+  noNeighbour,
+
+  /// Its search came back with nowhere left to go.
+  noWay,
+}
+
 /// Given back, read and notify: null when empty.
 class GivenBack {
-  static const len = 4 + 2;
+  static const len = 4 + 2 + 1;
   final int msgId;
   final int waitS;
-  const GivenBack(this.msgId, this.waitS);
+  final Why why;
+  const GivenBack(this.msgId, this.waitS, this.why);
 
-  Uint8List encode() => Uint8List.fromList([..._be32(msgId), ..._be16(waitS)]);
+  Uint8List encode() =>
+      Uint8List.fromList([..._be32(msgId), ..._be16(waitS), why.index]);
 
   static GivenBack? decode(List<int> b) {
     if (b.isEmpty) return null;
-    if (b.length < len) throw const Malformed('Given back');
-    return GivenBack(_u32(b, 0), _u16(b, 4));
+    if (b.length < len || b[6] >= Why.values.length) {
+      throw const Malformed('Given back');
+    }
+    return GivenBack(_u32(b, 0), _u16(b, 4), Why.values[b[6]]);
   }
 }
 

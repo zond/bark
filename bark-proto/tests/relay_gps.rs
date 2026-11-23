@@ -192,6 +192,7 @@ fn a_low_battery_s_flush_keeps_the_gps_at_rest() {
             dst_pos,
             dst_id,
             payload: text,
+            tag: 0,
         },
     );
     let id = MsgId::of(dst_pos, dst_id, text);

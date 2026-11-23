@@ -58,7 +58,7 @@ pub struct FakeNode {
     pub sent: Vec<Vec<u8>>,
     /// Sends it answers not ready before it takes one.
     pub busy: usize,
-    /// The message it gives back, if any.
+    /// The message it gave back, if any, until it takes another.
     pub given_back: Option<GivenBack>,
     pub home: Option<[u8; 32]>,
     /// Where an update from the phone stands, and the bytes held.
@@ -627,6 +627,8 @@ impl Link for FakeLink {
                     return Err(Error::Att(bark_link::att::NOT_READY));
                 }
                 n.sent.push(v.to_vec());
+                // What it gave back before is over (spec "Sending").
+                n.given_back = None;
             }
             Char::Inbox => {
                 let Confirm(id) = taken(Confirm::decode(v))?;

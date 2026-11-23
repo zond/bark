@@ -101,8 +101,9 @@ knows only relays at that place: its every true fix is dropped
 (`gps: fix … beyond every known relay; dropped`, once), though it still
 keeps the time from them. To bench the GPS, build without a place or
 with the place the board stands at. Every protocol event (`Trace`), every message for the node, and
-a sleepy node's own message given back by its first hop with the time
-left to wait (`given back ... retry_in_ms=`) is a log line, and at
+a message given back, with why and the time left to wait
+(`given back ... why=busy retry_in_ms=`; `mailbox:` and `carry:` lines
+for the node's own), is a log line, and at
 the first event 10 s or more after the last a `driver` line gives the
 loop's counters (`sniffs` counts the starts of duty-cycled receive) and
 its longest times and `stack_used`, the call stack's high-water mark;
@@ -1356,8 +1357,13 @@ the node for the oldest item after the number it wrote to Guest
 (`for_tag`). Whose turn it is at the one message the node holds, and so
 whose Ready is set, is `bark_link::turn::Turn`, which `src/ble.rs` tells
 of each link and each Send out of turn, an ask (spec "Phone link",
-Sending). A message given back is
-kept with its phone's record, a guest's with its link. The console's
+Sending). Each message the node hands the core carries a tag naming its
+sender, a record's phone, the guest's link, the mailbox, the message
+carried across a reboot or the bench (`bark_fw_logic::given_back`), and
+a message given back goes by its tag: kept with its phone's record, in
+RAM until a reboot, a guest's with its link and dropped with it. The
+mailbox's reply and the carried message go again unless given back for
+no way. The console's
 `status` has `public=true` or `public=false`, read from the phones in
 the stored state, and then `drain_relay=` and `drain_sleepy=`, the
 drains the node image kept there, or the first ones while it has learned

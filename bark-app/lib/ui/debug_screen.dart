@@ -57,7 +57,11 @@ class DebugScreen extends StatelessWidget {
                   ? tr.notConnected
                   : switch (s.givenBack) {
                       null => tr.debugEmpty,
-                      final g => tr.debugGivenBack(msgIdHex(g.msgId), g.waitS),
+                      final g => tr.debugGivenBack(
+                        msgIdHex(g.msgId),
+                        g.why.name,
+                        g.waitS,
+                      ),
                     },
             ),
             heading(tr.debugSent),
@@ -148,8 +152,11 @@ class DebugScreen extends StatelessWidget {
     ];
   }
 
-  String _wait(Session s, Outgoing o) =>
-      o.state == OutState.givenBack ? ', ${s.waitLeftS(o)} s left' : '';
+  String _wait(Session s, Outgoing o) => switch ((o.state, o.why)) {
+    (OutState.givenBack, Why.busy) => ' busy, ${s.waitLeftS(o)} s left',
+    (OutState.givenBack, final Why w) => ' ${w.name}',
+    _ => '',
+  };
 
   Widget _raw(String title, String body) => ListTile(
     contentPadding: EdgeInsets.zero,

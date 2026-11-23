@@ -34,7 +34,7 @@ use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::sniff::{DETECT_SYMBOLS, LONG_PREAMBLE_SYMBOLS};
 use bark_proto::{
     Action, AppCommand, AppEvent, Channel, Config, Core, Duration, Event, Frame, Instant, MsgId,
-    NodeId, Position, Relay, Stored, Trace, MAX_FRAME,
+    NodeId, Position, Relay, Stored, Trace, Why, MAX_FRAME,
 };
 use std::collections::HashMap;
 
@@ -352,7 +352,27 @@ pub enum Fate {
         /// Why.
         reason: DropReason,
     },
+    /// Given back to its application, which did not offer it again: busy
+    /// and told to wait past its patience; busy or with no neighbour while
+    /// the application held another text in its one place, as the
+    /// traffic model's application holds one; or no way, which a person
+    /// would decide (spec "Sending", Given back).
+    GivenBack {
+        /// Its origin.
+        node: u32,
+        /// Why.
+        why: Why,
+    },
 }
+
+/// The tag a node's application sends a text of the traffic model with
+/// ([`AppCommand::Send`]), by which a give-back finds its sender.
+pub(crate) const TRAFFIC: u8 = 0;
+/// The tag of a mailbox's reply.
+pub(crate) const MAILBOX: u8 = 1;
+/// The tag of a message kept across a reboot into a new image
+/// (`install.rs`), offered again ahead of what is new.
+pub(crate) const KEPT: u8 = 2;
 
 pub(crate) struct OriginRecord {
     src: u32,
@@ -797,6 +817,9 @@ pub struct Sim {
     /// The mailbox replies nodes' applications received, with the node,
     /// for the tests to open.
     pub(crate) replies: Vec<(u32, Vec<u8>)>,
+    /// The returns to sleepy parents held now: the holder and the message
+    /// (`Sim::return_ended`).
+    pub(crate) returns_held: std::collections::HashSet<(u32, u32)>,
     /// Whether any node keeps a mailbox.
     with_mailboxes: bool,
     /// Message id (kept across hops) to traffic tag.
@@ -1282,6 +1305,7 @@ impl Sim {
             origins: Vec::new(),
             offers: (0..n).map(|_| None).collect(),
             with_mailboxes: mailboxes.iter().any(Option::is_some),
+            returns_held: Default::default(),
             mailboxes,
             replies: Vec::new(),
             msg_tags: HashMap::new(),
@@ -2798,19 +2822,17 @@ impl Sim {
                 }
                 (len, payload)
             }
-            AppEvent::GivenBack { msg_id, .. } if self.kept_given_back(node, msg_id) => return,
-            AppEvent::GivenBack { msg_id, .. }
-                if !self.msg_tags.contains_key(&msg_id.0)
-                    && self.mailboxes[node as usize].is_some() =>
-            {
-                if let Some(h) = self.mailboxes[node as usize].as_mut() {
-                    h.mailbox.given_back(msg_id);
-                }
-                return;
-            }
-            AppEvent::GivenBack { msg_id, retry_at } => {
-                if !self.give_back(node, msg_id, retry_at) {
-                    self.mark_dropped(node, msg_id, DropReason::Pushback);
+            AppEvent::GivenBack {
+                msg_id,
+                retry_at,
+                why,
+                tag,
+            } => {
+                self.metrics.app.given_back.add(why);
+                match tag {
+                    KEPT => self.kept_given_back(node, msg_id, why),
+                    MAILBOX => self.reply_given_back(node, msg_id, why),
+                    _ => self.text_given_back(node, msg_id, retry_at, why),
                 }
                 return;
             }
@@ -2851,10 +2873,11 @@ impl Sim {
     /// `Trace::Dropped`. The protocol sends no failure notice, so this is
     /// the only record of where a lost message died.
     pub fn message_dropped(&mut self, node: u32, msg_id: MsgId, reason: DropReason) {
+        self.return_ended(node, msg_id, Some(reason));
         self.metrics.app.drops.add(reason);
         self.metrics.nodes[node as usize].drops.add(reason);
         self.handover_dropped(node, msg_id);
-        if reason == DropReason::Pushback {
+        if reason == DropReason::GivenBack {
             // The message is its application's again, which decides its
             // fate on the `AppEvent::GivenBack` that follows.
             return;
@@ -2878,16 +2901,57 @@ impl Sim {
         self.mark_dropped(node, msg_id, reason);
     }
 
+    /// A return to a sleepy parent ended at `node`: taken by the parent,
+    /// `None`, or dropped for `reason`. Each is counted once, in one of
+    /// `metrics::SleepyReturns`'s fates.
+    pub(crate) fn return_ended(&mut self, node: u32, msg_id: MsgId, reason: Option<DropReason>) {
+        let r = &mut self.metrics.app.returns;
+        match reason {
+            Some(DropReason::ReturnNoPlace) => return r.no_place += 1,
+            Some(DropReason::ReturnUnheard) => return r.unheard += 1,
+            _ => {}
+        }
+        if !self.returns_held.remove(&(node, msg_id.0)) {
+            return;
+        }
+        *match reason {
+            None => &mut r.taken,
+            Some(DropReason::ReturnEvicted) => &mut r.evicted,
+            Some(DropReason::ReturnNotFlushed) => &mut r.not_flushed,
+            Some(DropReason::ReturnRebooted) => &mut r.rebooted,
+            Some(DropReason::HopCap | DropReason::WrongHopCap) => &mut r.capped,
+            Some(_) => &mut r.other,
+        } += 1;
+    }
+
+    /// The returns still held at the end, by their holders, and those lost
+    /// with a holder that went off, as [`SleepyReturns`]' last fates.
+    ///
+    /// [`SleepyReturns`]: crate::metrics::SleepyReturns
+    pub(crate) fn returns_at_end(&self) -> (u64, u64) {
+        let held = |&(node, id): &(u32, u32)| {
+            self.nodes[node as usize].alive
+                && self.relays[node as usize].held_returns().any(|m| m.0 == id)
+        };
+        let at_end = self.returns_held.iter().filter(|k| held(k)).count() as u64;
+        (at_end, self.returns_held.len() as u64 - at_end)
+    }
+
     /// Message `msg_id` ended at `node` for `reason`, unless it was
     /// delivered already.
     fn mark_dropped(&mut self, node: u32, msg_id: MsgId, reason: DropReason) {
+        self.mark_ended(msg_id, Fate::Dropped { node, reason });
+    }
+
+    /// Message `msg_id` ended as `fate`, unless it was delivered already.
+    pub(crate) fn mark_ended(&mut self, msg_id: MsgId, fate: Fate) {
         if let Some(o) = self
             .msg_tags
             .get(&msg_id.0)
             .and_then(|&t| self.origins.get_mut(t as usize))
         {
             if o.fate != Fate::Delivered {
-                o.fate = Fate::Dropped { node, reason };
+                o.fate = fate;
                 o.dropped_at = Some(self.now);
             }
         }
@@ -2974,7 +3038,7 @@ impl Sim {
         for f in self.kept_messages(at) {
             out[match f {
                 Fate::Delivered => 0,
-                Fate::Dropped { .. } => 1,
+                Fate::Dropped { .. } | Fate::GivenBack { .. } => 1,
                 Fate::InFlight => 2,
                 Fate::Unaccounted => 3,
             }] += 1;
@@ -3132,6 +3196,9 @@ impl Sim {
                 Fate::Unaccounted => ("unaccounted", String::new(), String::new()),
                 Fate::Dropped { node, reason } => {
                     ("dropped", node.to_string(), format!("{reason:?}"))
+                }
+                Fate::GivenBack { node, why } => {
+                    ("given_back", node.to_string(), format!("{why:?}"))
                 }
             };
             let latency = r.latency_s.map(|l| format!("{l:.6}")).unwrap_or_default();
@@ -3468,22 +3535,41 @@ impl Sim {
             .map(|o| self.now.since(self.origins[o.tag as usize].t))
     }
 
-    /// A core gave its application's message back with a wait: the
-    /// application offers it again, as long as it is younger than the TTL
-    /// the network would have kept it for. Whether it did.
-    fn give_back(&mut self, node: u32, msg_id: MsgId, retry_at: Instant) -> bool {
+    /// A core gave a text of the traffic model back to its application
+    /// (spec "Sending", Given back). Busy, the application offers it again
+    /// after the wait, as long as it is younger than the TTL the network
+    /// would have kept it for; with no neighbour, once the node is ready
+    /// again; each only if its one place is free, else it ends, counted;
+    /// for no way, never, as a person would decide.
+    fn text_given_back(&mut self, node: u32, msg_id: MsgId, retry_at: Instant, why: Why) {
+        let again = match why {
+            Why::Busy => {
+                let patience = self.relays[node as usize].config().delivery_ttl;
+                let local = self.clocks[node as usize].local(self.now);
+                let wait = retry_at.since(local);
+                // Told to wait past its patience, the application gives up
+                // at once.
+                let young = self
+                    .msg_tags
+                    .get(&msg_id.0)
+                    .is_some_and(|&t| self.now.since(self.origins[t as usize].t) + wait < patience);
+                young && self.offer_again(node, msg_id)
+            }
+            Why::NoNeighbour => self.offer_again(node, msg_id),
+            Why::NoWay => false,
+        };
+        if !again {
+            self.mark_ended(msg_id, Fate::GivenBack { node, why });
+        }
+    }
+
+    /// The text `msg_id` given back to `node`'s application waits there to
+    /// be offered again: whether it does.
+    fn offer_again(&mut self, node: u32, msg_id: MsgId) -> bool {
         let Some(&tag) = self.msg_tags.get(&msg_id.0) else {
             return false;
         };
-        let patience = self.relays[node as usize].config().delivery_ttl;
-        let local = self.clocks[node as usize].local(self.now);
-        let wait = retry_at.since(local);
-        let o = &self.origins[tag as usize];
-        // Told to wait past its patience, the application gives up at once.
-        if o.src != node
-            || self.now.since(o.t) + wait >= patience
-            || self.offers[node as usize].is_some()
-        {
+        if self.origins[tag as usize].src != node || self.offers[node as usize].is_some() {
             return false;
         }
         let Some(offer) = self.offered.get(&tag).copied() else {
@@ -3491,6 +3577,19 @@ impl Sim {
         };
         self.offers[node as usize] = Some(offer);
         true
+    }
+
+    /// A core gave a mailbox's reply back: busy or with no neighbour it
+    /// goes again; for no way it is dropped, as one lost on its way is
+    /// (spec "Mailbox").
+    fn reply_given_back(&mut self, node: u32, msg_id: MsgId, why: Why) {
+        if why == Why::NoWay {
+            self.metrics.app.replies_no_way += 1;
+            return;
+        }
+        if let Some(h) = self.mailboxes[node as usize].as_mut() {
+            h.mailbox.given_back(msg_id);
+        }
     }
 
     /// Hand `src`'s waiting message to its core, if the core takes one now.
@@ -3530,6 +3629,7 @@ impl Sim {
             dst_pos: o.dst_pos,
             dst_id: o.dst_id,
             payload,
+            tag: TRAFFIC,
         };
         self.deliver(src, Event::App(cmd));
     }
@@ -3598,6 +3698,7 @@ impl Sim {
             dst_pos: o.address.position,
             dst_id: o.address.node,
             payload: &out[..o.len],
+            tag: MAILBOX,
         };
         self.deliver(src, Event::App(cmd));
     }
@@ -3614,6 +3715,7 @@ impl Sim {
             dst_pos: self.relays[dst as usize].address(),
             dst_id: self.node_id(dst),
             payload,
+            tag: TRAFFIC,
         };
         self.deliver(src, Event::App(cmd));
         true

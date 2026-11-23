@@ -209,10 +209,16 @@ class FakeNode implements NodeLink {
   /// (spec "Bans").
   static const givenBackWait = Duration(milliseconds: 16 * 1580);
 
-  /// Every third message it takes is given back, and every fourth write
-  /// finds it not ready, so both paths show.
-  static const givenBackEvery = 3;
+  /// Every third message it takes is given back busy, and every fourth
+  /// write finds it not ready, so both paths show; a test may set
+  /// [busyEvery] to 0 for none.
+  int busyEvery = 3;
   static const notReadyEvery = 4;
+
+  /// Whether a message the app writes to `dst`, a text to the fake friend
+  /// if `text` is not null, is taken and its search comes back with no
+  /// way, a hand-over later, instead of arriving; a test may set it.
+  bool Function(Address dst, TextRecord? text) noWayFor = (_, _) => false;
 
   /// How long after taking a message the echo arrives.
   static const echoAfter = Duration(seconds: 5);
@@ -256,6 +262,10 @@ class FakeNode implements NodeLink {
   /// Its live neighbours as Status counts them, sleepy ones too.
   int _heard = 0;
   bool _ready = true;
+
+  /// It has no live neighbour left ([loseNeighbours]): it takes no message
+  /// from its app until it hears one.
+  bool _alone = false;
 
   /// The paired phone's inbox; on a public node, the ring, which never refuses.
   final List<InboxMessage> _inbox = [];
@@ -589,7 +599,7 @@ class FakeNode implements NodeLink {
     final left = firstRotation - now().difference(_boot);
     final g = p is FakeGuest ? p : null;
     return Status(
-      ready: _ready && (!public || _turn == p),
+      ready: _ready && !_alone && (!public || _turn == p),
       externalPower: true,
       sleepy: sleepy,
       carried: carried,
@@ -626,7 +636,9 @@ class FakeNode implements NodeLink {
   GivenBack? _givenBackNow([_Phone? p]) {
     final g = (p ?? _pairedPhone).givenBack;
     if (g == null) return null;
-    return GivenBack(g.$1, _ceilS(g.$2.difference(now())));
+    final (id, until, why) = g;
+    final wait = why == Why.busy ? _ceilS(until.difference(now())) : 0;
+    return GivenBack(id, wait, why);
   }
 
   Future<T> _answer<T>(T Function() f) async {
@@ -660,7 +672,26 @@ class FakeNode implements NodeLink {
   });
 
   @override
-  Future<void> send(Uint8List value) => _answer(() => _send(this, value));
+  Future<void> send(Uint8List value) => _answer(() {
+    _send(this, value);
+    if (!loseNextAnswer) return;
+    // Taken, and the link ends before its answer reaches the phone.
+    loseNextAnswer = false;
+    close();
+    throw StateError('the link ended before the answer');
+  });
+
+  /// The next message the paired phone writes is taken, and the link ends
+  /// before the phone hears so; a test may set it.
+  bool loseNextAnswer = false;
+
+  /// How many times each message ID was written, taken or not.
+  final Map<int, int> writesOf = {};
+
+  /// The IDs whose search came back with no way: the relays that searched
+  /// keep their records, so the same ID again is taken and goes nowhere,
+  /// and nothing comes back of it.
+  final Set<int> _searched = {};
 
   /// A Send from the phone `p`, this fake for the paired phone or a guest.
   void _send(Object p, Uint8List value) {
@@ -684,11 +715,12 @@ class FakeNode implements NodeLink {
     );
     final payload = value.sublist(Address.len);
     final id = msgId(dst, payload);
+    writesOf[id] = (writesOf[id] ?? 0) + 1;
     _writes++;
-    if (!_ready || _writes % notReadyEvery == 0) {
+    if (_alone || !_ready || _writes % notReadyEvery == 0) {
       // As when the bucket empties between the status the app read and
       // its write: not ready for one ban.
-      if (_ready) {
+      if (_ready && !_alone) {
         _ready = false;
         _since = null;
         _notify();
@@ -699,30 +731,86 @@ class FakeNode implements NodeLink {
     _taken++;
     _ready = false;
     _since = null;
-    if (phone.givenBack != null) {
-      phone.givenBack = null;
-      if (phone.connected) phone.given.add(null);
-    }
+    // Emptied without a notification, as the firmware does.
+    phone.givenBack = null;
     _passTurn();
     _notify();
-    if (_taken % givenBackEvery == 0) {
-      _after(handOver, () => _giveBack(phone, id, givenBackWait));
+    if (_searched.contains(id)) {
+      _freeAfter(handOver);
+    } else if (noWayFor(dst, p == this ? _textTo(payload)?.$2 : null)) {
+      _freeAfter(handOver);
+      _after(handOver, () => _giveBack(phone, id, Duration.zero, Why.noWay));
+    } else if (busyEvery > 0 && _taken % busyEvery == 0) {
+      _after(handOver, () => _giveBack(phone, id, givenBackWait, Why.busy));
       _freeAfter(handOver + givenBackWait);
     } else {
       _freeAfter(handOver);
       if (p != this) return;
       _answerFetch(dst.id, payload);
-      final got = _textTo(payload);
-      final text = got == null ? null : _whole(got.$1, got.$2);
-      if (text != null) _echo('Echo: $text');
+      // Once its first hop has it, unless it was given back meanwhile
+      // ([loseNeighbours]).
+      _after(handOver, () {
+        if (phone.givenBack?.$1 == id) return;
+        final got = _textTo(payload);
+        final text = got == null ? null : _whole(got.$1, got.$2);
+        if (text != null) _echo('Echo: $text');
+      });
     }
   }
 
   _Phone _phoneOf(Object p) => p is FakeGuest ? p._phone : _pairedPhone;
 
-  void _giveBack(_Phone phone, int id, Duration wait) {
-    phone.givenBack = (id, now().add(wait));
+  void _giveBack(_Phone phone, int id, Duration wait, Why why) {
+    if (why == Why.noWay) _searched.add(id);
+    phone.givenBack = (id, now().add(wait), why);
     if (phone.connected) phone.given.add(_givenBackNow(phone));
+  }
+
+  /// Gives the paired phone's message `id` back for `why`, whenever it
+  /// was taken, as a search that comes back minutes later does; busy with
+  /// [givenBackWait]. The value stays until the next message is taken.
+  void giveBack(int id, Why why) => _giveBack(
+    _pairedPhone,
+    id,
+    why == Why.busy ? givenBackWait : Duration.zero,
+    why,
+  );
+
+  /// Its last live neighbour is gone: it gives back the message `held`,
+  /// if one, for no neighbour, and takes none until [hearNeighbour].
+  void loseNeighbours({int? held}) {
+    _alone = true;
+    _heard = 0;
+    _relays = 0;
+    _notify();
+    if (held != null) giveBack(held, Why.noNeighbour);
+  }
+
+  /// Gives the guest `g` its message `id` back for `why`, while its link
+  /// is up.
+  void giveBackTo(FakeGuest g, int id, Why why) => _giveBack(
+    g._phone,
+    id,
+    why == Why.busy ? givenBackWait : Duration.zero,
+    why,
+  );
+
+  /// It gives back the message `held` for no neighbour though it still
+  /// hears some, none of which took it, and takes nothing for `wait`.
+  void noneTookIt(int held, Duration wait) {
+    giveBack(held, Why.noNeighbour);
+    _ready = false;
+    _since = null;
+    _notify();
+    _freeAfter(wait);
+  }
+
+  /// It hears a neighbour again, and takes messages.
+  void hearNeighbour() {
+    _alone = false;
+    _heard = 1;
+    _relays = 1;
+    _notify();
   }
 
   /// The phones connected, in the order of their links: the paired phone's,
@@ -1535,7 +1623,7 @@ class FakeHomeRecord {
 /// back to it.
 class _Phone {
   bool connected = false;
-  (int, DateTime)? givenBack;
+  (int, DateTime, Why)? givenBack;
   final status = StreamController<Status>.broadcast();
   final given = StreamController<GivenBack?>.broadcast();
   final answer = StreamController<Answer?>.broadcast();

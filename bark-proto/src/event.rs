@@ -101,6 +101,10 @@ pub enum AppCommand<'a> {
         dst_id: NodeId,
         /// Opaque payload; the core never looks inside.
         payload: &'a [u8],
+        /// Which of the application's senders it is from, a phone or the
+        /// mailbox: opaque to the core, which keeps it with the message
+        /// and hands it back in [`AppEvent::GivenBack`] (spec "Sending").
+        tag: u8,
     },
     /// A map point set in the app, which wins over GPS (spec "Position").
     SetPosition {
@@ -187,7 +191,9 @@ pub enum AppCommand<'a> {
 /// logs and metrics through [`Trace`]; the network sends no failure notices.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DropReason {
-    /// The origin has no neighbour left to try (spec "Return to parent").
+    /// A message with no application to go back to, handed on when its
+    /// node turned sleepy, has no neighbour left to try at the node that
+    /// handed it on (spec "Sleepy nodes", "Return to parent").
     NoRoute,
     /// Sending it on would need a count above the largest
     /// (spec "Hop count").
@@ -212,6 +218,22 @@ pub enum DropReason {
     ReturnFailed,
     /// The parent answered the return seen (spec "Return to parent").
     ReturnSeen,
+    /// A return to a sleepy parent found no place in the delivery queue
+    /// (spec "Return to parent").
+    ReturnNoPlace,
+    /// A return's sleepy parent, which needs a holder's window, is not
+    /// heard here, or this node holds no mail, being sleepy or carried
+    /// (spec "Return to parent").
+    ReturnUnheard,
+    /// A return held for a sleepy parent gave its place in the delivery
+    /// queue up to a message for a node (spec "Delivery queue").
+    ReturnEvicted,
+    /// A return held for a sleepy parent when its node rebooted into a new
+    /// image (spec "Return to parent"); `Node::held` leaves it out.
+    ReturnRebooted,
+    /// A return held for a sleepy parent that the flush of a relay turning
+    /// sleepy did not deliver (spec "Return to parent", "Sleepy nodes").
+    ReturnNotFlushed,
     /// The node it is for did not take it within the delivery TTL (spec
     /// "Delivery queue").
     QueueExpired,
@@ -220,9 +242,9 @@ pub enum DropReason {
     DeliveryFull,
     /// The payload is longer than a DATA frame holds (spec "Packet formats").
     PayloadTooLong,
-    /// The application's message, refused with a wait and given back
-    /// ([`AppEvent::GivenBack`]).
-    Pushback,
+    /// The application's message, given back to it
+    /// ([`AppEvent::GivenBack`], which says why).
+    GivenBack,
     /// The node drains for a reboot into a new image (spec "Send queue").
     /// Refused.
     Draining,
@@ -243,14 +265,19 @@ pub enum AppEvent {
         /// Its id.
         msg_id: MsgId,
     },
-    /// The application's message was refused and is the application's
-    /// again: it may offer it at `retry_at` or give it up
-    /// (spec "A sleepy node's own message").
+    /// The application's message is the application's again, for `why`
+    /// (spec "Addresses"): it may offer it again, at `retry_at` for a
+    /// busy one, or give it up.
     GivenBack {
         /// Its id.
         msg_id: MsgId,
-        /// The end of the wait the refusal asked for.
+        /// The end of the wait the refusal asked for; for any other why,
+        /// when it was given back.
         retry_at: Instant,
+        /// Why.
+        why: Why,
+        /// The tag it was sent with ([`AppCommand::Send`]).
+        tag: u8,
     },
     /// The node's first rotation (spec "Channel at boot"): at boot, at
     /// each relay it learns in it, and at its end.
@@ -272,6 +299,39 @@ pub enum AppEvent {
         /// What it says of itself.
         status: Status,
     },
+}
+
+/// Why the node gave its application's message back (spec "Addresses";
+/// the codes are Given back's, spec "Sending").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Why {
+    /// Refused, with a wait.
+    Busy,
+    /// The node has no live neighbour left.
+    NoNeighbour,
+    /// Its search came back with nowhere left to go.
+    NoWay,
+}
+
+impl Why {
+    /// Its code on the phone link.
+    pub const fn code(self) -> u8 {
+        match self {
+            Why::Busy => 0,
+            Why::NoNeighbour => 1,
+            Why::NoWay => 2,
+        }
+    }
+
+    /// The why of `code`, `None` for a code this build does not know.
+    pub const fn from_code(code: u8) -> Option<Why> {
+        match code {
+            0 => Some(Why::Busy),
+            1 => Some(Why::NoNeighbour),
+            2 => Some(Why::NoWay),
+            _ => None,
+        }
+    }
 }
 
 /// How a message held for a node reached it ([`Trace::Delivered`]).
@@ -446,6 +506,8 @@ pub enum Trace {
         msg_id: MsgId,
         /// The parent.
         to: NodeId,
+        /// A sleepy parent, which took it from the delivery queue.
+        sleepy: bool,
         /// The transmissions the hand-over took, the last one answered
         /// (spec "Hand-over").
         attempts: u8,
@@ -609,6 +671,14 @@ pub enum Trace {
         offset_us: i32,
         /// How long the node listened in the window.
         listened: Duration,
+    },
+    /// A return to a sleepy parent entered the delivery queue, to go in
+    /// that node's window (spec "Return to parent").
+    ReturnHeld {
+        /// The message.
+        msg_id: MsgId,
+        /// The parent.
+        node: NodeId,
     },
     /// A message for another node entered the delivery queue (spec
     /// "Delivery queue").

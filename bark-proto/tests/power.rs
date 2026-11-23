@@ -99,6 +99,7 @@ fn send(h: &mut Harness<Relay>, from: usize, to: usize, text: &[u8]) -> MsgId {
             dst_pos,
             dst_id,
             payload: text,
+            tag: 0,
         },
     );
     MsgId::of(dst_pos, dst_id, text)

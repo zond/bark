@@ -668,6 +668,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let gps = self.gps_situation();
         self.gps.fire(&gps, &self.config, now, emit);
         self.forward_timers(now, emit);
+        self.own_alone(now, emit);
         self.delivery_timers(now);
         self.expire_update(now, emit);
     }
@@ -844,7 +845,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 dst_pos,
                 dst_id,
                 payload,
-            } => self.originate(dst_pos, dst_id, payload, now, emit),
+                tag,
+            } => self.originate((dst_pos, dst_id), payload, tag, now, emit),
             AppCommand::Power { external } => self.power(external, now, emit),
             AppCommand::ForceRole => self.force(now, emit),
             AppCommand::Battery { millivolts } => self.battery_read(millivolts, now, emit),
@@ -975,7 +977,16 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
         if away.get() {
             self.radio.went(now);
         }
-        self.own.app_ready_at = self.send_ready_at(now);
+        self.note_alone(now);
+        // Its readiness changes, or its message goes back, at the first.
+        self.own.app_ready_at = [
+            self.send_ready_at(now),
+            self.own_alone_at(now),
+            self.ready_ends_at(now),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         if woke.get() {
             self.listen.radio_used();
         }

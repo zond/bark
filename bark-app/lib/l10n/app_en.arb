@@ -107,6 +107,8 @@
     "placeholders": {"wait": {"type": "String", "example": "0:42"}}
   },
   "sentRefused": "refused by the node",
+  "sentNoNeighbour": "the node hears no other, sending when it does",
+  "sentNoWay": "found no way there",
   "sentPartsSent": "{taken} of {total} sent",
   "@sentPartsSent": {
     "description": "How many of a long text's parts the node has taken.",
@@ -119,9 +121,14 @@
   },
   "sentQueuedHelp": "On this phone, until a node is linked and ready for it.",
   "sentWritingHelp": "The phone is giving it to the node.",
-  "sentTakenHelp": "The node has it and passes it on. The network gives no further news: it does not say when it arrives.",
+  "sentTakenHelp": "The node has it and passes it on. The network does not say when it arrives; it gives it back if it finds no way there.",
   "sentBusy": "The network is busy",
   "sentBusyHelp": "The network gave it back for now. The app sends it again by itself once the wait is over.",
+  "sentNoNeighbourHelp": "The node hears no other node now. The app sends it again by itself once it does.",
+  "sentNoWayHelp": "The network found no way to their address: their node may be off or gone, or their address old. Send again tries once more, as a new message; Cancel removes it.",
+  "@sentNoWayHelp": {
+    "description": "Send again and Cancel are the buttons under the text."
+  },
   "sentRefusedHelp": "The node will not take it as it is, a fault of the app or the node. Cancel removes it; Debug shows the reason.",
   "@sentRefusedHelp": {
     "description": "Cancel is the button under the text; Debug is the screen of the app's log."
@@ -528,6 +535,10 @@
   "@threadToHome": {
     "description": "A mark on a sent text, as threadToWhere is: where it was sent."
   },
+  "threadSendAgain": "Send again",
+  "@threadSendAgain": {
+    "description": "The button under a sent text whose search found no way: it sends the text once more."
+  },
   "threadTakenMark": "Sent into the network, which does not say when it arrives",
   "@threadTakenMark": {
     "description": "The mark on a sent text the node has taken."
@@ -572,6 +583,26 @@
   "sendCharTooLong": "a character too long to send",
   "@sendCharTooLong": {
     "description": "Why a text cannot be sent, under the field and after threadNotSent's words; lower case."
+  },
+  "sendTextNoWay": "Your text to {name} found no way there.",
+  "@sendTextNoWay": {
+    "description": "A notice: the network found no way to a contact's address for a text, which waits in its thread for Send again or Cancel.",
+    "placeholders": {"name": {"type": "String", "example": "Olena", "description": "A contact's name, any gender."}}
+  },
+  "sendReactionNoWay": "Your reaction {emoji} found no way to {name}.",
+  "@sendReactionNoWay": {
+    "description": "A notice: the network found no way to a contact's address for the person's reaction; it is not sent again by itself.",
+    "placeholders": {"emoji": {"type": "String", "example": "👍"}, "name": {"type": "String", "example": "Olena", "description": "A contact's name, any gender."}}
+  },
+  "sendCardNoWay": "Your card found no way to {name}.",
+  "@sendCardNoWay": {
+    "description": "A notice: the network found no way to a contact's address for the person's card; it is not sent again by itself.",
+    "placeholders": {"name": {"type": "String", "example": "Olena", "description": "A contact's name, any gender."}}
+  },
+  "sendHomeNoWay": "The home you gave {name} found no way to them.",
+  "@sendHomeNoWay": {
+    "description": "A notice: the network found no way to a contact's address for the home the person gave them; it is not sent again by itself.",
+    "placeholders": {"name": {"type": "String", "example": "Olena", "description": "A contact's name, any gender."}}
   },
 
   "sessionBadValue": "The node sent a value this app cannot read: {error}",
@@ -1161,10 +1192,10 @@
   "@debugEmpty": {
     "description": "The value of debugValue when the node gives nothing back."
   },
-  "debugGivenBack": "{id}, wait {wait} s",
+  "debugGivenBack": "{id}, {why}, wait {wait} s",
   "@debugGivenBack": {
-    "description": "A message the node gave back, and the wait it asks before sending it again.",
-    "placeholders": {"id": {"type": "String", "example": "0a1b2c3d", "description": "A message ID in hex."}, "wait": {"type": "int"}}
+    "description": "A message the node gave back, why, and the wait it asks before sending it again.",
+    "placeholders": {"id": {"type": "String", "example": "0a1b2c3d", "description": "A message ID in hex."}, "why": {"type": "String", "example": "noWay", "description": "Why, as the debug screen's raw values say it, in English: busy, noNeighbour or noWay."}, "wait": {"type": "int"}}
   },
   "debugSent": "Sent",
   "@debugSent": {
@@ -1947,6 +1978,15 @@
   "@homeNoAnswer": {
     "description": "The home the person named with homeUseExisting did not answer.",
     "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "homeNoWay": "No way found to {node}. Nothing changed.",
+  "@homeNoWay": {
+    "description": "The network found no way to the home the person named with homeUseExisting.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "mailboxFetchNoWay": "No way found to your home",
+  "@mailboxFetchNoWay": {
+    "description": "What became of a fetch of the mail whose search for the home node found no way."
   },
   "homeAsking": "Asking {node} for your mail…",
   "@homeAsking": {

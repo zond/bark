@@ -18,6 +18,7 @@ use core::cell::{Cell, RefCell};
 use bark_driver::sx1262::{LbtRead, LbtTiming, Start, Sx1262};
 use bark_driver::{tcxo, Clock, Driver, Outgoing, Ready, Request};
 use bark_fw_logic::bench::{parse, Command, Power, ResetCause, LINE};
+use bark_fw_logic::given_back::{why_text, Sender};
 use bark_fw_logic::line::Line;
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::wire::{BENCH_FIRST, FORMAT, MAX_PAYLOAD};
@@ -256,8 +257,6 @@ pub struct App<A> {
     inner: A,
     /// The power last given to the driver.
     reported: Option<bool>,
-    /// The last message taken.
-    sent: Option<MsgId>,
 }
 
 impl<A> From<A> for App<A> {
@@ -266,7 +265,6 @@ impl<A> From<A> for App<A> {
         App {
             inner,
             reported: None,
-            sent: None,
         }
     }
 }
@@ -328,22 +326,29 @@ impl<A: bark_driver::App> bark_driver::App for App<A> {
             // As a phone's message is logged (`node.rs`), for
             // `scripts/bench.py texts`.
             log::info!("bench: send id={:08x} len={} taken", id.0, t.len);
-            self.sent = Some(id);
             Some(Outgoing {
                 dst_pos: t.dst_pos,
                 dst_id: t.dst_id,
                 len: t.len,
+                tag: Sender::Bench.tag(),
             })
         })
     }
 
     fn message(&mut self, event: &AppEvent) {
         match event {
-            AppEvent::GivenBack { msg_id, retry_at } if self.sent == Some(*msg_id) => {
+            // Logged, not sent again: the bench's script decides.
+            AppEvent::GivenBack {
+                msg_id,
+                retry_at,
+                why,
+                tag,
+            } if Sender::of(*tag) == Sender::Bench => {
                 let wait = retry_at.since(crate::clock::core_now());
                 log::warn!(
-                    "bench: message id={:08x} given back retry_in_ms={}",
+                    "bench: message id={:08x} given back why={} retry_in_ms={}",
                     msg_id.0,
+                    why_text(*why),
                     wait.as_micros() / 1000
                 );
             }

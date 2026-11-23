@@ -134,30 +134,59 @@ and `Action::Serve`, the queries
 command `AppCommand::Ask` and the event `AppEvent::Status`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
-at most 224 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
-asks again after every `handle`, so an application waits for its node; a firmware's async
-send awaits it. The core reports nothing back about the message but a give-back (below), not even the first hop's
+at most 224 bytes (§7) and a one-byte `tag`, which of the application's senders it is
+from: a phone, the mailbox, whatever the driver tells apart. The core never reads the tag;
+the message's record keeps it at the origin (spec "Message records") and hands it back
+with the message, so a give-back that comes minutes later reaches the sender that sent it.
+The driver offers one only while `accepts_send(now)` is true, and asks again after every
+`handle`, so an application waits for its node; a firmware's async send awaits it. The core
+reports nothing back about the message but a give-back (below), not even the first hop's
 ACK, which a user could read as delivered: from the moment it is taken the node is either
-sending it or waiting to. The protocol has no end-to-end acknowledgement (spec "Addresses"), so
-whether the message arrived is for the app to find out inside its payload. A message the
-node drops is reported only as `Trace::Dropped` (§3 rule 9).
+sending it, waiting to, or will give it back. The protocol has no end-to-end
+acknowledgement (spec "Addresses"), so whether the message arrived is for the app to find
+out inside its payload. A message the node drops is reported only as `Trace::Dropped`
+(§3 rule 9).
 
 A node holds one message of its application's at a time, until its first hop takes it.
-It accepts a message from its boot on while it holds none and does not drain (below), its
-send queue takes a full
-frame on top of what it holds (spec "Send queue"), and not every neighbour is banned, or
-for a sleepy node with a live anchor, the anchor (spec "Receiving DATA"). When only its
-bucket and bans keep it from accepting, its `next_wakeup()` includes the moment both allow
-it. A message the node holds waits for bans as spec "Bans" says; one for a
-sleepy node it holds for that finds the delivery queue full waits for a
-place (spec "Receiving DATA"). A message the node's own gate refuses
-when it is offered (spec "Receiving DATA"), or a sleepy node's own message that
-its first hop refuses, goes back to the application (spec "A sleepy node's own message"):
-the core emits `AppEvent::GivenBack` with the message's ID and `retry_at`, the end of the
-wait the refusal asked for, and `Trace::Dropped` with `DropReason::Pushback` for the log;
-`accepts_send` stays false until `retry_at`, which `next_wakeup()` includes. The driver
-hands the event to the application, which may offer the message again then or give it up. One whose hand-over goes
-unanswered waits in the node as in that section.
+It accepts a message while it has a live neighbour, in its first rotation a relay among
+them (spec "Channel at boot"), for a delivery TTL after it turns anchorless none (spec
+"Sleepy nodes alone": the clock starts each time it does, counted from the whole second,
+rounded up, and stops mattering when it anchors; what it forwards for others is not held,
+and the end of that time is a wakeup), holds none and does not drain (below),
+its send queue takes a full frame on top of what it holds (spec "Send queue"), and not
+every neighbour is banned, or for a sleepy node with a live anchor, the anchor (spec
+"Receiving DATA"). When only its bucket and bans keep it from accepting, its
+`next_wakeup()` includes the moment both allow it. A neighbour or a relay heard is an
+event, and the first rotation's end a wakeup, after which the driver asks again; while the
+node is ready, `next_wakeup()` includes the moment its last live neighbour's entry expires,
+when it is ready no more. A message the node holds waits for bans as spec "Bans" says;
+one for a sleepy node it holds for that finds the delivery queue full waits for a place
+(spec "Receiving DATA").
+
+The node gives its application's message back (spec "Addresses") as
+`AppEvent::GivenBack` with the message's ID, its `tag`, `why`, and `retry_at`, with
+`Trace::Dropped` and `DropReason::GivenBack` for the log. `why` is `event::Why`, whose
+codes are those of the phone link's Given back (spec "Sending"):
+
+| `why` | when | `retry_at` |
+|---|---|---|
+| `Busy` | the node's own gate refuses it when it is offered (spec "Receiving DATA"), or a sleepy node's first hop refuses it (spec "A sleepy node's own message") | the end of the wait the refusal asked for; `accepts_send` stays false until then, and `next_wakeup()` includes it |
+| `NoNeighbour` | it never left the node: it still holds it when its last live neighbour's entry expires, which `next_wakeup()` includes, and `accepts_send` is false until a neighbour is heard; or its search ended with no candidate left and no node had taken it or answered it seen (spec "Return to parent"), as when its only neighbour is silent, and the node is ready again once that neighbour's ban ends | now |
+| `NoWay` | its search came back to the node with no candidate left after a node had taken it (spec "Return to parent"); a sleepy node's own whenever it is returned to it, in its window from its anchor; or the application sent an ID this node has a record of, which it does not search again | now |
+
+The driver hands the event to the sender the tag names, which may offer the message again
+or give it up. Busy or for no neighbour the core forgets the origin's record, so the same
+message offered again is new to it. After a no way it keeps the record, marked arrived, so
+that a copy of the message still searching ends there (spec "Return to parent"); the same
+ID offered again is given back at once, no way, with nothing sent. A message given back
+for no way goes again only as a new message with another ID, as the relays that searched
+for it keep their records too (spec "Sending", Given back).
+
+Tags across a reboot. The records kept across a reboot into a new image (`remembered`)
+carry the tag, so a give-back after the reboot still names it; whether the tag names the
+same sender then is the driver's business. The firmware forgets the give-backs its phones
+had not read at a reboot. One whose hand-over goes unanswered waits in the node as
+spec "A sleepy node's own message" says.
 
 A `Send` while `accepts_send` is false, or with a longer payload, breaks the contract like
 a second outstanding excursion: the core ignores it, and the test and simulator drivers
@@ -323,13 +352,16 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
   carry the leaving flag (spec "Packet formats"), as they do while a relay flushes to
   turn sleepy.
   `AppCommand::Drain(false)` takes messages again. `drained(now)` is when the driver may
-  reboot: the send queue, the delivery queue and the inbox empty and no reply owed that
-  takes a DATA, or `Config::delivery_ttl` since the whole second the drain began.
+  reboot: the send queue, the delivery queue and the inbox empty, but for returns held for
+  sleepy parents, and no reply owed that takes a DATA, or `Config::delivery_ttl` since the
+  whole second the drain began.
   `held(now)` is every message the node then holds, each once, as `Held { msg_id, dst_pos,
   dst_id, payload, hops, at }`: the same message after the reboot, as its ID is `MsgId::of`
   the three, the count it goes on from, and in `at` where it was, the application's own,
   a forward with its parent and its place in the send queue, or a message in the delivery
-  queue or the inbox with its age. `remembered(now)` is the neighbour table and the
+  queue or the inbox with its age. A return held for a sleepy parent is not in `held`: the
+  reboot drops it (spec "Return to parent"), and `held_returns()` names those, for a log
+  (`DropReason::ReturnRebooted`). `remembered(now)` is the neighbour table and the
   message records as `Kept` entries in the core's own encoding. The driver keeps both;
   after the reboot, before the first event, it hands each entry back with
   `remember(&kept, ago, now)` and then each message with `put_back(&held, ago, now)`,
@@ -400,6 +432,7 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 | Store (§4) | the last `Stored` per node, kept across `restart`, dropped at `wipe` | a log of records on one of two flash pages, `STORE`, that take turns, so a power cut leaves one whole, written after the step that asked, through the MPSL's flash timeslots (`bark-fw/src/store.rs`, `bark-fw/logic/src/store.rs`, `bark-image/src/layout.rs`) |
 | Update (§4) | the policy takes every image offered; a piece kept is counted, and a block decodes at its count of pieces, the release's proof passing; a piece's bytes are not written; a scenario's forger puts a section naming an image nobody holds in its heartbeats (`bark-sim/src/update.rs`) | `Holds` for the running image if the record's header is its version's and the slot hashes to it; the policy of `bark_image::policy`; the pieces in the external flash's store, a step at a time; a piece served coded from the slot or the decoded blocks, or not sent if not filled within 372.8 ms; the image checked and staged as from the phone, and a reboot at a quiet moment; at its first boot the image confirms itself at `AppEvent::Heard`, or, with none within `update::heard_within` of its start, resets for the swap back, and the image back gives it up (`bark-fw/src/update/mesh.rs`, `update.rs` `trial`, `bark-fw/README.md` "Updates") |
 | Inbox (§4) | the application reads and confirms each message at once | the node keeps the oldest in its mailbox's ring and confirms it once its slot is written; the phones read their own from the ring (`bark-fw/src/node.rs`, spec "Phone link", Receiving) |
+| Give-back (§4) | a tag for the traffic model's texts, the mailbox and what a node kept across a reboot; a text goes again for busy while young enough and for no neighbour, and ends for no way; a mailbox's reply and a kept message go again but for no way (`bark-sim/src/sim.rs`, `install.rs`) | a tag for each paired record, the guest's link, the mailbox, the message carried across a reboot and the bench; a phone's give-back is its Given back value, a record's kept in RAM across its links, a guest's dropped with its link; the mailbox's reply and the carried message go again but for no way; the bench's is logged (`bark-fw/logic/src/given_back.rs`, `bark-fw/src/node.rs`, `ble.rs`) |
 
 ## 6. Memory
 

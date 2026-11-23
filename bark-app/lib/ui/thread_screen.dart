@@ -105,19 +105,44 @@ class _ThreadScreenState extends State<ThreadScreen> {
     super.dispose();
   }
 
-  /// Sends the text where the contact is while that is fresh; when it
-  /// may be stale, with a home, where the person chooses, this once;
-  /// without one, there after saying it is old, as nothing else is
-  /// (roadmap D132, D162).
+  /// Sends the text in the field to `to` ([_toward]).
   Future<void> _send(Contact to) async {
     if (text.text.isEmpty) return;
+    final toward = await _toward(to);
+    if (toward == null) return;
+    try {
+      await app.messenger.sendText(to, text.text, toward: toward);
+      text.clear();
+    } on BadPayload catch (e) {
+      if (mounted) say(context, tr.threadNotSent(said(e)));
+    }
+  }
+
+  /// Sends a text whose search found no way again, as a new message, to
+  /// where a new text would go now: the contact may have a newer address.
+  Future<void> _sendAgain(Contact to, List<Outgoing> outs) async {
+    final toward = await _toward(to);
+    if (toward == null) return;
+    try {
+      await app.messenger.sendAgain(to, outs, toward);
+    } on BadPayload catch (e) {
+      if (mounted) say(context, tr.threadNotSent(said(e)));
+    }
+  }
+
+  /// Where a text to `to` goes: where the contact is while that is fresh;
+  /// when it may be stale, with a home, where the person chooses, this
+  /// once; without one, there after saying it is old, as nothing else is
+  /// (roadmap D132, D162). Null if the person chose nothing, or `to`
+  /// names no address.
+  Future<Toward?> _toward(Contact to) async {
     final now = app.now();
     final options = to.towards(now);
     final stale = to.stale(now);
     final ask =
         options.length > 1 ||
         (options.length == 1 && stale != null && to.card.home == null);
-    final toward = !ask
+    return !ask
         ? options.firstOrNull
         : await showDialog<Toward>(
             context: context,
@@ -143,13 +168,6 @@ class _ThreadScreenState extends State<ThreadScreen> {
               ],
             ),
           );
-    if (toward == null) return;
-    try {
-      await app.messenger.sendText(to, text.text, toward: toward);
-      text.clear();
-    } on BadPayload catch (e) {
-      if (mounted) say(context, tr.threadNotSent(said(e)));
-    }
   }
 
   String _option(Contact c, Toward t) => switch (t) {
@@ -466,7 +484,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                               ..._receivedMarks(e, verified, small, color),
                           ],
                         ),
-                        if (mine && !archived) _actions(e.outs),
+                        if (mine && !archived) _actions(e.outs, to),
                       ],
                     ),
                   ),
@@ -574,7 +592,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
         const SizedBox(width: 4),
         Flexible(
           child: Ticking(
-            when: outs.any((o) => o.state == OutState.givenBack),
+            when: outs.any((o) => o.why == Why.busy),
             (_) => Text(partsLabel(app.session, outs), style: small),
           ),
         ),
@@ -636,10 +654,33 @@ class _ThreadScreenState extends State<ThreadScreen> {
           _stateMark([o], Icons.check, tr.threadTakenMark, small, color),
         ],
         OutState.givenBack => [
-          _stateMark([o], Icons.hourglass_bottom, tr.sentBusy, small, color),
+          switch (o.why!) {
+            Why.noNeighbour => _stateMark(
+              [o],
+              Icons.wifi_tethering_off,
+              capital(tr.sentNoNeighbour),
+              small,
+              color,
+            ),
+            Why.noWay => _stateMark(
+              [o],
+              Icons.wrong_location,
+              capital(tr.sentNoWay),
+              small,
+              color,
+            ),
+            Why.busy => _stateMark(
+              [o],
+              Icons.hourglass_bottom,
+              tr.sentBusy,
+              small,
+              color,
+            ),
+          },
           const SizedBox(width: 4),
           Flexible(
             child: Ticking(
+              when: o.why == Why.busy,
               (_) => Text(capital(stateLabel(app.session, o)), style: small),
             ),
           ),
@@ -666,22 +707,39 @@ class _ThreadScreenState extends State<ThreadScreen> {
     child: _mark(icon, words, small, color),
   );
 
-  /// Cancel, for the parts not yet with the node; a part given back goes
-  /// again by itself once its wait is over.
-  Widget _actions(List<Outgoing> outs) {
+  /// Cancel, for the parts not yet with the node; and Send again, to
+  /// `to`, for a text with a part whose search found no way, which alone
+  /// waits for the person: a part given back busy or with no neighbour
+  /// goes again by itself, when the node can take it, which no button
+  /// makes sooner.
+  Widget _actions(List<Outgoing> outs, Contact? to) {
     final s = app.session;
     final droppable = [
       for (final o in outs)
         if (o.state != OutState.writing && o.state != OutState.taken) o,
     ];
+    final again =
+        to != null &&
+        outs.any((o) => o.noWay) &&
+        !outs.any((o) => o.state == OutState.writing);
     if (droppable.isEmpty) return const SizedBox.shrink();
-    return TextButton(
-      onPressed: () async {
-        for (final o in droppable) {
-          await s.drop(o);
-        }
-      },
-      child: Text(tr.cancel),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TextButton(
+          onPressed: () async {
+            for (final o in droppable) {
+              await s.drop(o);
+            }
+          },
+          child: Text(tr.cancel),
+        ),
+        if (again)
+          TextButton(
+            onPressed: () => _sendAgain(to, outs),
+            child: Text(tr.threadSendAgain),
+          ),
+      ],
     );
   }
 }

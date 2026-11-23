@@ -228,14 +228,15 @@ class Mailbox extends ChangeNotifier {
   }
 
   /// The home the person named last ([tryHome]) while it has not
-  /// answered, and whether its wait is over: it did not answer.
-  ({Address home, bool over})? get tried {
+  /// answered, whether its wait is over: it did not answer, and whether
+  /// that is for the network finding no way there.
+  ({Address home, bool over, bool noWay})? get tried {
     if (me.home != null) return null;
     final o = session.outbox.where((o) => o.kind == OutKind.fetch).lastOrNull;
     final l = me.leaving?.home;
     if (o == null || o.answered || o.command != null) return null;
     if (l != null && hex(l.id) == hex(o.dst.id)) return null;
-    return (home: o.dst, over: session.fetchWaiting != o);
+    return (home: o.dst, over: session.fetchWaiting != o, noWay: o.noWay);
   }
 
   /// A summary of the fetch of `round` came: from the home being left, of
@@ -278,9 +279,9 @@ class Mailbox extends ChangeNotifier {
     session.tellIn((w) => w.mailboxHomeGone);
   }
 
-  /// The last fetch to the home had no answer within its wait: the home
-  /// is off or out of reach, or has forgotten the person, and Settings
-  /// says what they can do.
+  /// The last fetch to the home had no answer within its wait, or its
+  /// search found no way there: the home is off or out of reach, or has
+  /// forgotten the person, and Settings says what they can do.
   bool get homeSilent {
     final h = me.home;
     if (h == null) return false;
@@ -289,8 +290,9 @@ class Mailbox extends ChangeNotifier {
         .lastOrNull;
     return o != null &&
         !o.answered &&
-        o.state == OutState.taken &&
-        now().difference(o.at) >= Session.fetchAnswerWait;
+        (o.noWay ||
+            o.state == OutState.taken &&
+                now().difference(o.at) >= Session.fetchAnswerWait);
   }
 
   /// Leaves the person's home, which is about to change: the app fetches

@@ -206,6 +206,9 @@ class Alerts {
     await _seen();
   }
 
+  /// Whether the thread with `key` is open and the app in front.
+  bool showing(String key) => _front && _open == key;
+
   /// The thread with `key` is closed.
   void closed(String key) {
     if (_open == key) _open = null;

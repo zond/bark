@@ -52,6 +52,10 @@ const ARRIVED: u8 = 1;
 const HAS_PARENT: u8 = 2;
 // The last packet was answered seen, not taken (spec "Receiving DATA").
 const LAST_SEEN: u8 = 4;
+// This node's application sent it, with `tag`.
+const OWN: u8 = 8;
+// It came with count 0, a sleepy node's own (spec "Hop count").
+const FROM_SLEEPY: u8 = 16;
 
 /// Stands in for the parent's home at the origin, which has no parent.
 const NO_HOME: Channel = match Channel::new(0) {
@@ -76,13 +80,15 @@ pub struct Record {
     last_hops: Hops,
     handed: u64,
     last_active: Instant,
+    /// At the origin, the application's tag (spec "Message records").
+    tag: u8,
 }
 
 impl Record {
     /// A record for a message first received at `now` with `hops` and
-    /// `wrong`, from `parent` (ID and home channel), or from a sleepy
-    /// node's own message or this node's application (`None`): this node
-    /// is the origin.
+    /// `wrong`, from `parent` (ID and home channel), or `None` for one
+    /// whose search starts here without an application to go back to
+    /// (spec "Sleepy nodes").
     pub fn new(
         id: MsgId,
         parent: Option<(NodeId, Channel)>,
@@ -90,6 +96,7 @@ impl Record {
         now: Instant,
     ) -> Record {
         let (name, home, flags) = match parent {
+            Some((name, home)) if hops == 0 => (name, home, HAS_PARENT | FROM_SLEEPY),
             Some((name, home)) => (name, home, HAS_PARENT),
             None => (NodeId::NONE, NO_HOME, 0),
         };
@@ -104,6 +111,18 @@ impl Record {
             flags,
             handed: 0,
             last_active: now,
+            tag: 0,
+        }
+    }
+
+    /// A record for this node's application's message, sent at `now` with
+    /// `tag` ([`crate::AppCommand::Send`]): this node is its origin, and the
+    /// tag stands in place of the parent (spec "Message records").
+    pub fn own(id: MsgId, tag: u8, now: Instant) -> Record {
+        Record {
+            flags: OWN,
+            tag,
+            ..Record::new(id, None, (0, 0), now)
         }
     }
 
@@ -113,9 +132,21 @@ impl Record {
     }
 
     /// The relay the message first came from and its home channel when
-    /// the message arrived; `None` at the origin.
+    /// the message arrived; `None` where its search began.
     pub fn parent(&self) -> Option<(NodeId, Channel)> {
         (self.flags & HAS_PARENT != 0).then_some((self.parent, self.parent_home))
+    }
+
+    /// At the origin, the tag its application sent it with: `None` where
+    /// it has a parent, or no application to go back to.
+    pub fn tag(&self) -> Option<u8> {
+        (self.flags & OWN != 0).then_some(self.tag)
+    }
+
+    /// Whether its parent handed it over with count 0, as a sleepy node
+    /// hands its own message to its anchor (spec "Hop count").
+    pub fn from_sleepy(&self) -> bool {
+        self.flags & FROM_SLEEPY != 0
     }
 
     /// The largest count received for the message, or carried by a
@@ -139,6 +170,12 @@ impl Record {
     /// When the message was last received or sent here.
     pub fn last_active(&self) -> Instant {
         self.last_active
+    }
+
+    /// Whether any neighbour has had the message from this node, or
+    /// answered it seen.
+    pub fn handed_any(&self) -> bool {
+        self.handed != 0
     }
 
     /// Whether the neighbour now in `slot` took the message from this
@@ -229,6 +266,7 @@ impl Records {
             last_hops: 0,
             handed: 0,
             last_active: Instant::ZERO,
+            tag: 0,
         };
         Records {
             entries: [fill; RECORDS],
@@ -356,7 +394,12 @@ impl Records {
             .map(move |r| {
                 let mut b = [0u8; KEPT_LEN];
                 b[0..4].copy_from_slice(&r.id.0.to_be_bytes());
-                b[4..10].copy_from_slice(&r.parent.0);
+                // The origin has no parent: its tag takes the parent's
+                // first byte, so the layout is the same for every record.
+                match r.flags & OWN != 0 {
+                    true => b[4] = r.tag,
+                    false => b[4..10].copy_from_slice(&r.parent.0),
+                }
                 b[10..16].copy_from_slice(&r.last_from.0);
                 b[16] = r.parent_home.index();
                 b[17..20].copy_from_slice(&r.highest_hops.to_be_bytes()[1..]);
@@ -394,9 +437,11 @@ impl Records {
         let Some(parent_home) = Channel::new(b[16]) else {
             return false;
         };
+        let own = b[24] & OWN != 0;
         let r = Record {
             id: MsgId(u32::from_be_bytes([b[0], b[1], b[2], b[3]])),
-            parent: NodeId(parent),
+            parent: if own { NodeId::NONE } else { NodeId(parent) },
+            tag: if own { b[4] } else { 0 },
             last_from: NodeId(last_from),
             parent_home,
             highest_wrong: b[23],
@@ -478,11 +523,21 @@ mod tests {
         assert!(r.arrived());
 
         let origin = Record::new(MsgId(8), None, (0, 0), at(0));
-        assert_eq!(origin.parent(), None);
+        assert_eq!((origin.parent(), origin.tag()), (None, None));
         assert!(
             origin.repeats(NodeId::NONE, 0),
             "the origin's packet, again"
         );
+        assert!(!r.from_sleepy() && !origin.from_sleepy());
+
+        for tag in [0, 7, 255] {
+            let own = Record::own(MsgId(9), tag, at(0));
+            assert_eq!((own.parent(), own.tag()), (None, Some(tag)));
+            assert!(own.repeats(NodeId::NONE, 0) && !own.arrived());
+        }
+        let anchor = Record::new(MsgId(10), Some((p, ch(4))), (0, 0), at(0));
+        assert!(anchor.from_sleepy() && anchor.tag().is_none());
+        assert_eq!(anchor.parent(), Some((p, ch(4))));
     }
 
     fn keep(t: &mut Records, r: Record) -> Option<Record> {

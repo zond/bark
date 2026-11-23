@@ -9,7 +9,7 @@ use bark_proto::tables::neighbours::{Neighbour, Neighbours};
 use bark_proto::wire::{Packet, ACK_LEN};
 use bark_proto::{
     AppCommand, AppEvent, Config, DropReason, Duration, Instant, MsgId, NodeId, Position, Relay,
-    Trace,
+    Trace, Why,
 };
 use common::{ch, secs, Harness};
 
@@ -85,9 +85,25 @@ fn send(h: &mut Harness<Relay>, from: usize, to: usize, text: &[u8]) -> MsgId {
             dst_pos,
             dst_id,
             payload: text,
+            tag: 0,
         },
     );
     MsgId::of(dst_pos, dst_id, text)
+}
+
+/// What relay `i`'s application was given back of message `id`: why,
+/// and the tag it was sent with.
+fn given_back(h: &Harness<Relay>, i: usize, id: MsgId) -> Vec<(Why, u8)> {
+    h.nodes[i]
+        .app
+        .iter()
+        .filter_map(|(_, e)| match *e {
+            AppEvent::GivenBack {
+                msg_id, why, tag, ..
+            } if msg_id == id => Some((why, tag)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The ID of a node no test builds.
@@ -821,7 +837,7 @@ fn a_return_to_a_parent_that_gave_up_on_the_child_ends_there() {
 /// P is now a node it did not hand the message to: C answers seen, and P
 /// marks C tried. Q's link fails again: three failures demote Q, the
 /// message counts it tried, and P, the origin, has nothing left to try
-/// and drops it (spec "Return to parent").
+/// and gives it back (spec "Return to parent").
 ///
 /// Heartbeats every 1 to 2 s make the rotation 19.5 s and the expiry
 /// three rotations, 58.5 s (spec "Neighbour table"), so the test runs in
@@ -857,6 +873,7 @@ fn a_child_offered_the_message_again_by_a_parent_it_forgot_answers_seen() {
                 dst_pos: pq,
                 dst_id: l,
                 payload: text,
+                tag: 0,
             },
         );
         MsgId::of(pq, l, text)
@@ -901,12 +918,15 @@ fn a_child_offered_the_message_again_by_a_parent_it_forgot_answers_seen() {
     );
     assert!(h.now > returned_at + expiry);
     let dropped = |h: &Harness<Relay>| !drops(h, p, id).is_empty();
-    assert!(h.run_until(h.now + secs(30), dropped), "P did not drop it");
+    assert!(
+        h.run_until(h.now + secs(30), dropped),
+        "P did not give it back"
+    );
     h.run_for(secs(1));
     assert_eq!(forwards(&h, p, id), vec![nc]);
     assert_eq!(returns(&h, c, id), 1);
     assert!(seen_at(&h, c, id));
-    only_dropped_at(&h, p, id, DropReason::NoRoute);
+    only_dropped_at(&h, p, id, DropReason::GivenBack);
     assert!(!traces(&h, c)
         .iter()
         .any(|t| matches!(t, Trace::Dropped { .. })));
@@ -991,8 +1011,8 @@ fn a_copy_with_a_count_already_seen_is_not_a_retransmission() {
 /// hands it to C again when the ban ends. For C, P
 /// took its return, so P has the message from it and this is P's return
 /// (spec "Message records"): C, with nothing left to try, returns it; P
-/// has now tried C and drops it. Two returns, and nothing more on the
-/// air.
+/// has now tried C and gives it back. Two returns, and nothing more on
+/// the air.
 #[test]
 fn a_return_does_not_go_back_and_forth() {
     let (p, c) = (0, 1);
@@ -1031,6 +1051,7 @@ fn a_return_does_not_go_back_and_forth() {
             dst_pos,
             dst_id: NOBODY,
             payload: text,
+            tag: 0,
         },
     );
     let id = MsgId::of(dst_pos, NOBODY, text);
@@ -1057,7 +1078,7 @@ fn a_return_does_not_go_back_and_forth() {
     );
     let dropped = Trace::Dropped {
         msg_id: id,
-        reason: DropReason::NoRoute,
+        reason: DropReason::GivenBack,
     };
     assert_eq!(traces(&h, p).iter().filter(|t| **t == dropped).count(), 1);
     assert!(core(&h, p).holding().next().is_none());
@@ -1107,6 +1128,7 @@ fn a_split_met_again_merges() {
                 dst_pos: pp,
                 dst_id: l,
                 payload: text,
+                tag: 0,
             },
         );
         MsgId::of(pp, l, text)
@@ -1160,9 +1182,8 @@ fn a_split_met_again_merges() {
     }
 }
 
-/// With D unreachable, the same search ends at the origin with a drop
-/// for want of a route (spec "Return to parent"). The origin's application
-/// hears nothing of it (`docs/core-interface.md`, "Application").
+/// With D unreachable, the same search ends at the origin, which gives
+/// the message back to its application: no way (spec "Return to parent").
 #[test]
 fn search_without_owner_ends_at_the_origin() {
     let (o, p, q) = (0, 1, 2);
@@ -1176,15 +1197,15 @@ fn search_without_owner_ends_at_the_origin() {
         &[(o, p), (o, q), (p, q)],
     );
     let id = send(&mut h, o, 3, b"nowhere");
-    let dropped = Trace::Dropped {
-        msg_id: id,
-        reason: DropReason::NoRoute,
-    };
     assert!(
-        h.run_until(h.now + secs(10), |h| traces(h, o).contains(&dropped)),
-        "no drop at the origin"
+        h.run_until(h.now + secs(10), |h| !given_back(h, o, id).is_empty()),
+        "not given back at the origin"
     );
-    assert!(h.nodes[o].app.is_empty(), "the application was told");
+    assert_eq!(given_back(&h, o, id), [(Why::NoWay, 0)]);
+    assert_eq!(drops(&h, o, id), [DropReason::GivenBack]);
+    // It keeps the record, so a copy still out ends here
+    // (spec "Return to parent").
+    assert!(core(&h, o).knows(id));
     for i in [p, q] {
         assert!(
             !traces(&h, i)
@@ -1193,6 +1214,113 @@ fn search_without_owner_ends_at_the_origin() {
             "relay {i} dropped"
         );
     }
+}
+
+/// Why a message given back for no way is offered again only as a new
+/// one, with another ID (spec "Sending", Given back): O keeps its record,
+/// and so does P, O's only neighbour. The same message offered again is
+/// given back at once, no way, and nothing goes on the air
+/// (`docs/core-interface.md`, "Application"). A new message is searched,
+/// and comes back.
+#[test]
+fn a_message_given_back_for_no_way_is_searched_again_only_as_a_new_one() {
+    let (o, p) = (0, 1);
+    let mut h = build(
+        vec![
+            relay(0.0, 0.0, 181),
+            relay(400.0, 0.0, 182),
+            relay(5000.0, 0.0, 183),
+        ],
+        &[(o, p)],
+    );
+    let first = send(&mut h, o, 2, b"nowhere");
+    let back = |id| move |h: &Harness<Relay>| !given_back(h, o, id).is_empty();
+    assert!(h.run_until(h.now + secs(10), back(first)));
+    assert!(core(&h, p).knows(first), "P keeps its record");
+    assert!(h.run_until(h.now + secs(10), |h| h.accepts(o)));
+    let frames = h.nodes[o].sent.len();
+    let again = send(&mut h, o, 2, b"nowhere");
+    assert_eq!(again, first);
+    assert_eq!(given_back(&h, o, first), [(Why::NoWay, 0); 2]);
+    h.run_for(secs(10));
+    let data = h.nodes[o].sent[frames..]
+        .iter()
+        .filter(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Data(_))))
+        .count();
+    assert_eq!(data, 0, "not searched again");
+    assert_eq!(given_back(&h, o, first).len(), 2);
+    assert!(core(&h, p).holding().next().is_none());
+    assert!(core(&h, o).holding().next().is_none());
+    let new = send(&mut h, o, 2, b"nowhere, sealed anew");
+    assert!(h.run_until(h.now + secs(10), back(new)));
+    assert_eq!(given_back(&h, o, new), [(Why::NoWay, 0)]);
+}
+
+/// A split ends at an origin that gave its message back for no way. O
+/// hands its message to N, whose ACKs are all lost: N has it, O does not
+/// know. N's way on, M, is gone, so N holds the message until it demotes
+/// M. O meanwhile demotes N, goes on through P, a dead end, and gives the
+/// message back, no way. When N's copy then comes back, O still has the
+/// record and answers it as one that has arrived: one ACK, no frame more
+/// (spec "Return to parent", "Receiving DATA" case 1).
+#[test]
+fn a_copy_returned_after_a_no_way_ends_at_the_origin() {
+    let (o, n, p, m) = (0, 1, 2, 3);
+    let mut h = build(
+        vec![
+            relay(0.0, 0.0, 191),
+            relay(400.0, 0.0, 192),
+            relay(0.0, 400.0, 193),
+            relay(800.0, 0.0, 194),
+            relay(20_000.0, 0.0, 195),
+        ],
+        &[(o, n), (o, p), (n, m)],
+    );
+    h.kill(m);
+    let id = send(&mut h, o, 4, b"split");
+    let to_o = core(&h, o).id();
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        (from, to) == (n, o)
+            && matches!(Packet::decode(bytes), Ok(Packet::Ack(a)) if a.msg_id == id)
+    }));
+    assert!(h.run_until(h.now + secs(30), |h| !given_back(h, o, id).is_empty()));
+    assert_eq!(given_back(&h, o, id), [(Why::NoWay, 0)]);
+    assert!(
+        core(&h, n).holding().any(|x| x == id),
+        "N still holds its copy"
+    );
+    let given = h.now;
+    let back = |h: &Harness<Relay>| {
+        h.nodes[n].traces.iter().any(|(t, x)| {
+            *t > given && matches!(x, Trace::ReturnedToParent { msg_id, to, .. } if *msg_id == id && *to == to_o)
+        })
+    };
+    assert!(h.run_until(h.now + secs(60), back), "N's copy came back");
+    let since = h.now;
+    h.run_for(secs(30));
+    let data_after = |i: usize| {
+        h.nodes[i]
+            .sent
+            .iter()
+            .filter(|(t, f)| {
+                *t > since
+                    && matches!(Packet::decode(f.payload()), Ok(Packet::Data(d)) if d.msg_id() == id)
+            })
+            .count()
+    };
+    assert_eq!((data_after(o), data_after(n), data_after(p)), (0, 0, 0));
+    for i in 0..4 {
+        assert!(
+            !drops(&h, i, id)
+                .iter()
+                .any(|r| matches!(r, DropReason::WrongHopCap | DropReason::HopCap)),
+            "relay {i}: {:?}",
+            drops(&h, i, id)
+        );
+    }
+    assert_eq!(given_back(&h, o, id).len(), 1);
+    assert!(core(&h, o).holding().next().is_none());
+    assert!(core(&h, n).holding().next().is_none());
 }
 
 /// D's first ACK is lost; A retransmits with the same count
@@ -1247,7 +1375,7 @@ fn a_retransmission_is_acked_and_not_delivered_twice() {
 /// O, M, D in a line. O's message to D fails at M three times, each failure
 /// banning M, and the third demotes it (spec "Neighbour table"). The
 /// message held for M through its demotion, so it counts M tried, and O,
-/// its origin with no other neighbour, drops it (spec "Next hop",
+/// its origin with no other neighbour, gives it back (spec "Next hop",
 /// "Return to parent"). M stays a last resort for a message that has not
 /// tried it: O's next message is handed to M and arrives.
 #[test]
@@ -1270,7 +1398,7 @@ fn a_demoted_neighbour_is_the_last_resort() {
     let dropped = |h: &Harness<Relay>| {
         traces(h, o)
             .iter()
-            .any(|t| matches!(t, Trace::Dropped { msg_id, reason: DropReason::NoRoute } if *msg_id == id))
+            .any(|t| matches!(t, Trace::Dropped { msg_id, reason: DropReason::GivenBack } if *msg_id == id))
     };
     assert!(h.run_until(h.now + secs(20), dropped));
     assert!(traces(&h, o)
@@ -1576,6 +1704,7 @@ fn a_relay_with_only_banned_neighbours_waits_for_the_ban() {
                 dst_pos: pf,
                 dst_id: l,
                 payload: text,
+                tag: 0,
             },
         );
         MsgId::of(pf, l, text)
@@ -1675,6 +1804,7 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
                 dst_pos: pf,
                 dst_id: l,
                 payload: text,
+                tag: 0,
             },
         );
         MsgId::of(pf, l, text)
@@ -1761,11 +1891,14 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
 /// waits for each ban to be offered to C again, O taking no other message
 /// meanwhile (spec "Return to parent"). The third failure demotes C, and
 /// the message, having held for C through its demotion, counts C tried
-/// (spec "Next hop"): O has nothing left to try, drops it for want of a
-/// route, and is ready again, long before C's entry expires
-/// (spec "Bounds").
+/// (spec "Next hop"): O has nothing left to try, and gives it back to its
+/// application for no neighbour, since no node ever took it; it is ready
+/// again once C's ban has ended, long before C's entry expires (spec
+/// "Bounds", "Return to parent"). Offered again at each readiness, as the
+/// app does, it comes back each time after a ban that doubles, up to
+/// 61 s: the bans pace the app, not a loop.
 #[test]
-fn a_relay_origin_whose_neighbour_is_gone_drops_at_its_demotion() {
+fn a_relay_origin_whose_neighbour_is_gone_gives_back_at_its_demotion() {
     let (o, c) = (0, 1);
     let mut h = build(
         vec![relay(0.0, 0.0, 151), relay(400.0, 0.0, 152)],
@@ -1776,7 +1909,7 @@ fn a_relay_origin_whose_neighbour_is_gone_drops_at_its_demotion() {
     let id = send(&mut h, o, c, b"nobody answers");
     let dropped = Trace::Dropped {
         msg_id: id,
-        reason: DropReason::NoRoute,
+        reason: DropReason::GivenBack,
     };
     let offers = |h: &Harness<Relay>| {
         h.nodes[o]
@@ -1799,7 +1932,28 @@ fn a_relay_origin_whose_neighbour_is_gone_drops_at_its_demotion() {
     );
     // Once C's ban, the third step of the ladder, has ended.
     assert!(h.run_until(h.now + hold(3) + secs(1), |h| h.accepts(o)));
-    assert!(h.nodes[o].app.is_empty());
+    assert_eq!(given_back(&h, o, id), [(Why::NoNeighbour, 0)]);
+    assert!(!core(&h, o).knows(id), "offered again, it is new");
+    // The app offers it again whenever O is ready, until C's entry expires.
+    let mut backs = vec![h.now];
+    let end = gone + secs(380);
+    while h.run_until(end, |h| h.accepts(o)) {
+        assert_eq!(send(&mut h, o, c, b"nobody answers"), id);
+        let n = given_back(&h, o, id).len();
+        if !h.run_until(end, |h| given_back(h, o, id).len() > n) {
+            break;
+        }
+        backs.push(h.now);
+        assert_eq!(given_back(&h, o, id).last(), Some(&(Why::NoNeighbour, 0)));
+    }
+    let gaps: Vec<u64> = backs
+        .windows(2)
+        .map(|w| w[1].since(w[0]).as_micros() / 1_000_000)
+        .collect();
+    assert!(gaps.len() >= 3 && gaps.len() <= 12, "{gaps:?}");
+    assert!(gaps.windows(2).all(|g| g[1] + 2 >= g[0]), "{gaps:?}");
+    assert!(*gaps.last().unwrap() >= 50, "{gaps:?}");
+    println!("given back every {gaps:?} s");
 }
 
 /// P, R, C, D in a line, and C is gone. R's only candidate fails and is
@@ -1807,8 +1961,8 @@ fn a_relay_origin_whose_neighbour_is_gone_drops_at_its_demotion() {
 /// ban rather than give up on C, until the third failure in a row
 /// demotes it. The message held for C through its demotion counts C
 /// tried (spec "Next hop"), so R's search ends as before: it returns the
-/// message to P, which has no other neighbour and, as the origin, drops
-/// it (spec "Return to parent").
+/// message to P, which has no other neighbour and, as the origin, gives
+/// it back to its application (spec "Return to parent").
 #[test]
 fn a_relay_whose_candidates_are_gone_returns_to_the_parent() {
     let (p, r, c, d) = (0, 1, 2, 3);
@@ -1829,17 +1983,21 @@ fn a_relay_whose_candidates_are_gone_returns_to_the_parent() {
             .any(|t| matches!(t, Trace::Dropped { msg_id, .. } if *msg_id == id))
     };
     h.run_for(secs(4));
-    assert!(!gone(&h), "P dropped it while C was banned");
+    assert!(!gone(&h), "P gave it back while C was banned");
     assert!(core(&h, r).holding().any(|m| m == id));
-    assert!(h.run_until(h.now + secs(20), gone), "P did not drop it");
+    assert!(
+        h.run_until(h.now + secs(20), gone),
+        "P did not give it back"
+    );
     // P's ACK of the return, which R traces.
     h.run_for(secs(1));
     let name = |i| core(&h, i).id();
     assert!(returned_to(&h, r, id, name(p)));
     assert!(traces(&h, p).contains(&Trace::Dropped {
         msg_id: id,
-        reason: DropReason::NoRoute
+        reason: DropReason::GivenBack
     }));
+    assert_eq!(given_back(&h, p, id), [(Why::NoWay, 0)]);
 }
 
 /// P, O, M, D in a line, and the link from O to M works one way: O hears
@@ -1847,7 +2005,7 @@ fn a_relay_whose_candidates_are_gone_returns_to_the_parent() {
 /// heartbeats renewing it, and is O's only way on. P's message fails at
 /// M three times, which demotes M; having held for M through its
 /// demotion, the message counts M tried, so O's search ends and it goes
-/// back to P, which drops it, the origin with nothing left to try
+/// back to P, which gives it back, the origin with nothing left to try
 /// (spec "Next hop", "Return to parent"). A second message tries M, its last
 /// resort, once, and goes back the same way.
 #[test]
@@ -1871,7 +2029,7 @@ fn a_one_way_link_left_as_the_only_candidate_ends_the_search_there() {
         let dropped = |h: &Harness<Relay>| {
             traces(h, p).contains(&Trace::Dropped {
                 msg_id: id,
-                reason: DropReason::NoRoute,
+                reason: DropReason::GivenBack,
             })
         };
         assert!(
@@ -1891,7 +2049,7 @@ fn a_one_way_link_left_as_the_only_candidate_ends_the_search_there() {
 /// failed hand-overs and their bans. No message ends by age on its way
 /// (spec "Overload waits"): R's copy waits for C's bans past
 /// that time, until the demotion ends its wait, and is returned then; P,
-/// with nothing left to try, drops it.
+/// with nothing left to try, gives it back.
 #[test]
 fn a_message_outlives_the_delivery_ttl_on_its_way() {
     let (p, r, c, d) = (0, 1, 2, 3);
@@ -1931,7 +2089,7 @@ fn a_message_outlives_the_delivery_ttl_on_its_way() {
     h.run_for(secs(1));
     assert!(traces(&h, p).contains(&Trace::Dropped {
         msg_id: id,
-        reason: DropReason::NoRoute
+        reason: DropReason::GivenBack
     }));
 }
 
@@ -2927,6 +3085,7 @@ fn waiting_for_a_silent_parent_drops_the_return_at_its_third_failure() {
             dst_pos,
             dst_id: NOBODY,
             payload: text,
+            tag: 0,
         },
     );
     let id = MsgId::of(dst_pos, NOBODY, text);

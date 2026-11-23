@@ -85,6 +85,7 @@ fn send(
             dst_pos,
             dst_id,
             payload: text,
+            tag: 0,
         },
     );
     MsgId::of(dst_pos, dst_id, text)
