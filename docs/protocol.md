@@ -256,7 +256,8 @@ is two, 390 s (roadmap D51, D73).
 | a sleepy node | listens: at the first relay it hears it ends its first rotation and takes the relay as its anchor ([relay choice](#relay-choice)); with none by the end of two rotations it is anchorless ([sleepy nodes alone](#sleepy-nodes-alone)) |
 
 In its first rotation a node owns no position but its own
-([owner](#owner)).
+([owner](#owner)), and takes no message from its application while it
+knows no relay ([receiving DATA](#receiving-data)).
 
 ### Channel moves
 
@@ -833,8 +834,8 @@ sender is in reach ([heard table](#heard-table)). To send something back:
 ([packet formats](#packet-formats)); no neighbour-table entry is needed;
 if there is one, `aux` becomes its channel.
 
-A packet with `hops = 0` is a sleepy node's own message, and its receiver
-is the origin ([hop count](#hop-count)).
+A packet with `hops = 0` is a sleepy node's own message: fresh work for
+its receiver ([hop count](#hop-count)).
 
 #### Message records
 
@@ -1073,8 +1074,10 @@ depends on what the packet gives it to do:
     first hop takes it; its phones take turns ([sending](#sending)). It
     takes one while it holds none, is not draining
     ([send queue](#send-queue), Before a reboot), has a live neighbour,
-    has room in its send queue and bucket for a full frame on top of what
-    they hold, and not every neighbour is banned; for a sleepy node with a
+    in its first rotation a relay among them
+    ([channel at boot](#channel-at-boot)), has room in its send queue and
+    bucket for a full frame on top of what they hold, and not every
+    neighbour is banned; for a sleepy node with a
     live anchor, not the anchor
     ([a sleepy node's own message](#a-sleepy-nodes-own-message)). The
     message then passes the gate at count 0 and its next hop must not be
@@ -1131,7 +1134,9 @@ When [next hop](#next-hop) finds no candidate, the relay sends the message
 back to its parent: DATA with `dst_hop` the parent's ID from the record,
 on the parent's home channel as the neighbour table has it at the moment
 of sending ([channel moves](#channel-moves)); only a parent no longer in
-the table is sent to on the channel in the record. The return is routed
+the table is sent to on the channel in the record, with the long preamble
+if the relay is anchorless ([sleepy nodes alone](#sleepy-nodes-alone)).
+The return is routed
 like any message, the parent its only candidate: it waits while the parent
 is banned, and a neighbour that arrives meanwhile, untried, takes it
 forward instead. The parent takes it as a return
@@ -1139,11 +1144,13 @@ forward instead. The parent takes it as a return
 neighbour. A parent that answers seen: the relay drops the message
 ([the ACK](#the-ack)).
 
-**A sleepy parent.** A return to a sleepy node the relay hears beat, its
-own message come back, waits in the delivery queue as a message for that
-node does and goes in the node's window ([delivery](#delivery)), never
-with the long preamble. With no place in the queue it is dropped, as is
-one whose node the relay no longer hears; nobody is told (roadmap D244).
+**A sleepy parent.** A return to a sleepy node with an anchor that the
+relay hears beat, its own message come back, waits in the delivery queue
+as a message for that node does and goes in the node's window
+([delivery](#delivery)), never with the long preamble. With no place in
+the queue it is dropped, as is one whose node the relay no longer hears,
+and one the relay still holds when it turns sleepy
+([sleepy nodes](#sleepy-nodes)); nobody is told (roadmap D244).
 
 **The origin** has no parent: with no candidate left it gives the message
 back to its application, no way ([addresses](#addresses);
@@ -1892,8 +1899,10 @@ one's as the node does, and tells the person why:
 
 - busy and no neighbour: it offers the message again by itself once ready
   is set;
-- no way: it offers it again only on the person's word (roadmap D126,
-  D244).
+- no way: it offers it again only on the person's word, and sealed anew,
+  a new message with another ID: the relays that searched the first keep
+  their records of it ([message records](#message-records)) and would
+  take it for one they have had (roadmap D126, D244).
 
 The person may give up a message given back for any reason.
 
