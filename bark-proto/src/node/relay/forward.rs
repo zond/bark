@@ -351,10 +351,16 @@ pub(super) struct OwnMessage {
     /// Refusals in a row by banned neighbours: each doubles the hold
     /// before it is offered again (`budget::hold`).
     pub(super) refusals: u8,
+    /// While the node is anchorless, the whole second it turned so,
+    /// rounded up; [`u32::MAX`] otherwise. Whole seconds fit beside
+    /// `refusals`.
+    pub(super) alone_from_s: u32,
     /// Before this the application is not offered a send
     /// (spec "A sleepy node's own message").
     pub(super) retry_at: Instant,
-    /// When the bucket lets the application send, if only it is missing.
+    /// When the application's readiness may change by time alone: the
+    /// bucket and bans allow a send, or the last live neighbour's entry
+    /// expires while it holds or would take a message.
     pub(super) app_ready_at: Option<Instant>,
 }
 
@@ -362,6 +368,7 @@ impl OwnMessage {
     pub(super) const NONE: OwnMessage = OwnMessage {
         id: None,
         refusals: 0,
+        alone_from_s: u32::MAX,
         retry_at: Instant::ZERO,
         app_ready_at: None,
     };
@@ -728,8 +735,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Give the application's message `msg_id`, sent with `tag`, back to
-    /// it for `why` (spec "Addresses"). Its record goes, so that offered
-    /// again it is new here.
+    /// it for `why` (spec "Addresses"). Busy or with no neighbour it never
+    /// left the node: its record goes, so that offered again it is new
+    /// here. After a no way the record stays and says it has arrived, so
+    /// that a copy still searching ends here at once
+    /// (spec "Return to parent").
     fn give_back(
         &mut self,
         msg_id: MsgId,
@@ -738,7 +748,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         retry_at: Instant,
         emit: &mut dyn FnMut(Action),
     ) {
-        self.records.forget(msg_id);
+        match why {
+            Why::Busy | Why::NoNeighbour => self.records.forget(msg_id),
+            Why::NoWay => {
+                if let Some(r) = self.records.get_mut(msg_id) {
+                    r.set_arrived();
+                }
+            }
+        }
         self.drop_msg(msg_id, DropReason::GivenBack, emit);
         emit(Action::App(AppEvent::GivenBack {
             msg_id,
@@ -1598,6 +1615,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             && now >= self.own.retry_at
             && self.neighbours.live(now).next().is_some()
             && (!self.booting() || self.relays_known(now) > 0)
+            && self.alone_ends().is_none_or(|t| now >= t)
             && self
                 .no_room(
                     self.data_airtime(MAX_PAYLOAD, MAX_HOPS),
@@ -1624,7 +1642,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .allowed_at(Duration::ZERO, need, now)
             .filter(|&t| t > now);
         let retry = Some(self.own.retry_at).filter(|&t| t > now);
-        [bucket, self.bans_end(now), retry]
+        let alone = self.alone_ends().filter(|&t| t > now);
+        [bucket, self.bans_end(now), retry, alone]
             .into_iter()
             .flatten()
             .max()
@@ -1648,6 +1667,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         };
         if self.queue.current_index() == Some(i) {
+            if self.in_flight().is_some_and(Outgoing::transmitted) {
+                // Its receiver may have it: the hand-over's end decides
+                // (spec "Receiving DATA").
+                return;
+            }
             self.cancel_handover();
             self.queue.take_current();
         } else {
@@ -1661,13 +1685,45 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// When the application's message still held would have no live
     /// neighbour left ([`Self::own_alone`]).
-    pub(super) fn own_alone_at(&self) -> Option<Instant> {
+    pub(super) fn own_alone_at(&self, now: Instant) -> Option<Instant> {
         let id = self.own.id?;
         self.queue
             .iter()
             .any(|o| o.msg_id() == id && !o.held())
-            .then(|| self.neighbours.last_expiry())
+            .then(|| self.neighbours.last_live_expiry(now))
             .flatten()
+    }
+
+    /// When the node, ready for its application now, stops being so as its
+    /// last live neighbour's entry expires: a wakeup, so that its driver
+    /// sees it on time (`docs/core-interface.md`, "Application").
+    pub(super) fn ready_ends_at(&self, now: Instant) -> Option<Instant> {
+        self.accepts_send(now)
+            .then(|| self.neighbours.last_live_expiry(now))
+            .flatten()
+    }
+
+    /// Note when the node turned anchorless, each time it does, and forget
+    /// it once it anchors or relays.
+    pub(super) fn note_alone(&mut self, now: Instant) {
+        let alone = self.anchorless();
+        let s = &mut self.own.alone_from_s;
+        *s = match (alone, *s) {
+            (false, _) => u32::MAX,
+            // Rounded up, so that the wait is never shorter.
+            (true, u32::MAX) => now.as_micros().div_ceil(1_000_000) as u32,
+            (true, from) => from,
+        };
+    }
+
+    /// When a node that turned anchorless may take its application's
+    /// message again: a delivery TTL on, by when every neighbour in
+    /// anchorless mode has beaten on its channel
+    /// (spec "Sleepy nodes alone"). What it forwards for others is not
+    /// held.
+    fn alone_ends(&self) -> Option<Instant> {
+        let s = Some(self.own.alone_from_s).filter(|&s| s != u32::MAX)?;
+        Some(Instant::from_micros(u64::from(s) * 1_000_000) + self.config.delivery_ttl)
     }
 
     /// The application's message is now `own`; a new one, or none, has
@@ -1726,6 +1782,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         let id = MsgId::of(dst_pos, dst_id, payload);
         if self.records.get(id).is_some() || self.delivered.contains(id) {
+            // This node has had it: it is not searched again (spec
+            // "Sending", Given back).
+            self.give_back(id, tag, Why::NoWay, now, emit);
             return;
         }
         // The table outnumbers what a relay holds (`tables/records.rs`).
@@ -1912,6 +1971,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.drop_msg(id, DropReason::NoRecord, emit);
             return Routed::Done;
         };
+        if let Some(tag) = record.tag().filter(|_| self.anchored_sleepy()) {
+            if self.own.id != Some(id) {
+                // Its own come back: whoever returned it, it searches on
+                // from nowhere else (spec "Return to parent").
+                self.give_back(id, tag, Why::NoWay, now, emit);
+                return Routed::Done;
+            }
+        }
         let w = self.ways(now);
         let next = self
             .next_hop(&w, &record, out.passed, out.avoid, dst)
@@ -1966,8 +2033,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 ..out
             }),
             Way::WaitsUntil(t) => Routed::Wait(t),
-            Way::Parent((parent, _)) if self.held_return(&record, parent) => {
+            Way::Parent((parent, _)) if self.holds_for(parent) => {
                 self.return_held(&out, &record, parent, now, emit);
+                Routed::Done
+            }
+            Way::Parent((parent, _)) if self.needs_window(&record, parent) => {
+                // No holder here for the window it needs
+                // (spec "Return to parent").
+                self.drop_msg(id, DropReason::ReturnUnheard, emit);
                 Routed::Done
             }
             Way::Parent((parent, stored)) => Routed::To(Outgoing {
@@ -1981,14 +2054,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }),
             Way::Exhausted => {
                 match record.tag() {
-                    Some(tag) => {
-                        let alone = self.neighbours.live(now).next().is_none();
-                        let why = match self.own.id == Some(id) && alone {
-                            true => Why::NoNeighbour,
-                            false => Why::NoWay,
-                        };
-                        self.give_back(id, tag, why, now, emit);
-                    }
+                    Some(tag) => self.give_back(id, tag, Self::exhausted(&record), now, emit),
                     None => self.drop_msg(id, DropReason::NoRoute, emit),
                 }
                 Routed::Done
@@ -2005,36 +2071,45 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         (self.sleepy() && mail && alone).then(|| now + self.config.fade_retry)
     }
 
-    /// Whether the return of the message of `record` to `parent` goes
-    /// through the delivery queue: this node holds for `parent`, or
-    /// `parent` handed it over as a sleepy node's own and is not known now
-    /// as anything but one with an anchor, so that, not heard, its return
-    /// is dropped
+    /// Why an origin's search that has no candidate left gives the message
+    /// back: no neighbour if no node ever took it or answered it seen, so
+    /// that it never left the node; else no way (spec "Return to parent").
+    fn exhausted(record: &Record) -> Why {
+        match record.handed_any() {
+            true => Why::NoWay,
+            false => Why::NoNeighbour,
+        }
+    }
+
+    /// Whether the return of the message of `record` to `parent` needs a
+    /// holder's window: `parent` handed it over as a sleepy node's own and
+    /// is not known now as anything but a sleepy node with an anchor
     /// (spec "Return to parent").
-    fn held_return(&self, record: &Record, parent: NodeId) -> bool {
-        let sleepy = || {
-            self.neighbours
+    fn needs_window(&self, record: &Record, parent: NodeId) -> bool {
+        record.from_sleepy()
+            && self
+                .neighbours
                 .get(parent)
                 .is_none_or(Neighbour::last_resort)
-        };
-        self.holds_for(parent) || (record.from_sleepy() && sleepy())
     }
 
     /// Whether this node is the holder of `id`, a sleepy node with an
     /// anchor that it hears beat: a return to it goes in its window
     /// (spec "Return to parent"). Not if the neighbour table has it now as
-    /// a node of another kind.
+    /// a node of another kind, nor at a node that holds no mail, being
+    /// sleepy or carried.
     fn holds_for(&self, id: NodeId) -> bool {
         !self.sleepy()
+            && !self.motion.carried()
             && self.heard.get(id).is_some()
             && self.neighbours.get(id).is_none_or(Neighbour::last_resort)
     }
 
-    /// The return of `out` to the sleepy node `parent` waits in the
-    /// delivery queue as a message for that node does, to go in its window;
-    /// with no place there, or the node no longer heard, it is dropped
-    /// (spec "Return to parent"). A parent that handed the message over as
-    /// its own has an anchor, so one not heard is no longer heard.
+    /// The return of `out` to the sleepy node `parent`, which this node
+    /// holds for, waits in the delivery queue as a message for that node
+    /// does, to go in its window. It takes only a free place, and gives it
+    /// up to a message for a node
+    /// (spec "Return to parent", "Delivery queue").
     fn return_held(
         &mut self,
         out: &Outgoing,
@@ -2044,22 +2119,20 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         emit: &mut dyn FnMut(Action),
     ) {
         let (id, m) = (out.msg_id(), &out.message);
-        if !self.holds_for(parent) {
-            return self.drop_msg(id, DropReason::ReturnUnheard, emit);
-        }
         let Some(mut q) = Queued::new(id, m.dst_pos(), m.dst_id(), m.payload(), now) else {
             return self.drop_msg(id, DropReason::PayloadTooLong, emit);
         };
         q.node = parent;
         q.hops = record.highest_hops();
         q.wrong = record.highest_wrong();
-        if !self.delivery.iter().any(|e| e.msg_id == id) {
-            self.make_room(now, emit);
-        }
         match self.delivery.push(q) {
             Pushed::Full => self.drop_msg(id, DropReason::ReturnNoPlace, emit),
             Pushed::Duplicate => {}
             Pushed::Queued => {
+                emit(Action::Trace(Trace::ReturnHeld {
+                    msg_id: id,
+                    node: parent,
+                }));
                 self.forwarding.feed_due = true;
                 self.deliver_now(parent, now);
             }

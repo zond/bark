@@ -15,6 +15,18 @@ impl Sim {
                 .as_micros(),
             _ => 0,
         };
+        match *t {
+            Trace::ReturnHeld { msg_id, .. } => {
+                self.returns_held.insert((node, msg_id.0));
+                self.metrics.app.returns.held += 1;
+            }
+            Trace::ReturnedToParent {
+                msg_id,
+                sleepy: true,
+                ..
+            } => self.return_ended(node, msg_id, None),
+            _ => {}
+        }
         let c = &mut self.metrics.nodes[node as usize].core;
         match *t {
             Trace::HomeChannelMoved { from, to } if !self.was_booting => {
@@ -97,10 +109,9 @@ impl Sim {
                 }
             }
             Trace::Seen { .. } => c.seen_acted += 1,
-            Trace::ReturnedToParent { sleepy, .. } => {
+            Trace::ReturnedToParent { .. } => {
                 c.handed_over += 1;
                 c.returned += 1;
-                self.metrics.app.returns_to_sleepy += u64::from(sleepy);
             }
             _ => {}
         }

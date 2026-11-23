@@ -317,6 +317,12 @@ impl Sim {
             .take(HELD_MAX)
             .filter_map(|h| encode(&h))
             .collect();
+        // The returns it holds for sleepy parents the reboot drops
+        // (spec "Return to parent").
+        let dropped: Vec<MsgId> = self.relays[i].held_returns().collect();
+        for id in dropped {
+            self.message_dropped(node, id, bark_proto::DropReason::ReturnRebooted);
+        }
         let core = &self.relays[i];
         let (written, counts) = written_tables(core, local);
         let delivering = core.delivery_queue().count() + core.inbox_len();
@@ -434,10 +440,10 @@ impl Sim {
             .is_some_and(|m| !m.carry[node as usize].is_empty())
     }
 
-    /// The core gave back `msg_id`, the kept message offered last, for
-    /// `why`: busy or with no neighbour it is offered again first; for no
-    /// way it ends, as a text of the traffic model or a mailbox's reply does
-    /// (`sim.rs`).
+    /// The core gave back `msg_id`, a kept message, for `why`: the one
+    /// offered last, busy or with no neighbour, is offered again first;
+    /// for no way, or one offered before it, it ends, as a text of the
+    /// traffic model or a mailbox's reply does (`sim.rs`).
     pub(crate) fn kept_given_back(&mut self, node: u32, msg_id: MsgId, why: bark_proto::Why) {
         let i = node as usize;
         let Some(m) = self.install.as_mut() else {
@@ -446,18 +452,21 @@ impl Sim {
         let ours = m.offered[i]
             .and_then(|s| decode(&s).map(|h| h.msg_id))
             .is_some_and(|id| id == msg_id);
-        if !ours {
-            return;
-        }
-        let s = m.offered[i].take().expect("offered");
-        if why != bark_proto::Why::NoWay {
+        if ours && why != bark_proto::Why::NoWay {
+            let s = m.offered[i].take().expect("offered");
             m.carry[i].push_front(s);
             m.offered_again[1] += 1;
             return;
         }
+        if ours {
+            m.offered[i] = None;
+        }
+        // For no way, or one offered before the last, whose slot the node
+        // no longer has to offer again: it ends here.
         match self.msg_tag(msg_id.0) {
             Some(_) => self.mark_ended(msg_id, crate::sim::Fate::GivenBack { node, why }),
-            None => self.metrics.app.replies_no_way += 1,
+            None if why == bark_proto::Why::NoWay => self.metrics.app.replies_no_way += 1,
+            None => {}
         }
     }
 

@@ -221,9 +221,16 @@ pub enum DropReason {
     /// A return to a sleepy parent found no place in the delivery queue
     /// (spec "Return to parent").
     ReturnNoPlace,
-    /// A return's sleepy parent is no longer heard
+    /// A return's sleepy parent, which needs a holder's window, is not
+    /// heard here, or this node holds no mail, being sleepy or carried
     /// (spec "Return to parent").
     ReturnUnheard,
+    /// A return held for a sleepy parent gave its place in the delivery
+    /// queue up to a message for a node (spec "Delivery queue").
+    ReturnEvicted,
+    /// A return held for a sleepy parent when its node rebooted into a new
+    /// image (spec "Return to parent"); `Node::held` leaves it out.
+    ReturnRebooted,
     /// A return held for a sleepy parent that the flush of a relay turning
     /// sleepy did not deliver (spec "Return to parent", "Sleepy nodes").
     ReturnNotFlushed,
@@ -664,6 +671,14 @@ pub enum Trace {
         offset_us: i32,
         /// How long the node listened in the window.
         listened: Duration,
+    },
+    /// A return to a sleepy parent entered the delivery queue, to go in
+    /// that node's window (spec "Return to parent").
+    ReturnHeld {
+        /// The message.
+        msg_id: MsgId,
+        /// The parent.
+        node: NodeId,
     },
     /// A message for another node entered the delivery queue (spec
     /// "Delivery queue").

@@ -561,7 +561,9 @@ fn a_sleepy_node_s_message_with_no_way_comes_back_to_it_in_its_window() {
             "the anchor drops nothing"
         );
         assert!(h.nodes[r].core.holding().next().is_none());
-        assert!(!h.nodes[s].core.knows(id), "offered again, it is new");
+        // Kept, so that a copy still out ends there
+        // (spec "Return to parent").
+        assert!(h.nodes[s].core.knows(id));
     }
 }
 
@@ -1371,6 +1373,9 @@ fn a_pocket_learns_its_way_out_from_long_beats() {
         before.len() >= 2 && before[before.len() - 1].since(*before[0]) >= rotation.div(2),
         "{heard_a:?} {first_long:?}"
     );
+    // A takes its text once it has been anchorless a delivery TTL
+    // (spec "Sleepy nodes alone").
+    assert!(h.run_until(h.now + Config::default().delivery_ttl, |h| h.accepts(a)));
     let id = send(&mut h, a, r, b"out of the pocket");
     assert!(h.run_until(h.now + secs(20), |h| delivered_at(h, r, id).is_some()));
     let data = |i: usize| {

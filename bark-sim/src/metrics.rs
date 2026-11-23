@@ -665,6 +665,14 @@ drop_counts! {
     /// (spec "Return to parent"); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
     return_not_flushed: ReturnNotFlushed,
+    /// A held return gave its place up to a message for a node
+    /// (spec "Delivery queue"); left out where none was.
+    #[serde(skip_serializing_if = "is_zero")]
+    return_evicted: ReturnEvicted,
+    /// A return held when its relay rebooted into a new image
+    /// (spec "Return to parent"); left out where none was.
+    #[serde(skip_serializing_if = "is_zero")]
+    return_rebooted: ReturnRebooted,
     /// The delivery TTL ran out (spec "Delivery queue").
     queue_expired: QueueExpired,
     /// The delivery queue was full (spec "Delivery queue").
@@ -682,6 +690,49 @@ drop_counts! {
     /// (spec "Send queue"); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
     draining: Draining,
+}
+
+/// What became of the returns to sleepy parents
+/// (spec "Return to parent"): each is in one of these, those `held` in
+/// one of the rest.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct SleepyReturns {
+    /// Dropped before a place: no place in the delivery queue.
+    pub no_place: u64,
+    /// Dropped before a place: no holder for the window it needs.
+    pub unheard: u64,
+    /// Held in a holder's delivery queue; of those:
+    pub held: u64,
+    /// taken by the parent;
+    pub taken: u64,
+    /// gave their place up to a message for a node, stale or not;
+    pub evicted: u64,
+    /// not delivered by the flush of a holder turning sleepy;
+    pub not_flushed: u64,
+    /// held when the holder rebooted into a new image;
+    pub rebooted: u64,
+    /// at a count cap when they went;
+    pub capped: u64,
+    /// dropped otherwise;
+    pub other: u64,
+    /// lost with a holder that went off;
+    pub lost: u64,
+    /// still held at the end.
+    pub at_end: u64,
+}
+
+impl SleepyReturns {
+    /// The held ones' fates, summed, which equal `held`.
+    pub fn held_fates(&self) -> u64 {
+        self.taken
+            + self.evicted
+            + self.not_flushed
+            + self.rebooted
+            + self.capped
+            + self.other
+            + self.lost
+            + self.at_end
+    }
 }
 
 /// Counters by why a message was given back to its application
@@ -828,9 +879,8 @@ pub struct AppMetrics {
     /// Messages given back to their applications, by why (events: one
     /// message may come back more than once; spec "Addresses").
     pub given_back: WhyCounts,
-    /// Returns to a sleepy parent that it took from the delivery queue
-    /// (spec "Return to parent"); those dropped are in `drops`.
-    pub returns_to_sleepy: u64,
+    /// Returns to a sleepy parent (spec "Return to parent").
+    pub returns: SleepyReturns,
     /// Replies of a mailbox given back as no way, which it drops
     /// (spec "Mailbox").
     pub replies_no_way: u64,

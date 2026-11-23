@@ -352,8 +352,11 @@ pub enum Fate {
         /// Why.
         reason: DropReason,
     },
-    /// Given back to its application, which did not offer it again: told
-    /// to wait past its patience, or no way (spec "Sending", Given back).
+    /// Given back to its application, which did not offer it again: busy
+    /// and told to wait past its patience; busy or with no neighbour while
+    /// the application held another text in its one place, as the
+    /// traffic model's application holds one; or no way, which a person
+    /// would decide (spec "Sending", Given back).
     GivenBack {
         /// Its origin.
         node: u32,
@@ -814,6 +817,9 @@ pub struct Sim {
     /// The mailbox replies nodes' applications received, with the node,
     /// for the tests to open.
     pub(crate) replies: Vec<(u32, Vec<u8>)>,
+    /// The returns to sleepy parents held now: the holder and the message
+    /// (`Sim::return_ended`).
+    pub(crate) returns_held: std::collections::HashSet<(u32, u32)>,
     /// Whether any node keeps a mailbox.
     with_mailboxes: bool,
     /// Message id (kept across hops) to traffic tag.
@@ -1299,6 +1305,7 @@ impl Sim {
             origins: Vec::new(),
             offers: (0..n).map(|_| None).collect(),
             with_mailboxes: mailboxes.iter().any(Option::is_some),
+            returns_held: Default::default(),
             mailboxes,
             replies: Vec::new(),
             msg_tags: HashMap::new(),
@@ -2866,6 +2873,7 @@ impl Sim {
     /// `Trace::Dropped`. The protocol sends no failure notice, so this is
     /// the only record of where a lost message died.
     pub fn message_dropped(&mut self, node: u32, msg_id: MsgId, reason: DropReason) {
+        self.return_ended(node, msg_id, Some(reason));
         self.metrics.app.drops.add(reason);
         self.metrics.nodes[node as usize].drops.add(reason);
         self.handover_dropped(node, msg_id);
@@ -2891,6 +2899,42 @@ impl Sim {
             self.metrics.sleep.queue_expired[k] += 1;
         }
         self.mark_dropped(node, msg_id, reason);
+    }
+
+    /// A return to a sleepy parent ended at `node`: taken by the parent,
+    /// `None`, or dropped for `reason`. Each is counted once, in one of
+    /// `metrics::SleepyReturns`'s fates.
+    pub(crate) fn return_ended(&mut self, node: u32, msg_id: MsgId, reason: Option<DropReason>) {
+        let r = &mut self.metrics.app.returns;
+        match reason {
+            Some(DropReason::ReturnNoPlace) => return r.no_place += 1,
+            Some(DropReason::ReturnUnheard) => return r.unheard += 1,
+            _ => {}
+        }
+        if !self.returns_held.remove(&(node, msg_id.0)) {
+            return;
+        }
+        *match reason {
+            None => &mut r.taken,
+            Some(DropReason::ReturnEvicted) => &mut r.evicted,
+            Some(DropReason::ReturnNotFlushed) => &mut r.not_flushed,
+            Some(DropReason::ReturnRebooted) => &mut r.rebooted,
+            Some(DropReason::HopCap | DropReason::WrongHopCap) => &mut r.capped,
+            Some(_) => &mut r.other,
+        } += 1;
+    }
+
+    /// The returns still held at the end, by their holders, and those lost
+    /// with a holder that went off, as [`SleepyReturns`]' last fates.
+    ///
+    /// [`SleepyReturns`]: crate::metrics::SleepyReturns
+    pub(crate) fn returns_at_end(&self) -> (u64, u64) {
+        let held = |&(node, id): &(u32, u32)| {
+            self.nodes[node as usize].alive
+                && self.relays[node as usize].held_returns().any(|m| m.0 == id)
+        };
+        let at_end = self.returns_held.iter().filter(|k| held(k)).count() as u64;
+        (at_end, self.returns_held.len() as u64 - at_end)
     }
 
     /// Message `msg_id` ended at `node` for `reason`, unless it was
@@ -3495,7 +3539,8 @@ impl Sim {
     /// (spec "Sending", Given back). Busy, the application offers it again
     /// after the wait, as long as it is younger than the TTL the network
     /// would have kept it for; with no neighbour, once the node is ready
-    /// again; for no way, never, as a person would decide.
+    /// again; each only if its one place is free, else it ends, counted;
+    /// for no way, never, as a person would decide.
     fn text_given_back(&mut self, node: u32, msg_id: MsgId, retry_at: Instant, why: Why) {
         let again = match why {
             Why::Busy => {

@@ -275,12 +275,20 @@ the why, as the app does:
 | no neighbour | offered again once the node is ready | goes again |
 | no way | ends, given back: a person would decide | dropped, as one lost on its way is, and counted |
 
-A kept message given back goes to the front of what the node kept for
-busy and no neighbour, and for no way ends as its text or reply does. The
-summary counts every give-back by why, and the returns to a sleepy parent
-(spec "Return to parent"): taken in its window, dropped for want of a place
-in the delivery queue, dropped with the node no longer heard, and
-dropped when the flush of a relay turning sleepy did not deliver them.
+The application holds one text in its one place; a text given back busy
+or for no neighbour while another waits there ends, given back, and is
+counted by why. A kept message given back, the last one offered, goes to
+the front of what the node kept for busy and no neighbour; for no way, or
+one offered before it, it ends as its text or reply does. The summary
+counts every give-back by why, and the texts not offered again by why.
+
+**Returns to a sleepy parent** (spec "Return to parent") are each in one
+fate: dropped before a place for want of one, or for want of a holder;
+or held, and then taken by the parent, given up to a message for a node
+(stale or not), not delivered in the flush of a holder turning sleepy,
+held when the holder rebooted into a new image, at a count cap, dropped
+otherwise, lost with a holder that went off, or still held at the end.
+The scenario tests check that the held ones' fates add up.
 
 **Accounting.** Every message the traffic model sends ends up in one of
 these:
@@ -290,7 +298,8 @@ these:
   and the reason;
 - **given back** to its origin's application and not offered again,
   with the origin and the why (above): its search came back with no way,
-  or it was told to wait past the application's patience;
+  it was told to wait past the application's patience, or its place was
+  taken by the next text;
 - **in flight**: it is still held when the run ends, by its origin's
   application waiting to hand it over, in a send queue or a delivery
   queue;

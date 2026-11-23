@@ -1203,7 +1203,9 @@ fn search_without_owner_ends_at_the_origin() {
     );
     assert_eq!(given_back(&h, o, id), [(Why::NoWay, 0)]);
     assert_eq!(drops(&h, o, id), [DropReason::GivenBack]);
-    assert!(!core(&h, o).knows(id), "offered again, it is new");
+    // It keeps the record, so a copy still out ends here
+    // (spec "Return to parent").
+    assert!(core(&h, o).knows(id));
     for i in [p, q] {
         assert!(
             !traces(&h, i)
@@ -1215,11 +1217,10 @@ fn search_without_owner_ends_at_the_origin() {
 }
 
 /// Why a message given back for no way is offered again only as a new
-/// one, with another ID (spec "Sending", Given back): O's only neighbour P
-/// keeps its record of the first search, and the same message offered
-/// again comes to P as the packet it last had from O, a retransmission
-/// (spec "Receiving DATA" case 3). P acknowledges it and holds nothing, so
-/// nothing is searched and nothing comes back. A new message is searched,
+/// one, with another ID (spec "Sending", Given back): O keeps its record,
+/// and so does P, O's only neighbour. The same message offered again is
+/// given back at once, no way, and nothing goes on the air
+/// (`docs/core-interface.md`, "Application"). A new message is searched,
 /// and comes back.
 #[test]
 fn a_message_given_back_for_no_way_is_searched_again_only_as_a_new_one() {
@@ -1237,15 +1238,89 @@ fn a_message_given_back_for_no_way_is_searched_again_only_as_a_new_one() {
     assert!(h.run_until(h.now + secs(10), back(first)));
     assert!(core(&h, p).knows(first), "P keeps its record");
     assert!(h.run_until(h.now + secs(10), |h| h.accepts(o)));
+    let frames = h.nodes[o].sent.len();
     let again = send(&mut h, o, 2, b"nowhere");
     assert_eq!(again, first);
+    assert_eq!(given_back(&h, o, first), [(Why::NoWay, 0); 2]);
     h.run_for(secs(10));
-    assert_eq!(given_back(&h, o, first).len(), 1, "not searched again");
+    let data = h.nodes[o].sent[frames..]
+        .iter()
+        .filter(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Data(_))))
+        .count();
+    assert_eq!(data, 0, "not searched again");
+    assert_eq!(given_back(&h, o, first).len(), 2);
     assert!(core(&h, p).holding().next().is_none());
     assert!(core(&h, o).holding().next().is_none());
     let new = send(&mut h, o, 2, b"nowhere, sealed anew");
     assert!(h.run_until(h.now + secs(10), back(new)));
     assert_eq!(given_back(&h, o, new), [(Why::NoWay, 0)]);
+}
+
+/// A split ends at an origin that gave its message back for no way. O
+/// hands its message to N, whose ACKs are all lost: N has it, O does not
+/// know. N's way on, M, is gone, so N holds the message until it demotes
+/// M. O meanwhile demotes N, goes on through P, a dead end, and gives the
+/// message back, no way. When N's copy then comes back, O still has the
+/// record and answers it as one that has arrived: one ACK, no frame more
+/// (spec "Return to parent", "Receiving DATA" case 1).
+#[test]
+fn a_copy_returned_after_a_no_way_ends_at_the_origin() {
+    let (o, n, p, m) = (0, 1, 2, 3);
+    let mut h = build(
+        vec![
+            relay(0.0, 0.0, 191),
+            relay(400.0, 0.0, 192),
+            relay(0.0, 400.0, 193),
+            relay(800.0, 0.0, 194),
+            relay(20_000.0, 0.0, 195),
+        ],
+        &[(o, n), (o, p), (n, m)],
+    );
+    h.kill(m);
+    let id = send(&mut h, o, 4, b"split");
+    let to_o = core(&h, o).id();
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        (from, to) == (n, o)
+            && matches!(Packet::decode(bytes), Ok(Packet::Ack(a)) if a.msg_id == id)
+    }));
+    assert!(h.run_until(h.now + secs(30), |h| !given_back(h, o, id).is_empty()));
+    assert_eq!(given_back(&h, o, id), [(Why::NoWay, 0)]);
+    assert!(
+        core(&h, n).holding().any(|x| x == id),
+        "N still holds its copy"
+    );
+    let given = h.now;
+    let back = |h: &Harness<Relay>| {
+        h.nodes[n].traces.iter().any(|(t, x)| {
+            *t > given && matches!(x, Trace::ReturnedToParent { msg_id, to, .. } if *msg_id == id && *to == to_o)
+        })
+    };
+    assert!(h.run_until(h.now + secs(60), back), "N's copy came back");
+    let since = h.now;
+    h.run_for(secs(30));
+    let data_after = |i: usize| {
+        h.nodes[i]
+            .sent
+            .iter()
+            .filter(|(t, f)| {
+                *t > since
+                    && matches!(Packet::decode(f.payload()), Ok(Packet::Data(d)) if d.msg_id() == id)
+            })
+            .count()
+    };
+    assert_eq!((data_after(o), data_after(n), data_after(p)), (0, 0, 0));
+    for i in 0..4 {
+        assert!(
+            !drops(&h, i, id)
+                .iter()
+                .any(|r| matches!(r, DropReason::WrongHopCap | DropReason::HopCap)),
+            "relay {i}: {:?}",
+            drops(&h, i, id)
+        );
+    }
+    assert_eq!(given_back(&h, o, id).len(), 1);
+    assert!(core(&h, o).holding().next().is_none());
+    assert!(core(&h, n).holding().next().is_none());
 }
 
 /// D's first ACK is lost; A retransmits with the same count
@@ -1816,9 +1891,12 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
 /// waits for each ban to be offered to C again, O taking no other message
 /// meanwhile (spec "Return to parent"). The third failure demotes C, and
 /// the message, having held for C through its demotion, counts C tried
-/// (spec "Next hop"): O has nothing left to try, gives it back to its
-/// application, no way, and is ready again, long before C's entry expires
-/// (spec "Bounds", "Return to parent").
+/// (spec "Next hop"): O has nothing left to try, and gives it back to its
+/// application for no neighbour, since no node ever took it; it is ready
+/// again once C's ban has ended, long before C's entry expires (spec
+/// "Bounds", "Return to parent"). Offered again at each readiness, as the
+/// app does, it comes back each time after a ban that doubles, up to
+/// 61 s: the bans pace the app, not a loop.
 #[test]
 fn a_relay_origin_whose_neighbour_is_gone_gives_back_at_its_demotion() {
     let (o, c) = (0, 1);
@@ -1854,7 +1932,28 @@ fn a_relay_origin_whose_neighbour_is_gone_gives_back_at_its_demotion() {
     );
     // Once C's ban, the third step of the ladder, has ended.
     assert!(h.run_until(h.now + hold(3) + secs(1), |h| h.accepts(o)));
-    assert_eq!(given_back(&h, o, id), [(Why::NoWay, 0)]);
+    assert_eq!(given_back(&h, o, id), [(Why::NoNeighbour, 0)]);
+    assert!(!core(&h, o).knows(id), "offered again, it is new");
+    // The app offers it again whenever O is ready, until C's entry expires.
+    let mut backs = vec![h.now];
+    let end = gone + secs(380);
+    while h.run_until(end, |h| h.accepts(o)) {
+        assert_eq!(send(&mut h, o, c, b"nobody answers"), id);
+        let n = given_back(&h, o, id).len();
+        if !h.run_until(end, |h| given_back(h, o, id).len() > n) {
+            break;
+        }
+        backs.push(h.now);
+        assert_eq!(given_back(&h, o, id).last(), Some(&(Why::NoNeighbour, 0)));
+    }
+    let gaps: Vec<u64> = backs
+        .windows(2)
+        .map(|w| w[1].since(w[0]).as_micros() / 1_000_000)
+        .collect();
+    assert!(gaps.len() >= 3 && gaps.len() <= 12, "{gaps:?}");
+    assert!(gaps.windows(2).all(|g| g[1] + 2 >= g[0]), "{gaps:?}");
+    assert!(*gaps.last().unwrap() >= 50, "{gaps:?}");
+    println!("given back every {gaps:?} s");
 }
 
 /// P, R, C, D in a line, and C is gone. R's only candidate fails and is

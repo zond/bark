@@ -120,6 +120,12 @@ impl Motion {
         self.still_at
     }
 
+    /// Carried, or fixed, at once: for a test.
+    #[cfg(test)]
+    pub(super) fn set_carried(&mut self, carried: bool) {
+        self.carried = carried;
+    }
+
     pub(super) fn carried(&self) -> bool {
         self.carried
     }

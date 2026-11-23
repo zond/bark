@@ -5,8 +5,8 @@
 
 use crate::links::{BuildStats, Site};
 use crate::metrics::{
-    percentile, DropCounts, HopPlaceRefusals, NodeMetrics, RxCounts, SleepMetrics, TypeAirtime,
-    WhyCounts, AFTER_BEAT, AFTER_TAKE, FIRST_TRIES,
+    percentile, DropCounts, HopPlaceRefusals, NodeMetrics, RxCounts, SleepMetrics, SleepyReturns,
+    TypeAirtime, WhyCounts, AFTER_BEAT, AFTER_TAKE, FIRST_TRIES,
 };
 use crate::sim::{Fate, Sim};
 use bark_proto::gps::{GPS_CURRENT_UA, GPS_STANDBY_UA};
@@ -50,11 +50,9 @@ pub struct AppSummary {
     pub lost_given_back: WhyCounts,
     /// Messages given back to their applications, by why (events).
     pub given_back: WhyCounts,
-    /// Returns to a sleepy parent: taken from the delivery queue, dropped
-    /// for want of a place there, dropped with the node no longer heard,
-    /// and dropped when the flush of a holder turning sleepy did not
-    /// deliver them (spec "Return to parent").
-    pub returns_to_sleepy: [u64; 4],
+    /// What became of the returns to sleepy parents
+    /// (spec "Return to parent").
+    pub returns: SleepyReturns,
     /// Mailbox replies given back as no way, and dropped.
     pub replies_no_way: u64,
     /// Of those, the ones dropped by a node other than their origin: lost
@@ -485,12 +483,14 @@ impl Sim {
                 lost_dropped,
                 lost_given_back,
                 given_back: m.app.given_back,
-                returns_to_sleepy: [
-                    m.app.returns_to_sleepy,
-                    m.app.drops.return_no_place,
-                    m.app.drops.return_unheard,
-                    m.app.drops.return_not_flushed,
-                ],
+                returns: {
+                    let (at_end, lost) = self.returns_at_end();
+                    SleepyReturns {
+                        at_end,
+                        lost,
+                        ..m.app.returns
+                    }
+                },
                 replies_no_way: m.app.replies_no_way,
                 lost_in_network,
                 lost_at,
@@ -877,17 +877,34 @@ impl Summary {
             let _ = writeln!(
                 s,
                 "given back to the application: busy {}, no neighbour {}, no way {}; \
-                 not offered again: busy {}, no way {}",
-                g.busy, g.no_neighbour, g.no_way, a.lost_given_back.busy, a.lost_given_back.no_way
+                 not offered again: busy {}, no neighbour {}, no way {}",
+                g.busy,
+                g.no_neighbour,
+                g.no_way,
+                a.lost_given_back.busy,
+                a.lost_given_back.no_neighbour,
+                a.lost_given_back.no_way
             );
         }
-        let [taken, no_place, unheard, not_flushed] = a.returns_to_sleepy;
-        if taken + no_place + unheard + not_flushed > 0 {
+        let r = &a.returns;
+        if r.held + r.no_place + r.unheard > 0 {
             let _ = writeln!(
                 s,
-                "returns to a sleepy parent: {taken} taken in its window, dropped {no_place} \
-                 for want of a place, {unheard} with the node no longer heard, {not_flushed} \
-                 not delivered in the flush of a holder turning sleepy"
+                "returns to a sleepy parent: {} held, dropped {} for want of a place and {} \
+                 with no holder; of the held, {} taken, {} gave up their place, {} not \
+                 delivered in a flush, {} at a reboot, {} at a cap, {} otherwise, {} lost with \
+                 their holder, {} held at the end",
+                r.held,
+                r.no_place,
+                r.unheard,
+                r.taken,
+                r.evicted,
+                r.not_flushed,
+                r.rebooted,
+                r.capped,
+                r.other,
+                r.lost,
+                r.at_end
             );
         }
         if a.replies_no_way > 0 {

@@ -119,6 +119,9 @@ fn accounted(sim: &Sim, what: &str) {
         .map(|(tag, (t, _, _))| (tag, t))
         .collect();
     assert!(lost.is_empty(), "{what}: lost without a trace {lost:?}");
+    // Every return held for a sleepy parent has one fate.
+    let r = sim.summary().app.returns;
+    assert_eq!(r.held, r.held_fates(), "{what}: {r:?}");
 }
 
 /// Load a scenario from `scenarios/`.
@@ -318,7 +321,12 @@ fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
             }),
         "seed {seed}: {after:?}"
     );
-    assert!(s.app.returns_to_sleepy[0] > 0, "seed {seed}");
+    assert!(s.app.returns.taken > 0, "seed {seed}");
+    assert_eq!(
+        s.app.returns.held,
+        s.app.returns.held_fates(),
+        "seed {seed}"
+    );
     assert_eq!(s.app.lost_dropped.total(), 0, "seed {seed}");
     // The summary splits the run the same way.
     let phases = &s.app.phases;
@@ -389,8 +397,11 @@ fn a_sleepy_node_whose_anchor_has_no_way_gets_its_text_back() {
     assert_eq!(s.app.delivered, 0);
     assert_eq!(s.app.lost_dropped.total(), 0, "{}", s.table());
     assert!(s.app.given_back.no_way >= ended.len() as u64);
-    assert!(s.app.returns_to_sleepy[0] >= ended.len() as u64);
-    assert_eq!(s.app.returns_to_sleepy[1..], [0, 0, 0]);
+    let r = s.app.returns;
+    assert!(r.taken >= ended.len() as u64);
+    assert_eq!((r.no_place, r.unheard), (0, 0));
+    // Every held return is in one fate.
+    assert_eq!(r.held, r.held_fates(), "{r:?}");
     accounted(&sim, "no way");
 }
 
@@ -668,7 +679,9 @@ fn on_the_desk_a_text_reaches_its_node_at_once() {
 /// text within the bound of a message held on one neighbour, 14.2 s (spec
 /// "Bounds"), and returns each text to A, which gives it back to its
 /// application, no way; with B off too, A demotes B within the same bound
-/// and gives its texts back at once, as long as B's entry lasts
+/// and gives its texts back for no neighbour, as no node took them. Its
+/// application offers each again when A is ready, which B's doubling ban
+/// paces, and the texts due meanwhile are skipped
 /// (spec "Neighbour table", "Return to parent").
 #[test]
 fn on_the_bench_line_a_text_goes_through_the_middle() {
@@ -739,16 +752,33 @@ fn bench_line(sc: &Scenario) {
         .iter()
         .filter(|r| r.src == a && r.t_s >= c_off && r.t_s < b_off + 330.0)
         .collect();
-    assert_eq!(off.len(), 16, "a text a minute from A for 15.5 minutes");
+    let skipped =
+        sim.skipped_since(bark_proto::Instant::ZERO + bark_proto::Duration::from_secs(1200));
+    assert!(
+        off.len() as u64 + skipped >= 16,
+        "a text a minute from A for 15.5 minutes"
+    );
+    let a_no_neighbour = Fate::GivenBack {
+        node: a,
+        why: Why::NoNeighbour,
+    };
     for r in &off {
-        assert_eq!(r.fate, a_no_way, "seed {seed}: text {}", r.tag);
         let returned = format!("relay 1 (B): returned #{} to relay 0 (A)", r.tag);
-        assert_eq!(
-            r.t_s < b_off,
-            trace.contains(&returned),
-            "seed {seed}: text {} returned by B while C is off and B on",
-            r.tag
-        );
+        if r.t_s < b_off {
+            assert_eq!(r.fate, a_no_way, "seed {seed}: text {}", r.tag);
+            assert!(
+                trace.contains(&returned),
+                "seed {seed}: text {} returned by B while C is off and B on",
+                r.tag
+            );
+        } else {
+            assert!(
+                [a_no_neighbour, Fate::InFlight].contains(&r.fate),
+                "seed {seed}: text {}: {:?}",
+                r.tag,
+                r.fate
+            );
+        }
     }
     accounted(&sim, &format!("line seed {seed}"));
 }

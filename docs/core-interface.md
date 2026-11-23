@@ -149,12 +149,17 @@ out inside its payload. A message the node drops is reported only as `Trace::Dro
 
 A node holds one message of its application's at a time, until its first hop takes it.
 It accepts a message while it has a live neighbour, in its first rotation a relay among
-them (spec "Channel at boot"), holds none and does not drain (below),
+them (spec "Channel at boot"), for a delivery TTL after it turns anchorless none (spec
+"Sleepy nodes alone": the clock starts each time it does, counted from the whole second,
+rounded up, and stops mattering when it anchors; what it forwards for others is not held,
+and the end of that time is a wakeup), holds none and does not drain (below),
 its send queue takes a full frame on top of what it holds (spec "Send queue"), and not
 every neighbour is banned, or for a sleepy node with a live anchor, the anchor (spec
 "Receiving DATA"). When only its bucket and bans keep it from accepting, its
-`next_wakeup()` includes the moment both allow it; a neighbour or a relay heard is an
-event, and the first rotation's end a wakeup, after which the driver asks again. A message the node holds waits for bans as spec "Bans" says;
+`next_wakeup()` includes the moment both allow it. A neighbour or a relay heard is an
+event, and the first rotation's end a wakeup, after which the driver asks again; while the
+node is ready, `next_wakeup()` includes the moment its last live neighbour's entry expires,
+when it is ready no more. A message the node holds waits for bans as spec "Bans" says;
 one for a sleepy node it holds for that finds the delivery queue full waits for a place
 (spec "Receiving DATA").
 
@@ -166,14 +171,21 @@ codes are those of the phone link's Given back (spec "Sending"):
 | `why` | when | `retry_at` |
 |---|---|---|
 | `Busy` | the node's own gate refuses it when it is offered (spec "Receiving DATA"), or a sleepy node's first hop refuses it (spec "A sleepy node's own message") | the end of the wait the refusal asked for; `accepts_send` stays false until then, and `next_wakeup()` includes it |
-| `NoNeighbour` | the node still holds it when its last live neighbour's entry expires, which `next_wakeup()` includes; `accepts_send` is false until a neighbour is heard | now |
-| `NoWay` | its search came back to the node with no candidate left (spec "Return to parent"), a sleepy node's in its window from its anchor | now |
+| `NoNeighbour` | it never left the node: it still holds it when its last live neighbour's entry expires, which `next_wakeup()` includes, and `accepts_send` is false until a neighbour is heard; or its search ended with no candidate left and no node had taken it or answered it seen (spec "Return to parent"), as when its only neighbour is silent, and the node is ready again once that neighbour's ban ends | now |
+| `NoWay` | its search came back to the node with no candidate left after a node had taken it (spec "Return to parent"); a sleepy node's own whenever it is returned to it, in its window from its anchor; or the application sent an ID this node has a record of, which it does not search again | now |
 
 The driver hands the event to the sender the tag names, which may offer the message again
-or give it up. A message given back for no way goes again only as a new message with
-another ID: the core forgets the origin's record, but the relays that searched for it keep
-theirs, and the first hop takes the same message again for one it has had (spec "Sending",
-Given back). One whose hand-over goes unanswered waits in the node as
+or give it up. Busy or for no neighbour the core forgets the origin's record, so the same
+message offered again is new to it. After a no way it keeps the record, marked arrived, so
+that a copy of the message still searching ends there (spec "Return to parent"); the same
+ID offered again is given back at once, no way, with nothing sent. A message given back
+for no way goes again only as a new message with another ID, as the relays that searched
+for it keep their records too (spec "Sending", Given back).
+
+Tags across a reboot. The records kept across a reboot into a new image (`remembered`)
+carry the tag, so a give-back after the reboot still names it; whether the tag names the
+same sender then is the driver's business. The firmware forgets the give-backs its phones
+had not read at a reboot. One whose hand-over goes unanswered waits in the node as
 spec "A sleepy node's own message" says.
 
 A `Send` while `accepts_send` is false, or with a longer payload, breaks the contract like
@@ -340,13 +352,16 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
   carry the leaving flag (spec "Packet formats"), as they do while a relay flushes to
   turn sleepy.
   `AppCommand::Drain(false)` takes messages again. `drained(now)` is when the driver may
-  reboot: the send queue, the delivery queue and the inbox empty and no reply owed that
-  takes a DATA, or `Config::delivery_ttl` since the whole second the drain began.
+  reboot: the send queue, the delivery queue and the inbox empty, but for returns held for
+  sleepy parents, and no reply owed that takes a DATA, or `Config::delivery_ttl` since the
+  whole second the drain began.
   `held(now)` is every message the node then holds, each once, as `Held { msg_id, dst_pos,
   dst_id, payload, hops, at }`: the same message after the reboot, as its ID is `MsgId::of`
   the three, the count it goes on from, and in `at` where it was, the application's own,
   a forward with its parent and its place in the send queue, or a message in the delivery
-  queue or the inbox with its age. `remembered(now)` is the neighbour table and the
+  queue or the inbox with its age. A return held for a sleepy parent is not in `held`: the
+  reboot drops it (spec "Return to parent"), and `held_returns()` names those, for a log
+  (`DropReason::ReturnRebooted`). `remembered(now)` is the neighbour table and the
   message records as `Kept` entries in the core's own encoding. The driver keeps both;
   after the reboot, before the first event, it hands each entry back with
   `remember(&kept, ago, now)` and then each message with `put_back(&held, ago, now)`,

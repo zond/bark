@@ -63,15 +63,20 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return Ok(());
         }
         let home = n.home;
-        let Some(q) = self.delivery.iter().find(|q| q.node == node && !q.waits()) else {
-            return Ok(());
-        };
-        // Outside its window, and not known to be out of reach; a return
-        // never goes so (spec "Return to parent").
-        let early = !listens && !self.config.sleepy_listens && !n.missed && !q.returns();
+        // Outside its window, and not known to be out of reach, its oldest
+        // but a return, which never goes so and keeps nothing newer
+        // waiting (spec "Return to parent").
+        let early = !listens && !self.config.sleepy_listens && !n.missed;
         if !listens && !early {
             return Ok(());
         }
+        let Some(q) = self
+            .delivery
+            .iter()
+            .find(|q| q.node == node && !q.waits() && !(early && q.returns()))
+        else {
+            return Ok(());
+        };
         let preamble = if early {
             LONG_PREAMBLE_SYMBOLS
         } else {
@@ -282,7 +287,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Make a place in the full delivery queue for a message arriving at
-    /// `now`, if a stale one can give it up (spec "Delivery queue").
+    /// `now`, if a stale one or a held return can give it up
+    /// (spec "Delivery queue").
     pub(super) fn make_room(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         let Some(q) = self.delivery.make_room(now) else {
             return;
@@ -293,10 +299,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.queue
             .retain(|current, o| (current && active) || !o.kind.delivers() || o.msg_id() != id);
         self.forwarding.feed_due = true;
-        emit(Action::Trace(Trace::Dropped {
-            msg_id: id,
-            reason: DropReason::QueueExpired,
-        }));
+        let reason = match q.returns() {
+            true => DropReason::ReturnEvicted,
+            false => DropReason::QueueExpired,
+        };
+        emit(Action::Trace(Trace::Dropped { msg_id: id, reason }));
     }
 
     pub(super) fn delivery_timers(&mut self, now: Instant) {

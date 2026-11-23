@@ -250,20 +250,26 @@ impl<const N: usize> DeliveryQueue<N> {
     }
 
     /// Whether a message arriving at `now` finds a place: a free one, or
-    /// one a stale message, queued a TTL ago or longer, would make.
+    /// one a stale message, queued a TTL ago or longer, or a return held
+    /// for a sleepy parent would make.
     pub fn has_room(&self, now: Instant) -> bool {
-        !self.is_full() || self.iter().next().is_some_and(|q| self.stale(q, now))
+        !self.is_full() || self.yields(now).is_some()
     }
 
     /// Make a place for a message arriving at `now` in a full queue: take
-    /// the oldest message if it is stale.
+    /// the oldest message if it is stale, else the oldest return.
     pub fn make_room(&mut self, now: Instant) -> Option<Queued> {
-        let oldest = self.iter().next()?;
-        if self.is_full() && self.stale(oldest, now) {
-            Some(self.entries.remove(0))
-        } else {
-            None
+        let i = self.yields(now).filter(|_| self.is_full())?;
+        Some(self.entries.remove(i))
+    }
+
+    /// The message that gives its place up to a newer one: the oldest if
+    /// stale, else the oldest return (spec "Delivery queue").
+    fn yields(&self, now: Instant) -> Option<usize> {
+        if self.iter().next().is_some_and(|q| self.stale(q, now)) {
+            return Some(0);
         }
+        self.iter().position(Queued::returns)
     }
 
     /// When the oldest message turns stale, if any.

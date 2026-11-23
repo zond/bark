@@ -685,7 +685,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.gps.next_wakeup(&self.gps_situation(), &self.config),
             self.delivery_wakeup(),
             self.own.app_ready_at,
-            self.own_alone_at(),
             self.next_slot_edge(),
             self.spread.expires_at(&self.config),
         ]
@@ -978,7 +977,16 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
         if away.get() {
             self.radio.went(now);
         }
-        self.own.app_ready_at = self.send_ready_at(now);
+        self.note_alone(now);
+        // Its readiness changes, or its message goes back, at the first.
+        self.own.app_ready_at = [
+            self.send_ready_at(now),
+            self.own_alone_at(now),
+            self.ready_ends_at(now),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         if woke.get() {
             self.listen.radio_used();
         }
