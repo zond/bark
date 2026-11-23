@@ -860,7 +860,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             AppCommand::Signal { cn0 } => self.signal(cn0),
             AppCommand::Holds(image) => self.holds_image(image, now),
             AppCommand::Gather { image, from } => self.gather(image, from, now),
-            AppCommand::Block { index, ok } => self.spread.block_done(index, ok),
+            AppCommand::Block { index, ok } => self.spread.block_done(index, ok, now),
             AppCommand::Rejected(version) => self.spread.rejected(&self.config, version, now),
             AppCommand::Ask { neighbour } => self.ask(neighbour, now),
             AppCommand::Drain(on) => self.drain(on, now),

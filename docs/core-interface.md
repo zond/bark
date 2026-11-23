@@ -309,7 +309,9 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
 - `AppCommand::Holds(image)`: the image the node holds whole and has checked, the one
   it runs or one staged after its signature passed, with its name, version, block
   count, the pieces of its last block and its key; at boot and after each change. The
-  core tells it in its heartbeats' section and serves it.
+  core tells it in its heartbeats' section and serves it, while it gathers a newer image
+  not yet proven too, but on its helper's home channel, where it tells the gather (spec
+  "Updates over the mesh").
 - `Action::Offered(image)`: a relay that holds blocks 0 and 1 of an image named it,
   above the version the node runs, the image it holds and the one it has proven; once for
   each image, and not while the core holds the version off. The driver answers
@@ -322,10 +324,11 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
   answers `Block` for the second of them; a gather holding both is proven. If the proof
   fails, or the image whole fails at its staging, it answers `AppCommand::Rejected(version)`:
   the core gathers it no more and holds the version off for `update::unproven_within`. A
-  gather not yet proven that has taken no piece for `update::unproven_within` the core
+  gather not yet proven is fed only by a `Block` that passed, a proven one by every piece
+  it takes. One not yet proven and not fed for `update::unproven_within` the core
   gives up with `Action::Unproven(version)`, holds off as well, and the driver forgets its
   pieces. One it leaves for an older image, unfed for `update::fed_within`, it holds off
-  for as long at most, and only while its gather of an older image has taken a piece
+  for as long at most, and only while its gather of an older image has been fed
   within `update::fed_within`.
 - `Action::StorePiece(piece)`: keep this piece. The core hands pieces of every block
   the node lacks, each once, of an image of at most 48 blocks, so the driver holds at

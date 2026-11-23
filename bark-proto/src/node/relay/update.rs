@@ -76,8 +76,10 @@ struct Gather {
     seen: [[u8; PIECES.div_ceil(8)]; MAX_BLOCKS],
     /// The blocks that decoded and passed their hash, a bit each.
     done: u64,
-    /// When it began or last took a piece, for [`fed_within`] and
-    /// [`unproven_within`].
+    /// When it began or was last fed, for [`fed_within`] and
+    /// [`unproven_within`]: once proven, by any piece it takes; before,
+    /// only by a block that passes its check, since nothing else in it is
+    /// checked yet and junk pieces would feed it for good.
     fed: Instant,
 }
 
@@ -106,19 +108,20 @@ impl Gather {
     }
 
     /// Block `b` decoded, or failed its hash (`!ok`) and its pieces are
-    /// taken again.
-    fn decoded(&mut self, b: u8, ok: bool) {
+    /// taken again: whether it now holds a block it lacked.
+    fn decoded(&mut self, b: u8, ok: bool) -> bool {
         if b >= self.image.blocks || usize::from(b) >= MAX_BLOCKS || self.holds(b) {
-            return;
+            return false;
         }
         if !ok {
             self.seen[usize::from(b)] = [0; PIECES.div_ceil(8)];
-            return;
+            return false;
         }
         self.done |= 1 << b;
         while self.block < self.image.blocks && self.holds(self.block) {
             self.block += 1;
         }
+        true
     }
 }
 
@@ -350,15 +353,22 @@ impl Spread {
         if self.serves_sleepy(v, now, channel) {
             return self.streamed(version);
         }
-        let due = self.rotation_due(version, now)
-            || self.section_to & bit(channel) != 0
-            || self.restates_on(v, now) == Some(channel);
-        self.section(version).filter(|_| due)
+        let restates = self.restates_on(v, now) == Some(channel);
+        let due =
+            self.rotation_due(version, now) || self.section_to & bit(channel) != 0 || restates;
+        match due {
+            false => None,
+            // Its helper hears what it gathers; the rest what it streams,
+            // the image it holds whole while the one it gathers is not
+            // proven, or they would take it for holding nothing.
+            true if restates || v.sleepy => self.section(version),
+            true => self.streamed(version),
+        }
     }
 
     /// Its section as the image it streams names it: the image it holds
-    /// whole in place of a gather not yet proven, which its sleepy nodes
-    /// could take nothing of.
+    /// whole in place of a gather not yet proven, of which its neighbours
+    /// could take nothing.
     fn streamed(&self, version: u32) -> Option<Section> {
         match (self.gather, self.own) {
             (Some(g), Some(own)) if !g.proven() => Some(Section {
@@ -503,9 +513,12 @@ impl Spread {
         }
     }
 
-    pub(super) fn block_done(&mut self, index: u8, ok: bool) {
+    pub(super) fn block_done(&mut self, index: u8, ok: bool, now: Instant) {
         if let Some(g) = self.gather.as_mut() {
-            g.decoded(index, ok);
+            let proven = g.proven();
+            if g.decoded(index, ok) && !proven {
+                g.fed = now;
+            }
         }
     }
 
@@ -535,7 +548,7 @@ impl Spread {
         Some(g.fed + unproven_within(config))
     }
 
-    /// An unproven gather that has taken no piece for [`unproven_within`]
+    /// An unproven gather not fed for [`unproven_within`]
     /// is given up and held off, and the driver told to forget its pieces:
     /// a section can name an image nobody holds.
     pub(super) fn expire(&mut self, config: &Config, now: Instant, emit: &mut dyn FnMut(Action)) {
@@ -579,7 +592,7 @@ impl Spread {
 
     /// Whether it takes no offer of `version` now. One left unfed for an
     /// older image is held off only while its gather of an older image has
-    /// taken a piece within [`fed_within`]: once that one starves too, or
+    /// been fed within [`fed_within`]: once that one starves too, or
     /// is given up or held whole, the newer may be served after all, and
     /// a fed gather still keeps its place against a claim nobody serves.
     fn held_off(&self, config: &Config, version: u32, now: Instant) -> bool {
@@ -735,7 +748,9 @@ impl Spread {
         if !g.take(block, index) {
             return run;
         }
-        g.fed = now;
+        if g.proven() {
+            g.fed = now;
+        }
         let mut piece = Piece {
             block,
             index,
@@ -1610,9 +1625,9 @@ mod tests {
         assert!(offers(&mut r, 2, left), "the newer starved: the older");
         r.gather(image(2), 0, left);
         assert!(!offers(&mut r, 3, left), "held off");
-        // A piece of the older renews its hold.
+        // A block of the older that passes renews its hold.
         let piece = left + fed - Duration::from_secs(60);
-        feed(&mut r, 2, 0, piece);
+        r.spread.block_done(0, true, piece);
         assert!(!offers(&mut r, 3, left + fed), "the older fed");
         assert!(!offers(&mut r, 3, piece + fed - Duration::from_secs(1)));
         assert!(offers(&mut r, 3, piece + fed), "the older starved too");
@@ -1631,6 +1646,147 @@ mod tests {
         assert!(offers(&mut r, 3, whole), "the older held whole");
     }
 
+    /// A forger that names an image and streams junk pieces of it feeds
+    /// an unproven gather of it no more than its one block that passes,
+    /// the table it can make whole itself: an older real image offered
+    /// takes its place once that block is [`fed_within`] old, and the
+    /// gather is given up [`unproven_within`] after it, junk or not
+    /// (spec "Updates over the mesh").
+    #[test]
+    fn junk_pieces_feed_no_unproven_gather() {
+        let config = Config::default();
+        let fed = fed_within(&config);
+        let bound = unproven_within(&config);
+        let forged = Image {
+            version: 9,
+            blocks: 3,
+            last: 7,
+            key: 1,
+        };
+        let t0 = Instant::ZERO + Duration::from_secs(10);
+        let table = t0 + Duration::from_secs(60);
+        let junk = |r: &mut crate::Relay, until: Instant| {
+            // A fresh junk piece of block 1 every ten minutes.
+            let mut t = table;
+            let mut index = 0;
+            while t < until {
+                feed(r, 9, index, t);
+                index = index.wrapping_add(1);
+                t += Duration::from_secs(600);
+            }
+        };
+        let mut r = crate::Relay::new(config, 1);
+        r.gather(forged, 0, t0);
+        r.spread.block_done(0, true, table);
+        junk(&mut r, table + fed);
+        assert!(!offers(&mut r, 5, table + fed - Duration::from_secs(1)));
+        assert!(offers(&mut r, 5, table + fed), "the real image");
+        // Never taken, the forged gather is given up at the bound.
+        let mut r = crate::Relay::new(config, 1);
+        r.gather(forged, 0, t0);
+        r.spread.block_done(0, true, table);
+        junk(&mut r, table + bound);
+        let mut given_up = None;
+        r.spread.expire(&config, table + bound, &mut |a| {
+            if let Action::Unproven(v) = a {
+                given_up = Some(v);
+            }
+        });
+        assert_eq!(given_up, Some(9));
+    }
+
+    /// A forger that names a high version, with a table it made whole,
+    /// and streams junk pieces of it, against a relay that holds a release
+    /// whole: the relay goes on naming and streaming the release but to
+    /// the forger; the forged gather is fed once, by its table, and an
+    /// older real release offered once that is [`fed_within`] old takes
+    /// its place and holds it off while fed; a newer real one takes it at
+    /// once (spec "Updates over the mesh").
+    #[test]
+    fn a_junk_forger_neither_hides_a_release_nor_holds_a_relay() {
+        use crate::position::Position;
+        use crate::wire::Heartbeat;
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            ..Config::default()
+        };
+        let fed = fed_within(&config);
+        let image = |version| Image {
+            version,
+            blocks: 3,
+            last: 7,
+            key: 1,
+        };
+        let t0 = Instant::ZERO + Duration::from_secs(10);
+        let table = t0 + Duration::from_secs(60);
+        // The forger, heard at `t` with its section.
+        let forger = |r: &mut crate::Relay, t: Instant| {
+            let me = r.config.position;
+            let at = Position {
+                lat: me.lat + 5_000,
+                ..me
+            };
+            let hb = Heartbeat {
+                sleepy: false,
+                anchorless: false,
+                carried: false,
+                home: Channel::new(5).unwrap(),
+                format: crate::wire::FORMAT,
+                map_point: false,
+                leaving: false,
+                id: NodeId::from_u64(7),
+                short: at.short(),
+            };
+            let plane = r.plane;
+            r.neighbours.heard(&hb, at, -80, &plane, t);
+            let claim = Section {
+                runs: 1,
+                image: Some(image(9)),
+                complete: 2,
+                have: 0,
+            };
+            r.neighbours.section_heard(hb.id, claim, t);
+        };
+        let relay = || {
+            let mut r = crate::Relay::new(config, 1);
+            r.holds_image(image(2), t0);
+            forger(&mut r, t0);
+            assert!(offers(&mut r, 9, t0), "the forged section");
+            r.gather(image(9), 0, t0);
+            r.spread.block_done(0, true, table);
+            let mut t = table;
+            let mut index = 0;
+            while t < table + fed {
+                feed(&mut r, 9, index, t);
+                index += 1;
+                t += Duration::from_secs(600);
+            }
+            r
+        };
+        let mut r = relay();
+        let named = |r: &crate::Relay, c: u8, t| {
+            r.heartbeat_section(t, Channel::new(c).unwrap())
+                .and_then(|s| s.image.map(|i| (i.version, s.complete)))
+        };
+        let late = table + fed - Duration::from_secs(1);
+        forger(&mut r, late);
+        assert_eq!(named(&r, 7, late), Some((2, 3)), "it names the release");
+        assert_eq!(named(&r, 5, late), Some((9, 1)), "but to the forger");
+        assert_eq!(r.spread.streams(), Some(image(2)), "and streams it");
+        // The junk fed nothing: a real older release, once the table is
+        // fed_within old, and the forged image is held off while it is fed.
+        assert!(!offers(&mut r, 3, late));
+        assert!(offers(&mut r, 3, table + fed), "an older real release");
+        r.gather(image(3), 0, table + fed);
+        r.spread
+            .block_done(0, true, table + fed + Duration::from_secs(60));
+        assert!(!offers(&mut r, 9, table + fed + Duration::from_secs(120)));
+        // A newer real release takes the forged gather's place at once.
+        let mut r = relay();
+        assert!(offers(&mut r, 10, table + Duration::from_secs(60)));
+    }
+
     /// A fed older gather holds the newer it left off, for as long as it
     /// is fed, up to [`unproven_within`]: a section that names a newer
     /// version nobody holds cannot take a node from an image it is being
@@ -1639,7 +1795,7 @@ mod tests {
     fn a_fed_older_gather_holds_the_newer_off() {
         let image = |version| Image {
             version,
-            blocks: 3,
+            blocks: 48,
             last: 7,
             key: 1,
         };
@@ -1652,13 +1808,14 @@ mod tests {
         r.gather(image(9), 0, t0);
         assert!(offers(&mut r, 2, left));
         r.gather(image(2), 0, left);
-        // A piece of the older at half the bound each time, past the
-        // bound; the newer is offered each time just before the next.
-        let step = Duration::from_micros(fed.as_micros() / 2);
+        // A block of the older passes, not yet its proof, nine tenths of
+        // [`fed_within`] apart, past the bound; the newer is offered each
+        // time just before the next.
+        let step = Duration::from_micros(fed.as_micros() * 9 / 10);
         let mut t = left;
-        let mut index = 0;
+        let mut index = 2;
         while t + step < left + bound {
-            feed(&mut r, 2, index, t);
+            r.spread.block_done(index, true, t);
             index += 1;
             assert!(
                 !offers(&mut r, 9, t + step - Duration::from_secs(1)),
@@ -1823,6 +1980,65 @@ mod tests {
         // Its pieces show: it stands back again.
         hear(&mut r, gatherer, told(1, 3), stalled);
         assert!(!served(&r, stalled), "progress");
+    }
+
+    /// A relay that holds one image whole and gathers a newer one not yet
+    /// proven names the one it holds, which it streams, but on its
+    /// helper's home channel the one it gathers; once that is proven, it
+    /// names that everywhere (spec "Updates over the mesh").
+    #[test]
+    fn a_relay_names_what_it_holds_until_its_gather_is_proven() {
+        use crate::position::Position;
+        use crate::wire::Heartbeat;
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            ..Config::default()
+        };
+        let mut r = crate::Relay::new(config, 1);
+        let t0 = Instant::ZERO + Duration::from_secs(2);
+        let image = |version| Image {
+            version,
+            blocks: 4,
+            last: 7,
+            key: 0,
+        };
+        r.holds_image(image(2), t0);
+        r.gather(image(3), 0, t0);
+        let me = r.config.position;
+        let at = Position {
+            lat: me.lat + 5_000,
+            ..me
+        };
+        let hb = Heartbeat {
+            sleepy: false,
+            anchorless: false,
+            carried: false,
+            home: Channel::new(5).unwrap(),
+            format: crate::wire::FORMAT,
+            map_point: false,
+            leaving: false,
+            id: NodeId::from_u64(7),
+            short: at.short(),
+        };
+        let plane = r.plane;
+        r.neighbours.heard(&hb, at, -80, &plane, t0);
+        let holder = Section {
+            runs: 2,
+            image: Some(image(3)),
+            complete: 4,
+            have: 0,
+        };
+        r.neighbours.section_heard(hb.id, holder, t0);
+        let named = |r: &crate::Relay, c: u8| {
+            r.heartbeat_section(t0, Channel::new(c).unwrap())
+                .and_then(|s| s.image.map(|i| (i.version, s.complete)))
+        };
+        assert_eq!(named(&r, 5), Some((3, 0)), "to its helper, the gather");
+        assert_eq!(named(&r, 7), Some((2, 4)), "elsewhere, what it holds");
+        r.spread.block_done(0, true, t0);
+        r.spread.block_done(1, true, t0);
+        assert_eq!(named(&r, 7), Some((3, 2)), "proven, the gather");
     }
 
     /// Whether this node streams to `n`, worked out alone, as

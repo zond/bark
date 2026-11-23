@@ -188,8 +188,8 @@ pub const SWEEP_PIECES: u64 = {
 
 const _: () = assert!(SWEEP_PIECES == 3763);
 
-/// How long a node gathers an image unproven without taking a piece of
-/// it, from the moment it began, before it gives it up: a section can
+/// How long a node gathers an image unproven without being fed, from
+/// the moment it began, before it gives it up: a section can
 /// name an image nobody holds, again and again. It is also how long it
 /// then takes no offer of that version, or of one whose proof failed, so
 /// that such sections keep a node at most half of its time; and the
@@ -214,7 +214,8 @@ pub const fn unproven_within(config: &crate::Config) -> Duration {
     )
 }
 
-/// How long a gather goes without a piece before another offer may take
+/// How long a gather goes unfed, as spec "Updates over the mesh" says
+/// it is fed, before another offer may take
 /// its place: an unproven one an older image's, a proven one a newer
 /// image's; and before a newer image it was taken in place of is no
 /// longer held off. A holder that offered it tells its section again at least
