@@ -56,6 +56,16 @@ fn bit(c: Channel) -> u16 {
     1 << c.index()
 }
 
+/// A version the node takes no offer of until a time.
+#[derive(Clone, Copy, Debug)]
+struct Hold {
+    version: u32,
+    until: Instant,
+    /// It was left unfed for an older image: held off only while the
+    /// node's gather of an older image is fed ([`Spread::held_off`]).
+    left: bool,
+}
+
 /// What a node that gathers an image keeps.
 #[derive(Clone, Copy, Debug)]
 struct Gather {
@@ -121,7 +131,7 @@ pub(super) struct Spread {
     gather: Option<Gather>,
     /// Versions offered no more until a time: given up unproven, left
     /// unproven for another, or refused by the driver.
-    held_off: [Option<(u32, Instant)>; HELD_OFF],
+    held_off: [Option<Hold>; HELD_OFF],
     /// The last channels it sent a piece on, and when: the only ones that
     /// can still be within their pace, since a pace holds at most this
     /// many.
@@ -460,11 +470,11 @@ impl Spread {
         if usize::from(image.blocks) > MAX_BLOCKS {
             return;
         }
-        // An unproven image left for an older one is held off, or the two
-        // would take turns.
+        // An unproven image left for an older one is held off while the
+        // older is fed, or the two would take turns.
         if let Some(old) = self.gather.filter(|g| !g.proven()) {
             if old.image.version > image.version {
-                self.hold_off(config, old.image.version, now);
+                self.hold_off(config, old.image.version, true, now);
             }
         }
         let mut g = Gather {
@@ -516,7 +526,7 @@ impl Spread {
     /// no offer of it for [`unproven_within`].
     pub(super) fn rejected(&mut self, config: &Config, version: u32, now: Instant) {
         self.drop_gather(version, now);
-        self.hold_off(config, version, now);
+        self.hold_off(config, version, false, now);
     }
 
     /// When the gather, if unproven, is given up.
@@ -537,35 +547,49 @@ impl Spread {
         };
         let version = g.image.version;
         self.drop_gather(version, now);
-        self.hold_off(config, version, now);
+        self.hold_off(config, version, false, now);
         emit(Action::Unproven(version));
     }
 
-    fn hold_off(&mut self, config: &Config, version: u32, now: Instant) {
+    /// It takes no offer of `version` for [`unproven_within`]; if it was
+    /// `left` unfed for an older image, only while that is fed.
+    fn hold_off(&mut self, config: &Config, version: u32, left: bool, now: Instant) {
         let until = now + unproven_within(config);
         let slot = self
             .held_off
             .iter()
-            .position(|h| h.is_none_or(|(v, end)| v == version || end <= now))
+            .position(|h| h.is_none_or(|h| h.version == version || h.until <= now))
             .unwrap_or_else(|| {
-                let first = self.held_off.iter().flatten().map(|h| h.1).min();
+                let first = self.held_off.iter().flatten().map(|h| h.until).min();
                 self.held_off
                     .iter()
-                    .position(|h| h.map(|h| h.1) == first)
+                    .position(|h| h.map(|h| h.until) == first)
                     .unwrap_or(0)
             });
-        self.held_off[slot] = Some((version, until));
+        self.held_off[slot] = Some(Hold {
+            version,
+            until,
+            left,
+        });
         // Offered again once the hold-off ends.
         if self.offered == Some(version) {
             self.offered = None;
         }
     }
 
-    fn held_off(&self, version: u32, now: Instant) -> bool {
+    /// Whether it takes no offer of `version` now. One left unfed for an
+    /// older image is held off only while its gather of an older image has
+    /// taken a piece within [`fed_within`]: once that one starves too, or
+    /// is given up or held whole, the newer may be served after all, and
+    /// a fed gather still keeps its place against a claim nobody serves.
+    fn held_off(&self, config: &Config, version: u32, now: Instant) -> bool {
+        let older_fed = self
+            .gather
+            .is_some_and(|g| g.image.version < version && now < g.fed + fed_within(config));
         self.held_off
             .iter()
             .flatten()
-            .any(|&(v, end)| v == version && now < end)
+            .any(|h| h.version == version && now < h.until && (!h.left || older_fed))
     }
 
     /// A heartbeat carried `section` (spec "Updates over the mesh"): an
@@ -598,7 +622,7 @@ impl Spread {
         if self.offered == Some(image.version)
             || self.own.is_some_and(|o| image.version <= o.version)
             || usize::from(image.blocks) > MAX_BLOCKS
-            || self.held_off(image.version, now)
+            || self.held_off(v.config, image.version, now)
         {
             return;
         }
@@ -1482,6 +1506,7 @@ mod tests {
             got
         };
         let gather = |r: &mut crate::Relay, version, from| r.gather(image(version), from, start);
+        let held_off = |r: &crate::Relay, version, now| r.spread.held_off(&r.config, version, now);
         // Only a holder of blocks 0 and 1 offers.
         let lacking = Section {
             complete: 1,
@@ -1495,7 +1520,7 @@ mod tests {
         assert_eq!(offered(&mut r, holder(10), start), Some(10));
         gather(&mut r, 10, 0);
         assert_eq!(offered(&mut r, holder(5), unfed), Some(5));
-        gather(&mut r, 5, 0);
+        r.gather(image(5), 0, unfed);
         assert_eq!(offered(&mut r, holder(10), unfed), None, "held off");
         // Proven: nothing while fed, a newer one once unfed.
         gather(&mut r, 6, 2);
@@ -1504,9 +1529,128 @@ mod tests {
         assert_eq!(offered(&mut r, holder(7), unfed), Some(7));
         // Leaving a gather for a newer one holds nothing off.
         gather(&mut r, 7, 0);
-        assert!(!r.spread.held_off(6, start) && !r.spread.held_off(9, start));
-        assert!(r.spread.held_off(10, start));
-        assert!(!r.spread.held_off(10, start + unproven_within(&r.config)));
+        assert!(!held_off(&r, 6, start) && !held_off(&r, 9, start));
+        assert!(held_off(&r, 10, start), "while the older 7 is fed");
+    }
+
+    /// `r` hears piece `index` of block 1 of the image of `version`, which
+    /// it gathers, at `now`.
+    fn feed(r: &mut crate::Relay, version: u32, index: u8, now: Instant) {
+        let v = view!(r);
+        let bytes = [0; PIECE_BYTES];
+        let piece = Update::Piece {
+            version,
+            block: 1,
+            index,
+            bytes: &bytes,
+        };
+        r.spread.update_heard(&v, piece, now, &mut |_| {});
+    }
+
+    /// Whether a holder's section naming `version`, heard at `now`, makes
+    /// `r` offer it to its driver.
+    fn offers(r: &mut crate::Relay, version: u32, now: Instant) -> bool {
+        let section = Section {
+            runs: 1,
+            image: Some(Image {
+                version,
+                blocks: 3,
+                last: 7,
+                key: 1,
+            }),
+            complete: 2,
+            have: 0,
+        };
+        let mut got = false;
+        let v = view!(r);
+        r.spread.section_heard(&v, section, true, now, &mut |a| {
+            got |= matches!(a, Action::Offered(i) if i.version == version);
+        });
+        got
+    }
+
+    /// An unproven gather of a newer image, left unfed for an older one,
+    /// is taken again once the older has itself gone unfed for
+    /// [`fed_within`], or is held whole: a node does not sit on an image
+    /// nobody serves while it refuses the newer its neighbours hold
+    /// (spec "Updates over the mesh").
+    #[test]
+    fn a_version_left_for_an_older_one_is_taken_once_that_starves() {
+        let image = |version| Image {
+            version,
+            blocks: 3,
+            last: 7,
+            key: 1,
+        };
+        let config = Config::default();
+        let fed = fed_within(&config);
+        let t0 = Instant::ZERO + Duration::from_secs(10);
+        let left = t0 + fed;
+        let mut r = crate::Relay::new(config, 1);
+        r.gather(image(3), 0, t0);
+        assert!(offers(&mut r, 2, left), "the newer starved: the older");
+        r.gather(image(2), 0, left);
+        assert!(!offers(&mut r, 3, left), "held off");
+        // A piece of the older renews its hold.
+        let piece = left + fed - Duration::from_secs(60);
+        feed(&mut r, 2, 0, piece);
+        assert!(!offers(&mut r, 3, left + fed), "the older fed");
+        assert!(!offers(&mut r, 3, piece + fed - Duration::from_secs(1)));
+        assert!(offers(&mut r, 3, piece + fed), "the older starved too");
+        // Taken again, the newer holds nothing off: it was not left for an
+        // older one.
+        r.gather(image(3), 0, piece + fed);
+        assert!(!r.spread.held_off(&r.config, 2, piece + fed));
+        // The older held whole ends the hold at once.
+        let mut r = crate::Relay::new(config, 1);
+        r.gather(image(3), 0, t0);
+        assert!(offers(&mut r, 2, left));
+        r.gather(image(2), 0, left);
+        let whole = left + Duration::from_secs(600);
+        assert!(!offers(&mut r, 3, whole));
+        r.holds_image(image(2), whole);
+        assert!(offers(&mut r, 3, whole), "the older held whole");
+    }
+
+    /// A fed older gather holds the newer it left off, for as long as it
+    /// is fed, up to [`unproven_within`]: a section that names a newer
+    /// version nobody holds cannot take a node from an image it is being
+    /// served (spec "Updates over the mesh").
+    #[test]
+    fn a_fed_older_gather_holds_the_newer_off() {
+        let image = |version| Image {
+            version,
+            blocks: 3,
+            last: 7,
+            key: 1,
+        };
+        let config = Config::default();
+        let fed = fed_within(&config);
+        let bound = unproven_within(&config);
+        let t0 = Instant::ZERO + Duration::from_secs(10);
+        let left = t0 + fed;
+        let mut r = crate::Relay::new(config, 1);
+        r.gather(image(9), 0, t0);
+        assert!(offers(&mut r, 2, left));
+        r.gather(image(2), 0, left);
+        // A piece of the older at half the bound each time, past the
+        // bound; the newer is offered each time just before the next.
+        let step = Duration::from_micros(fed.as_micros() / 2);
+        let mut t = left;
+        let mut index = 0;
+        while t + step < left + bound {
+            feed(&mut r, 2, index, t);
+            index += 1;
+            assert!(
+                !offers(&mut r, 9, t + step - Duration::from_secs(1)),
+                "{t:?}"
+            );
+            t += step;
+        }
+        assert!(
+            offers(&mut r, 9, left + bound),
+            "held off at most the bound"
+        );
     }
 
     /// A helper streams to a gatherer only within the lease since its last

@@ -191,10 +191,10 @@ const _: () = assert!(SWEEP_PIECES == 3763);
 /// How long a node gathers an image unproven without taking a piece of
 /// it, from the moment it began, before it gives it up: a section can
 /// name an image nobody holds, again and again. It is also how long it
-/// then takes no offer of that version, or of one it left unfed for an
-/// older one or whose proof failed, so that such sections keep a node at
-/// most half of its time, and the image that took its place has a whole
-/// bound to be proven. A
+/// then takes no offer of that version, or of one whose proof failed, so
+/// that such sections keep a node at most half of its time; and the
+/// longest it takes none of one it left unfed for an older one, while the
+/// older is fed, so that a fed image has a whole bound to be proven. A
 /// holder sweeps the blocks in order, on two channels at most, and stays
 /// while a neighbour there lacks a block, so a gatherer that comes in
 /// behind its sweep, or elsewhere, waits for a whole sweep, and one more
@@ -216,7 +216,8 @@ pub const fn unproven_within(config: &crate::Config) -> Duration {
 
 /// How long a gather goes without a piece before another offer may take
 /// its place: an unproven one an older image's, a proven one a newer
-/// image's. A holder that offered it tells its section again at least
+/// image's; and before a newer image it was taken in place of is no
+/// longer held off. A holder that offered it tells its section again at least
 /// every [`SECTION_EVERY`], and streams to it on a lease once it hears
 /// that; a lease more rides out a telling lost, 3 600 s + 2 × 195 s +
 /// 872.8 ms = 3 990.9 s at the design's timing
