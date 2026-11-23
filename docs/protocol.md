@@ -2604,8 +2604,9 @@ naming none.
 
 **Who sends what.**
 
-1. A section **offers** the image it names only if its sender holds the
-   image's proof, and to a sleepy node only if it is its anchor. A node
+1. A section **offers** the image it names only if its sender is a relay,
+   since a sleepy node serves nothing, and holds the image's proof, and to
+   a sleepy node only if it is its anchor. A node
    that hears an offer of a version above the one it runs and the image it
    holds asks its firmware, once, whether its policy takes the image, and
    if it does gathers it.
@@ -2617,7 +2618,7 @@ naming none.
    | an unproven gather | gives way to a newer image at once |
    | a newer image | taken once the gathered one is installed or rejected |
    | an unproven gather that has taken no piece for **104 866 s** (195 s + 2 × 3 763 × 13.86 s + 2 × 195 s + 872.8 ms; `unproven_within`) | given up; the firmware forgets the pieces |
-   | held off | the node takes no offer of a version given up so, left unfed for an older one, or whose proof failed, for 104 866 s |
+   | held off | the node takes no offer of a version given up so, or whose proof failed, for 104 866 s; of one left unfed for an older one, for as long at most, and only while its gather of an older image has taken a piece within 3 990.9 s |
    | at a reboot | a gather not yet proven is forgotten; one proven is proven again |
 
 2. A node that gathers hands its firmware every piece it has not handed
@@ -2727,7 +2728,7 @@ before then swaps the previous image back (roadmap D79).
 | none heard within 3 × 195 s + 872.8 ms = 585.9 s of its start | it resets itself, and the loader swaps the previous image back |
 | the image back | keeps the failed image's version in a page of flash that no copy over USB erases, and never gathers an image of that version again. The page holds 1 024 versions; when full it is erased and starts again with the newest |
 
-**What a node keeps** for an update: 1 984 bytes beside the tables, and
+**What a node keeps** for an update: 1 960 bytes beside the tables, and
 16 bytes in each neighbour's entry (`core-interface.md`, Memory).
 
 ## What the protocol omits

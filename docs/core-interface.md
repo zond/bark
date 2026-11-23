@@ -310,7 +310,7 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
   it runs or one staged after its signature passed, with its name, version, block
   count, the pieces of its last block and its key; at boot and after each change. The
   core tells it in its heartbeats' section and serves it.
-- `Action::Offered(image)`: a neighbour that holds blocks 0 and 1 of an image named it,
+- `Action::Offered(image)`: a relay that holds blocks 0 and 1 of an image named it,
   above the version the node runs, the image it holds and the one it has proven; once for
   each image, and not while the core holds the version off. The driver answers
   `AppCommand::Gather { image, from }` if its policy takes it, `from` the first block it
@@ -324,7 +324,9 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
   the core gathers it no more and holds the version off for `update::unproven_within`. A
   gather not yet proven that has taken no piece for `update::unproven_within` the core
   gives up with `Action::Unproven(version)`, holds off as well, and the driver forgets its
-  pieces.
+  pieces. One it leaves for an older image, unfed for `update::fed_within`, it holds off
+  for as long at most, and only while its gather of an older image has taken a piece
+  within `update::fed_within`.
 - `Action::StorePiece(piece)`: keep this piece. The core hands pieces of every block
   the node lacks, each once, of an image of at most 48 blocks, so the driver holds at
   most a lane of 64 a block, 48 lanes (`bark-image`, `pieces.rs`). When a
@@ -458,16 +460,16 @@ hold the 546 messages a relay can handle in the 162.9 s a full send queue takes 
 ban per place, plus the 103 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-102 232 B (99.8 KiB): the tables and, in under 1 KiB around them, the
+102 200 B (99.8 KiB): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 a neighbour's status asked or told, 16 B, with two marks in each neighbour's entry that fit
 its padding (roadmap D157),
 and its stored state as handed back and as last kept, 80 B, what it learns of its
 battery's drain, 16 B (spec "Sleepy nodes"), and beside them what it keeps
-of the update, 1 984 B, with 16 B of each neighbour's entry for its heartbeats' section and
+of the update, 1 960 B, with 16 B of each neighbour's entry for its heartbeats' section and
 when it was heard, and the four images the sections name kept once in the table, 48 B (spec
 "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 82 872 B (80.9 KiB), without the heard table and the delivery
+`SleepyNode` is 82 856 B (80.9 KiB), without the heard table and the delivery
 queue, 18.9 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
