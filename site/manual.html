@@ -315,8 +315,8 @@ move around, set a home.</p>
 <p><strong>A home must stay in one place, on power, and know its place.</strong> A node
 in your window on a charger is the usual choice.</p>
 <figure class="anim">
-<canvas id="a-home" role="img" aria-label="Messages from a friend wait at a home node. A request from a phone far away travels to the home, and the messages travel back to the phone."></canvas>
-<figcaption>Messages wait at your home. When you fetch, the request travels to your home and the messages come back to the node you are on.</figcaption>
+<canvas id="a-home" role="img" aria-label="A message from a friend waits at a home node. A request from a phone far away travels to the home, and the message travels back to the phone. The reply goes straight to the friend's node, not through the home."></canvas>
+<figcaption>Messages wait at your home. When you fetch, the request travels to your home and the messages come back to the node you are on. Your reply goes straight to the node your friend wrote from.</figcaption>
 </figure>
 <ul>
 <li><strong>Set it:</strong> connect to the node, then <strong>Settings</strong>, <strong>Home node</strong>,
@@ -612,21 +612,22 @@ scene('a-route', 10, 2.6, (g, t) => {
 });
 
 // Mail waits at the home; a fetch goes there and the mail comes back to
-// where the person is.
-scene('a-home', 16, 5, (g, t) => {
-  const H = [60, 105], F = [140, 170], r1 = [150, 70], r2 = [240, 115], r3 = [330, 85], Y = [372, 40];
-  links(g, [[H, r1], [r1, r2], [r2, r3], [F, H]]); links(g, [[r3, Y]], true);
-  const m1 = travel(g, t, 1, [F, H]), m2 = travel(g, t, 3, [F, H]);
-  const asked = travel(g, t, 6, [Y, r3, r2, r1, H], true);
-  const back = [H, r1, r2, r3, Y];
-  const b1 = travel(g, t, asked + .3, back), b2 = travel(g, t, asked + .9, back);
-  held(g, H, (t >= m1) + (t >= m2) - (t >= asked + .3) - (t >= asked + .9));
-  [H, F, r1, r2, r3].forEach(p => relay(g, p));
+// where the person is; the reply goes straight to the node the friend
+// wrote from, not by way of the home.
+scene('a-home', 17, 13.2, (g, t) => {
+  const H = [60, 75], F = [105, 160], r1 = [150, 50], r2 = [240, 80], r3 = [330, 95], r4 = [225, 150], Y = [372, 45];
+  links(g, [[H, r1], [r1, r2], [r2, r3], [F, H], [F, r4], [r4, r3]]); links(g, [[r3, Y]], true);
+  const kept = travel(g, t, 1, [F, H]);
+  const asked = travel(g, t, 3.5, [Y, r3, r2, r1, H], true);
+  const got = travel(g, t, asked + .3, [H, r1, r2, r3, Y]);
+  const answered = travel(g, t, got + 1, [Y, r3, r4, F]);
+  held(g, H, (t >= kept) - (t >= asked + .3));
+  [H, r1, r2, r3, r4].forEach(p => relay(g, p)); relay(g, F, t >= answered && t < answered + 1.5);
   g.strokeStyle = GREY; g.lineWidth = 1.5;
   g.beginPath(); g.moveTo(H[0] - 11, H[1] - 7); g.lineTo(H[0], H[1] - 17); g.lineTo(H[0] + 11, H[1] - 7); g.stroke();
-  phone(g, Y, t >= b1 && t < b2 + 1.5 ? RED : GREY);
+  phone(g, Y, t >= got && t < got + 1 ? RED : GREY);
   label(g, [H[0], H[1] - 24], 'your home'); label(g, [Y[0] - 22, Y[1] + 4], 'you');
-  label(g, [F[0] + 34, F[1] + 4], 'a friend');
+  label(g, [F[0], F[1] + 22], 'a friend');
 });
 
 // A new version from a phone to one node and on from node to node, in

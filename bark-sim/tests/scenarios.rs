@@ -209,8 +209,9 @@ fn capacity_scenario_runs_a_minute_quickly() {
     // "A few seconds" on an optimised build, and the minute is all boot
     // listen, in which each of the 20 000 sleepy nodes sweeps thirteen
     // channels a second; unoptimised test builds are several times
-    // slower, so the bound is looser there.
-    let limit = if cfg!(debug_assertions) { 90.0 } else { 20.0 };
+    // slower, so the bound is looser there: CI's runners take 80 to 90 s,
+    // and a busy one a little more.
+    let limit = if cfg!(debug_assertions) { 100.0 } else { 20.0 };
     assert!(
         total.as_secs_f64() < limit,
         "took {:.2} s",
