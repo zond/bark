@@ -350,15 +350,22 @@ impl Spread {
         if self.serves_sleepy(v, now, channel) {
             return self.streamed(version);
         }
-        let due = self.rotation_due(version, now)
-            || self.section_to & bit(channel) != 0
-            || self.restates_on(v, now) == Some(channel);
-        self.section(version).filter(|_| due)
+        let restates = self.restates_on(v, now) == Some(channel);
+        let due =
+            self.rotation_due(version, now) || self.section_to & bit(channel) != 0 || restates;
+        match due {
+            false => None,
+            // Its helper hears what it gathers; the rest what it streams,
+            // the image it holds whole while the one it gathers is not
+            // proven, or they would take it for holding nothing.
+            true if restates || v.sleepy => self.section(version),
+            true => self.streamed(version),
+        }
     }
 
     /// Its section as the image it streams names it: the image it holds
-    /// whole in place of a gather not yet proven, which its sleepy nodes
-    /// could take nothing of.
+    /// whole in place of a gather not yet proven, of which its neighbours
+    /// could take nothing.
     fn streamed(&self, version: u32) -> Option<Section> {
         match (self.gather, self.own) {
             (Some(g), Some(own)) if !g.proven() => Some(Section {
@@ -1823,6 +1830,65 @@ mod tests {
         // Its pieces show: it stands back again.
         hear(&mut r, gatherer, told(1, 3), stalled);
         assert!(!served(&r, stalled), "progress");
+    }
+
+    /// A relay that holds one image whole and gathers a newer one not yet
+    /// proven names the one it holds, which it streams, but on its
+    /// helper's home channel the one it gathers; once that is proven, it
+    /// names that everywhere (spec "Updates over the mesh").
+    #[test]
+    fn a_relay_names_what_it_holds_until_its_gather_is_proven() {
+        use crate::position::Position;
+        use crate::wire::Heartbeat;
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            ..Config::default()
+        };
+        let mut r = crate::Relay::new(config, 1);
+        let t0 = Instant::ZERO + Duration::from_secs(2);
+        let image = |version| Image {
+            version,
+            blocks: 4,
+            last: 7,
+            key: 0,
+        };
+        r.holds_image(image(2), t0);
+        r.gather(image(3), 0, t0);
+        let me = r.config.position;
+        let at = Position {
+            lat: me.lat + 5_000,
+            ..me
+        };
+        let hb = Heartbeat {
+            sleepy: false,
+            anchorless: false,
+            carried: false,
+            home: Channel::new(5).unwrap(),
+            format: crate::wire::FORMAT,
+            map_point: false,
+            leaving: false,
+            id: NodeId::from_u64(7),
+            short: at.short(),
+        };
+        let plane = r.plane;
+        r.neighbours.heard(&hb, at, -80, &plane, t0);
+        let holder = Section {
+            runs: 2,
+            image: Some(image(3)),
+            complete: 4,
+            have: 0,
+        };
+        r.neighbours.section_heard(hb.id, holder, t0);
+        let named = |r: &crate::Relay, c: u8| {
+            r.heartbeat_section(t0, Channel::new(c).unwrap())
+                .and_then(|s| s.image.map(|i| (i.version, s.complete)))
+        };
+        assert_eq!(named(&r, 5), Some((3, 0)), "to its helper, the gather");
+        assert_eq!(named(&r, 7), Some((2, 4)), "elsewhere, what it holds");
+        r.spread.block_done(0, true);
+        r.spread.block_done(1, true);
+        assert_eq!(named(&r, 7), Some((3, 2)), "proven, the gather");
     }
 
     /// Whether this node streams to `n`, worked out alone, as

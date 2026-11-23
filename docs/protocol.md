@@ -2615,7 +2615,10 @@ While a relay gathers, every heartbeat it sends on the home channel of its
 it last took a piece from; before its first piece, the best holder it
 hears. A piece does not name its sender: the node takes for it a relay it
 hears that holds that block, one at home on its own channel, else the one
-that holds the most blocks from the first, then the lowest ID. A sleepy
+that holds the most blocks from the first, then the lowest ID. While a
+relay gathers an image not yet proven and holds another whole, its
+sections name the one it holds, which it streams, but those on its
+helper's home channel name the one it gathers. A sleepy
 node's beats carry the section for one beat after a change, in every beat
 while it gathers, and in one an hour.
 
