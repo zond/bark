@@ -700,7 +700,7 @@ class Session extends ChangeNotifier {
     await save(state: true);
   }
 
-  void _badValue(Object e) => _tell((w) => w.sessionBadValue('$e'));
+  void _badValue(Object e) => _tell((w) => w.sessionBadValue(said(e, w)));
 
   /// Tells the person `s` in the notice, and logs it, or `log` in its
   /// place: the log stays English, as a fault report carries it.
@@ -774,7 +774,7 @@ class Session extends ChangeNotifier {
       _onStatus(await link.readStatus());
       _onGivenBack(await link.readGivenBack());
     } catch (e) {
-      _tell((w) => w.sessionReadFailed('$e'));
+      _tell((w) => w.sessionReadFailed(said(e, w)));
     }
     if (guest) {
       guestRead = await _readGuest(link, n);
@@ -896,7 +896,7 @@ class Session extends ChangeNotifier {
     await link.close();
     final name = nodeName(n.id);
     nodes.of(name).unserved = true;
-    tell(notServedLine(n), about: name);
+    tell(notServedLine(n), about: name, log: notServedLine(n, english));
   }
 
   Future<void> _readPublic(NodeLink link) async {
@@ -912,8 +912,10 @@ class Session extends ChangeNotifier {
   /// The link, if the paired phone's.
   NodeLink _owned(String what) {
     final link = _link;
-    if (link == null || node == null) throw NotOwned(tr.sessionNotConnected);
-    if (guest) throw NotOwned(tr.sessionPairedOnly(what));
+    if (link == null || node == null) {
+      throw NotOwned((w) => w.sessionNotConnected);
+    }
+    if (guest) throw NotOwned((w) => w.sessionPairedOnly(what));
     return link;
   }
 
@@ -1571,7 +1573,7 @@ class Session extends ChangeNotifier {
     } catch (e) {
       o.state = OutState.queued;
       again = false;
-      _tell((w) => w.sessionSendFailed('$e'));
+      _tell((w) => w.sendFailed(said(e, w)));
     } finally {
       _writing = false;
     }
@@ -1597,12 +1599,12 @@ class Session extends ChangeNotifier {
         } on AttException catch (e) {
           // The oldest is the one just read, so the node should not
           // refuse its ID; stop rather than read it in a loop.
-          _tell((w) => w.sessionConfirmRefused('$e'));
+          _tell((w) => w.sessionConfirmRefused(said(e, w)));
           break;
         }
       }
     } catch (e) {
-      _tell((w) => w.sessionInboxFailed('$e'));
+      _tell((w) => w.sessionInboxFailed(said(e, w)));
     } finally {
       _draining = false;
       notifyListeners();
@@ -1628,7 +1630,7 @@ class Session extends ChangeNotifier {
       await link.setMapPoint(p);
       note('Map point: ${p ?? 'cleared'}');
     } catch (e) {
-      _tell((w) => w.sessionPlaceFailed('$e'));
+      _tell((w) => w.sessionPlaceFailed(said(e, w)));
     }
   }
 
@@ -1667,9 +1669,14 @@ String describeTime(NodeTime t, [AppLocalizations? words]) {
 
 /// Why the node was not asked for something only its paired phone may
 /// ask: said to the person as it is, after what failed.
-class NotOwned extends StateError {
-  NotOwned(super.message);
+class NotOwned extends StateError implements Spoken {
+  final String Function(AppLocalizations) _why;
+  NotOwned(String Function(AppLocalizations) why)
+    : _why = why,
+      super(why(english));
 
+  @override
+  String words(AppLocalizations w) => _why(w);
   @override
   String toString() => message;
 }

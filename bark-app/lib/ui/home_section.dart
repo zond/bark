@@ -103,7 +103,7 @@ class HomeSection extends StatelessWidget {
               onPressed: () => trySay(context, () async {
                 final r = await app.mailbox.clearKey();
                 if (context.mounted) say(context, r);
-              }, 'Failed'),
+              }, (e) => 'Failed: $e'),
               child: const Text('Forget me here'),
             ),
           if (home == null && app.mailbox.tried?.over != false)
@@ -164,7 +164,7 @@ class HomeSection extends StatelessWidget {
           onPressed: () => trySay(context, () async {
             final r = await app.mailbox.askList();
             if (context.mounted) say(context, r);
-          }, 'Asking failed'),
+          }, (e) => 'Asking failed: $e'),
           child: Text(rs == null ? 'Show them' : 'Ask again'),
         ),
       ),
@@ -181,7 +181,7 @@ class HomeSection extends StatelessWidget {
     await trySay(context, () async {
       final r = await app.mailbox.tryHome(a);
       if (context.mounted) say(context, r);
-    }, 'Asking failed');
+    }, (e) => 'Asking failed: $e');
   }
 
   /// Makes the node at `a` the home, or none; `pair` for a node the phone
@@ -242,7 +242,7 @@ class HomeSection extends StatelessWidget {
           ? app.mailbox.noHome()
           : app.mailbox.makeHome(a));
       if (context.mounted) say(context, r);
-    }, 'Setting the home failed');
+    }, (e) => 'Setting the home failed: $e');
   }
 
   /// What a home is, for whoever asks.

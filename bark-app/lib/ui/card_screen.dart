@@ -83,9 +83,9 @@ class CardScreen extends StatelessWidget {
             ListTile(
               contentPadding: EdgeInsets.zero,
               title: Text(tr.commonMyName),
-              subtitle: Text(me.name.isEmpty ? tr.cardNameNotSet : me.name),
+              subtitle: Text(me.name.isEmpty ? tr.nameNotSet : me.name),
               trailing: IconButton(
-                tooltip: tr.cardChangeName,
+                tooltip: tr.changeName,
                 icon: const Icon(Icons.edit),
                 onPressed: () => askMyName(context, app),
               ),
@@ -137,7 +137,7 @@ class CardScreen extends StatelessWidget {
       final text = card.toText();
       await app.notifier.share(text, await qrPng(text));
     } catch (e) {
-      if (context.mounted) say(context, tr.cardShareFailed('$e'));
+      if (context.mounted) say(context, tr.cardShareFailed(said(e)));
     }
   }
 

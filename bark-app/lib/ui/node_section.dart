@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
+import '../l10n.dart';
 import '../links.dart' show Linking;
 import '../mailbox.dart' show fullNode;
 import '../ble_link.dart';
@@ -27,15 +28,15 @@ class NodeSection extends StatelessWidget {
   /// node.
   static String _linking(Linking l) => switch (l) {
     Linking.none => '',
-    Linking.connecting => 'Connecting…',
-    Linking.pairing => 'Type the code on the node\'s screen',
-    Linking.paired || Linking.attaching => 'Paired, connecting…',
+    Linking.connecting => tr.nodeConnecting,
+    Linking.pairing => tr.nodeTypeCode,
+    Linking.paired || Linking.attaching => tr.nodePairedConnecting,
   };
 
   List<Widget> _connection(BuildContext context) {
     final s = app.session;
     return [
-      SettingsHeading('Node'),
+      SettingsHeading(tr.nodeHeading),
       if (app.links.connecting)
         Text(_linking(app.links.linking))
       else
@@ -58,7 +59,7 @@ class NodeSection extends StatelessWidget {
           alignment: Alignment.centerLeft,
           child: OutlinedButton(
             onPressed: app.links.disconnect,
-            child: const Text('Disconnect'),
+            child: Text(tr.nodeDisconnect),
           ),
         )
       else if (lookingLine(app) != null)
@@ -66,7 +67,7 @@ class NodeSection extends StatelessWidget {
           alignment: Alignment.centerLeft,
           child: TextButton(
             onPressed: app.links.stopLooking,
-            child: const Text('Stop looking'),
+            child: Text(tr.nodeStopLooking),
           ),
         )
       else
@@ -76,8 +77,8 @@ class NodeSection extends StatelessWidget {
           FilledButton(
             onPressed: app.links.scanning || app.links.connecting
                 ? app.links.stopScan
-                : () => trySay(context, app.links.scan, 'Scan failed'),
-            child: Text(app.links.scanning ? 'Stop' : 'Scan'),
+                : () => trySay(context, app.links.scan, tr.nodeScanFailed),
+            child: Text(app.links.scanning ? tr.nodeStopScan : tr.nodeScan),
           ),
           const SizedBox(width: 16),
           if (app.links.scanning || app.links.connecting)
@@ -93,11 +94,8 @@ class NodeSection extends StatelessWidget {
       for (final FoundNode n in app.links.found.values) _found(context, n),
       if (app.links.noneFound) ...[
         const SizedBox(height: 8),
-        const Text('No node found nearby.'),
-        Text(
-          'Switch one on, or come closer.',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
+        Text(tr.nodeNoneFound),
+        Text(tr.nodeNoneFoundHow, style: Theme.of(context).textTheme.bodySmall),
       ],
     ];
   }
@@ -121,7 +119,7 @@ class NodeSection extends StatelessWidget {
       Padding(
         padding: const EdgeInsets.only(top: 8),
         child: Text(
-          'Paired with',
+          tr.nodePairedWith,
           style: Theme.of(context).textTheme.titleSmall,
         ),
       ),
@@ -166,11 +164,11 @@ class NodeSection extends StatelessWidget {
                         () => app.links.pairLost(n),
                         pairs: true,
                       ),
-                child: const Text('Pair again'),
+                child: Text(tr.pairAgain),
               ),
             TextButton(
               onPressed: () => _askForget(context, n, home: home),
-              child: const Text('Forget'),
+              child: Text(tr.nodeForget),
             ),
           ],
         ),
@@ -178,16 +176,8 @@ class NodeSection extends StatelessWidget {
 
   /// Why `n`, a paired node, does not know this phone, and what each
   /// button does.
-  Future<void> _lostHelp(BuildContext context, String n) => showHelp(
-    context,
-    '${shownName(n)} does not know this phone',
-    'Someone paired with it removed this phone, the node lost its memory, '
-        'or you moved here from another phone: a pairing stays on the phone '
-        'it was made on.\n\n'
-        'Pair again: pair anew with the code on its screen. Shown while the '
-        'node is in reach.\n\n'
-        'Forget: stop listing the node here.',
-  );
+  Future<void> _lostHelp(BuildContext context, String n) =>
+      showHelp(context, tr.nodeLostTitle(shownName(n)), tr.nodeLostHelp);
 
   /// How a paired node stands, in words. A paired node the search hears
   /// it connects to, so one not connected while it looks is out of reach,
@@ -195,21 +185,17 @@ class NodeSection extends StatelessWidget {
   /// another node the search stops and cannot tell.
   String _pairedState(String n, {required bool home, required bool on}) {
     final r = app.session.nodes[n];
-    return capital(
-      [
-        if (home) 'your home',
-        if (on)
-          'connected'
-        else if (r?.lost ?? false)
-          'does not know this phone'
-        else if (r?.unserved ?? false)
-          'cannot be used yet. Tap to try again'
-        else if (app.links.searchOn)
-          'not in reach'
-        else if (app.session.stopped)
-          'not looking. Tap to connect',
-      ].join(', '),
-    );
+    return on
+        ? (home ? tr.nodeHomeConnected : tr.nodeConnected)
+        : r?.lost ?? false
+        ? (home ? tr.nodeHomeLost : tr.nodeLost)
+        : r?.unserved ?? false
+        ? (home ? tr.nodeHomeUnserved : tr.nodeUnserved)
+        : app.links.searchOn
+        ? (home ? tr.nodeHomeAway : tr.nodeAway)
+        : app.session.stopped
+        ? (home ? tr.nodeHomeNotLooking : tr.nodeNotLooking)
+        : (home ? tr.nodeYourHome : '');
   }
 
   Widget _found(BuildContext context, FoundNode n) {
@@ -222,10 +208,10 @@ class NodeSection extends StatelessWidget {
       subtitle: Text.rich(
         TextSpan(
           text: [
-            if (app.links.connectedTo(n.deviceId)) 'Connected',
-            if (n.public) 'public',
+            if (app.links.connectedTo(n.deviceId)) tr.nodeConnected,
+            if (n.public) tr.nodeFoundPublic,
             if (app.session.nodes[n.name]?.unserved ?? false)
-              'cannot be used yet',
+              tr.nodeFoundUnserved,
             signalWord(n.rssi),
           ].join(', '),
           children: [
@@ -248,7 +234,7 @@ class NodeSection extends StatelessWidget {
               onPressed: app.links.connecting
                   ? null
                   : () => _askPair(context, n),
-              child: const Text('Pair'),
+              child: Text(tr.nodePair),
             )
           : null,
     );
@@ -264,19 +250,16 @@ class NodeSection extends StatelessWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Pair with ${shownName(n.name)}?'),
-        content: const Text(
-          'You can then change its settings and update it. Type the code on '
-          'its screen.',
-        ),
+        title: Text(tr.nodePairTitle(shownName(n.name))),
+        content: Text(tr.nodePairHow),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text(tr.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Pair'),
+            child: Text(tr.nodePair),
           ),
         ],
       ),
@@ -293,20 +276,22 @@ class NodeSection extends StatelessWidget {
     String name, {
     required bool home,
   }) async {
-    final stays = home ? ' It stays your home.' : '';
+    // Each part is a whole sentence.
+    String said(List<String> s) =>
+        [s.first, if (home) tr.staysYourHome, ...s.skip(1)].join(' ');
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Forget ${shownName(name)}?'),
-        content: Text('This phone stops listing it.$stays'),
+        title: Text(tr.nodeForgetTitle(shownName(name))),
+        content: Text(said([tr.nodeForgetHow])),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text(tr.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Forget'),
+            child: Text(tr.nodeForget),
           ),
         ],
       ),
@@ -317,22 +302,20 @@ class NodeSection extends StatelessWidget {
       if (!context.mounted) return;
       switch (gone) {
         case true:
-          say(context, 'Forgotten.$stays');
+          say(context, said([tr.nodeForgotten]));
         case false:
           await askToForget(
             context,
             app,
-            'Forgotten.$stays Forget the node in Bluetooth settings too: the '
-            'phone kept its pairing.',
+            said([tr.nodeForgotten, tr.forgetInBluetoothToo]),
           );
         case null:
           await askToForget(
             context,
             app,
-            'Forgotten.$stays The phone drops its pairing when it next hears '
-            'the node, or forget it in Bluetooth settings now.',
+            said([tr.nodeForgotten, tr.nodeForgetLater]),
           );
       }
-    }, 'Forgetting failed');
+    }, tr.nodeForgetFailed);
   }
 }

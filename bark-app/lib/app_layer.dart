@@ -84,11 +84,21 @@ int sentOf(DateTime t) => t.toUtc().difference(sentEpoch).inSeconds;
 DateTime timeOfSent(int sent) => sentEpoch.add(Duration(seconds: sent));
 
 /// Not in this layout, too long, or not opening under the key tried.
-class BadPayload implements Exception {
-  final String why;
-  const BadPayload(this.why);
+class BadPayload implements Exception, Spoken {
+  /// A programmer's words, which stay English.
+  final String? _english;
+  final String Function(AppLocalizations)? _why;
+  const BadPayload(String why) : _english = why, _why = null;
+
+  /// Words a person reads, in each language.
+  const BadPayload.said(String Function(AppLocalizations) why)
+    : _english = null,
+      _why = why;
+
   @override
-  String toString() => why;
+  String words(AppLocalizations w) => _why?.call(w) ?? _english!;
+  @override
+  String toString() => words(english);
 }
 
 /// An identity's keys, all from its 128-bit seed.
@@ -1079,7 +1089,7 @@ List<String> splitText(String text, int room) {
       (n1251, nUtf8) = (b1251, bUtf8);
       end++;
     }
-    if (end == i) throw BadPayload(tr.sendCharTooLong);
+    if (end == i) throw BadPayload.said((w) => w.sendCharTooLong);
     if (end < cs.length) {
       for (var j = end - 1; j >= end - (end - i) ~/ 4 && j > i; j--) {
         if (cs[j].trim().isEmpty) {

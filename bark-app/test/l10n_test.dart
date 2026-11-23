@@ -6,6 +6,8 @@ import 'dart:io';
 import 'dart:ui';
 
 import 'package:bark_app/l10n.dart';
+import 'package:bark_app/l10n/app_localizations.dart';
+import 'package:bark_app/node_link.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Map<String, dynamic> _arb(String language) =>
@@ -54,4 +56,15 @@ void main() {
     speak(const Locale('uk'));
     expect(tr.conversationsArchived(3), '3 в архіві');
   });
+
+  test(
+    'an error says itself in the language asked, and stays English in the log',
+    () {
+      final sv = lookupAppLocalizations(const Locale('sv'));
+      expect(said(const AttException(0x13), sv), 'ATT-fel 0x13');
+      expect('${const AttException(0x13)}', 'ATT error 0x13');
+      expect(said(const NotPaired(), sv), startsWith('Inte parkopplad'));
+      expect('${const NotPaired()}', startsWith('Not paired: cancelled'));
+    },
+  );
 }

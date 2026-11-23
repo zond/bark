@@ -9,7 +9,6 @@ import 'package:sodium/sodium.dart';
 import 'app_layer.dart';
 import 'card.dart';
 import 'contacts.dart';
-import 'l10n.dart';
 import 'link.dart';
 import 'me.dart';
 import 'session.dart';
@@ -61,7 +60,7 @@ class Messenger {
     final card = me.card;
     final here = me.nodeAddress;
     if (!c.hasMine && card.home == null && here == null) {
-      throw BadPayload(tr.sendNoReturnAddress);
+      throw BadPayload.said((w) => w.sendNoReturnAddress);
     }
     sent ??= await me.nextSent();
     final withAddress = _withAddress(c);
@@ -108,10 +107,10 @@ class Messenger {
   /// if one message does not hold it.
   Future<void> sendText(Contact c, String text, {Toward? toward}) async {
     final t = toward ?? c.unasked(now());
-    if (t == null) throw BadPayload(tr.sendNoAddress(c.name));
+    if (t == null) throw BadPayload.said((w) => w.sendNoAddress(c.name));
     final parts = partsOf(c, text);
     final n = parts.length;
-    if (n > maxParts) throw BadPayload(tr.sendTooLong(n, maxParts));
+    if (n > maxParts) throw BadPayload.said((w) => w.sendTooLong(n, maxParts));
     final first = await me.nextSents(n);
     final dst = c.addressOf(t);
     for (final (i, part) in parts.indexed) {
@@ -189,7 +188,7 @@ class Messenger {
   /// Gives `c` the person's home `h`, with the key made for them there.
   Future<void> sendHome(Contact c, SharedHome h) async {
     final t = c.unasked(now());
-    if (t == null) throw BadPayload(tr.sendNoAddress(c.name));
+    if (t == null) throw BadPayload.said((w) => w.sendNoAddress(c.name));
     final dst = c.addressOf(t);
     final (p, sent) = await _seal(c, dst, [HomeRecord(h.home, h.key)]);
     await session.queue(

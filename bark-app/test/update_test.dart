@@ -454,7 +454,7 @@ void main() {
         u.send();
         async.flushMicrotasks();
         expect(u.phase, Phase.staged);
-        expect(u.message, contains(Refusal.battery.why));
+        expect(u.message, contains(Refusal.battery.why()));
         node.lowBattery = false;
         u.commit();
         async.flushMicrotasks();
@@ -468,7 +468,7 @@ void main() {
         u.send();
         async.flushMicrotasks();
         expect(u.phase, Phase.failed);
-        expect(u.message, contains(Refusal.signature.why));
+        expect(u.message, contains(Refusal.signature.why()));
         expect(node.piecesWritten, 0);
       });
     });
@@ -479,7 +479,7 @@ void main() {
         u.send();
         async.flushMicrotasks();
         expect(u.phase, Phase.failed);
-        expect(u.message, contains(Refusal.version.why));
+        expect(u.message, contains(Refusal.version.why()));
       });
     });
   });

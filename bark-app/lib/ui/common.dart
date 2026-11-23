@@ -342,8 +342,9 @@ class BondKeptLine extends StatelessWidget {
 
 /// What the person reads when pairing with a node the phone uses as a
 /// guest failed for `e`: why, and that the phone goes on as before.
-String notPairedLine(Object e) =>
-    e is NotPaired ? tr.commonNotPaired('$e') : tr.commonPairingFailed('$e');
+String notPairedLine(Object e) => e is NotPaired
+    ? tr.commonNotPaired(said(e))
+    : tr.commonPairingFailed(said(e));
 
 /// While no home is set and the phone uses a public node as a guest that
 /// can be one ([AppModel.offerHome]): makes it the home in one tap,
@@ -382,7 +383,7 @@ class GiftLines extends StatelessWidget {
                             if (context.mounted) say(context, r);
                           } catch (e) {
                             if (context.mounted) {
-                              say(context, tr.commonFailed('$e'));
+                              say(context, tr.commonFailed(said(e)));
                             }
                           }
                         },
@@ -457,7 +458,9 @@ Future<void> openBluetoothSettings(BuildContext context, AppModel app) async {
   try {
     await app.notifier.openBluetoothSettings();
   } catch (e) {
-    if (context.mounted) say(context, tr.commonBluetoothSettingsFailed('$e'));
+    if (context.mounted) {
+      say(context, tr.commonBluetoothSettingsFailed(said(e)));
+    }
   }
 }
 
@@ -582,7 +585,7 @@ class _FetchButtonState extends State<FetchButton> {
           final r = await app.mailbox.fetchNow();
           if (context.mounted) say(context, r);
         } catch (e) {
-          if (context.mounted) say(context, tr.commonFetchFailed('$e'));
+          if (context.mounted) say(context, tr.commonFetchFailed(said(e)));
         }
       },
     );
@@ -611,7 +614,7 @@ class SendCardLine extends StatelessWidget {
             await app.messenger.sendCardToAll();
             if (context.mounted) say(context, tr.commonCardQueued);
           } catch (e) {
-            if (context.mounted) say(context, tr.commonCardFailed('$e'));
+            if (context.mounted) say(context, tr.commonCardFailed(said(e)));
           }
         },
         child: Text(tr.commonSendCard),

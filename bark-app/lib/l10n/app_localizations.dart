@@ -1150,11 +1150,11 @@ abstract class AppLocalizations {
   /// **'Their texts stay; to write again, add their card.'**
   String get threadRemoveHow;
 
-  /// The button that removes a contact, in the dialog that asks.
+  /// A button that removes a contact or a phone's record, in the dialog that asks or on the phone's row.
   ///
   /// In en, this message translates to:
   /// **'Remove'**
-  String get threadRemove;
+  String get remove;
 
   /// No description provided for @threadRemoveContact.
   ///
@@ -1384,11 +1384,11 @@ abstract class AppLocalizations {
   /// **'The node gave back message {id}, which this app did not send.'**
   String sessionGivenBackUnknown(String id);
 
-  /// No description provided for @sessionSendFailed.
+  /// A text, or a command to the home node, could not be sent.
   ///
   /// In en, this message translates to:
   /// **'Sending failed: {error}'**
-  String sessionSendFailed(String error);
+  String sendFailed(String error);
 
   /// No description provided for @sessionConfirmRefused.
   ///
@@ -1540,17 +1540,17 @@ abstract class AppLocalizations {
   /// **'Sharing failed: {error}'**
   String cardShareFailed(String error);
 
-  /// Under My name, when the person has no name yet.
+  /// In place of the person's name, when they have none yet.
   ///
   /// In en, this message translates to:
   /// **'not set'**
-  String get cardNameNotSet;
+  String get nameNotSet;
 
   /// The tooltip of the button that changes the person's name.
   ///
   /// In en, this message translates to:
   /// **'Change'**
-  String get cardChangeName;
+  String get changeName;
 
   /// A section on My card that opens to the card's parts as text.
   ///
@@ -1797,6 +1797,942 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This phone is paired with this node: the node sends your texts into the network, and keeps the ones for you until the app reads them. Only the paired phone sees the node\'s neighbours on this map.'**
   String get factPaired;
+
+  /// The button that closes a dialog that only tells something.
+  ///
+  /// In en, this message translates to:
+  /// **'OK'**
+  String get ok;
+
+  /// The screen of the app's log, and the row in Settings that opens it.
+  ///
+  /// In en, this message translates to:
+  /// **'Debug'**
+  String get debug;
+
+  /// A button: pair anew, by the code on the node's screen, with a node that no longer knows this phone.
+  ///
+  /// In en, this message translates to:
+  /// **'Pair again'**
+  String get pairAgain;
+
+  /// A sentence after one that says a node was unpaired or forgotten: that node is still the person's home node.
+  ///
+  /// In en, this message translates to:
+  /// **'It stays your home.'**
+  String get staysYourHome;
+
+  /// After the app unpaired or forgot a node: Android's own pairing with it is still there. Shown above a button to Bluetooth settings.
+  ///
+  /// In en, this message translates to:
+  /// **'Forget the node in Bluetooth settings too: the phone kept its pairing.'**
+  String get forgetInBluetoothToo;
+
+  /// What a screen reader says when Settings opens scrolled to the backup.
+  ///
+  /// In en, this message translates to:
+  /// **'Backup: write down your 12 words'**
+  String get settingsBackupAnnounce;
+
+  /// A button that sets the node's place to where the phone is.
+  ///
+  /// In en, this message translates to:
+  /// **'Use this phone\'s location'**
+  String get settingsPlaceHere;
+
+  /// Under settingsPlaceHere, once it has set the node's place.
+  ///
+  /// In en, this message translates to:
+  /// **'Place set to {place}.'**
+  String settingsPlaceSet(String place);
+
+  /// The place typed is not two numbers in degrees.
+  ///
+  /// In en, this message translates to:
+  /// **'Latitude and longitude in degrees, please'**
+  String get settingsDegreesPlease;
+
+  /// Under the person's name in Settings.
+  ///
+  /// In en, this message translates to:
+  /// **'On your card, for others to see'**
+  String get settingsNameHow;
+
+  /// Under the row Debug in Settings; the link is the phone's Bluetooth link with the node.
+  ///
+  /// In en, this message translates to:
+  /// **'What the link says, for a bug report'**
+  String get settingsDebugHow;
+
+  /// A heading in Settings: the paired node the phone is connected to, and its own settings.
+  ///
+  /// In en, this message translates to:
+  /// **'This node'**
+  String get settingsThisNode;
+
+  /// The title of a switch: whether the node serves phones that have not paired with it.
+  ///
+  /// In en, this message translates to:
+  /// **'Public'**
+  String get settingsPublic;
+
+  /// Under the switch settingsPublic; it is the node.
+  ///
+  /// In en, this message translates to:
+  /// **'Any phone near it can text through it'**
+  String get settingsPublicHow;
+
+  /// Public is the switch settingsPublic.
+  ///
+  /// In en, this message translates to:
+  /// **'Setting Public failed: {error}'**
+  String settingsPublicFailed(String error);
+
+  /// A button: this phone and the node forget their pairing.
+  ///
+  /// In en, this message translates to:
+  /// **'Unpair'**
+  String get settingsUnpair;
+
+  /// No description provided for @settingsUnpairTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Unpair {node}?'**
+  String settingsUnpairTitle(String node);
+
+  /// The dialog that asks before unpairing; settingsUnpairLast and settingsUnpairOthers may follow it.
+  ///
+  /// In en, this message translates to:
+  /// **'The node and this phone forget each other; texts and contacts stay.'**
+  String get settingsUnpairHow;
+
+  /// It is the node: this phone is the last paired with it.
+  ///
+  /// In en, this message translates to:
+  /// **'With no phone left, it turns public.'**
+  String get settingsUnpairLast;
+
+  /// It is this phone.
+  ///
+  /// In en, this message translates to:
+  /// **'It stays paired with your other nodes.'**
+  String get settingsUnpairOthers;
+
+  /// No description provided for @settingsUnpaired.
+  ///
+  /// In en, this message translates to:
+  /// **'Unpaired.'**
+  String get settingsUnpaired;
+
+  /// No description provided for @settingsUnpairedPublic.
+  ///
+  /// In en, this message translates to:
+  /// **'Unpaired. The node is public.'**
+  String get settingsUnpairedPublic;
+
+  /// No description provided for @settingsUnpairFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Unpairing failed: {error}'**
+  String settingsUnpairFailed(String error);
+
+  /// A heading, and the title of its help (settingsPhonesHelp).
+  ///
+  /// In en, this message translates to:
+  /// **'Phones paired with this node'**
+  String get settingsPhonesPaired;
+
+  /// The help on the node's phones. 'One of them' is one of the phones with a home here.
+  ///
+  /// In en, this message translates to:
+  /// **'A node keeps up to eight phones. Anyone at it can pair, by the code on its screen, and every paired phone can change its settings, so remove a phone you do not know or one that is gone. A removal also takes the code on the node\'s screen, to show you are there.\n\nA phone with a home here has its mail kept at this node.\n\nThe owner, one of them, chooses who has a home here, also from far away: they can give a contact a home here, remove one, or make someone else the owner. The first to make the node their home is its owner. At the node, any paired phone can make another the owner by the code on the screen.'**
+  String get settingsPhonesHelp;
+
+  /// Under settingsPhonesPaired, when the node has as many phones as it can.
+  ///
+  /// In en, this message translates to:
+  /// **'Full: remove one before another can pair.'**
+  String get settingsPhonesFull;
+
+  /// A heading: the phones whose home node this node is.
+  ///
+  /// In en, this message translates to:
+  /// **'Phones with a home here'**
+  String get settingsPhonesHome;
+
+  /// No description provided for @settingsNoOwner.
+  ///
+  /// In en, this message translates to:
+  /// **'This node has no owner'**
+  String get settingsNoOwner;
+
+  /// A button beside settingsNoOwner.
+  ///
+  /// In en, this message translates to:
+  /// **'Become owner'**
+  String get settingsBecomeOwner;
+
+  /// A heading in Settings: whether Android lets the app run with the screen off.
+  ///
+  /// In en, this message translates to:
+  /// **'Battery'**
+  String get settingsBattery;
+
+  /// bark is the app's name, always in lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'bark may run with the screen off.'**
+  String get settingsBatteryExempt;
+
+  /// The link is the app's Bluetooth link with the node.
+  ///
+  /// In en, this message translates to:
+  /// **'With the screen off, Android may close bark\'s link after some hours.'**
+  String get settingsBatteryNotExempt;
+
+  /// A button that asks Android to let the app run with the screen off.
+  ///
+  /// In en, this message translates to:
+  /// **'Let bark run'**
+  String get settingsLetRun;
+
+  /// A heading in Settings: the 12 backup words.
+  ///
+  /// In en, this message translates to:
+  /// **'Backup'**
+  String get settingsBackup;
+
+  /// No description provided for @settingsBackedUp.
+  ///
+  /// In en, this message translates to:
+  /// **'Your 12 words bring your identity back on another phone.'**
+  String get settingsBackedUp;
+
+  /// No description provided for @settingsNotBackedUp.
+  ///
+  /// In en, this message translates to:
+  /// **'Write down your 12 words: a lost phone without them loses your identity.'**
+  String get settingsNotBackedUp;
+
+  /// No description provided for @settingsShowWords.
+  ///
+  /// In en, this message translates to:
+  /// **'Show my words'**
+  String get settingsShowWords;
+
+  /// A button that opens settingsRestoreTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore from words'**
+  String get settingsRestore;
+
+  /// The title of the dialog that shows the backup words.
+  ///
+  /// In en, this message translates to:
+  /// **'My 12 words'**
+  String get settingsMyWords;
+
+  /// The button that closes the dialog of the backup words.
+  ///
+  /// In en, this message translates to:
+  /// **'I wrote them down'**
+  String get settingsWroteThem;
+
+  /// No description provided for @settingsRestoreTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore from words?'**
+  String get settingsRestoreTitle;
+
+  /// No description provided for @settingsRestoreHow.
+  ///
+  /// In en, this message translates to:
+  /// **'This phone takes the identity of the words. Contacts reach it only once they have its card.'**
+  String get settingsRestoreHow;
+
+  /// The button in the dialog settingsRestoreTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore'**
+  String get settingsRestoreButton;
+
+  /// The title of the dialog where the backup words are typed.
+  ///
+  /// In en, this message translates to:
+  /// **'Your 12 words'**
+  String get settingsYourWords;
+
+  /// No description provided for @settingsNotWords.
+  ///
+  /// In en, this message translates to:
+  /// **'Those are not 12 words of a backup'**
+  String get settingsNotWords;
+
+  /// No description provided for @settingsRestored.
+  ///
+  /// In en, this message translates to:
+  /// **'Identity restored'**
+  String get settingsRestored;
+
+  /// A heading: the node's position, from its GPS or set by hand.
+  ///
+  /// In en, this message translates to:
+  /// **'Place'**
+  String get settingsPlace;
+
+  /// No description provided for @settingsNoPlace.
+  ///
+  /// In en, this message translates to:
+  /// **'The node has no place yet.'**
+  String get settingsNoPlace;
+
+  /// The node's place, set by hand in the app.
+  ///
+  /// In en, this message translates to:
+  /// **'Set by a person: {address}.'**
+  String settingsPlaceByPerson(String address);
+
+  /// The node's place, from its own GPS.
+  ///
+  /// In en, this message translates to:
+  /// **'From its GPS: {address}.'**
+  String settingsPlaceByGps(String address);
+
+  /// Under settingsPlace: what a place set by hand is for. It is that place; cleared by the button settingsPlaceClear.
+  ///
+  /// In en, this message translates to:
+  /// **'For a node indoors, out of GPS reach. It wins over GPS until cleared.'**
+  String get settingsPlaceHow;
+
+  /// The label of a field, in degrees.
+  ///
+  /// In en, this message translates to:
+  /// **'Latitude'**
+  String get settingsLatitude;
+
+  /// No description provided for @settingsLongitude.
+  ///
+  /// In en, this message translates to:
+  /// **'Longitude'**
+  String get settingsLongitude;
+
+  /// A button: set the node's place to the latitude and longitude typed.
+  ///
+  /// In en, this message translates to:
+  /// **'Set'**
+  String get settingsPlaceSetButton;
+
+  /// A button: the node's place set by hand goes, and its GPS gives the place again.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear'**
+  String get settingsPlaceClear;
+
+  /// The title of the dialog shown before Android asks to allow notifications.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications'**
+  String get settingsNotifications;
+
+  /// bark is the app's name, always in lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'bark tells you when a text comes. Android asks next.'**
+  String get settingsNotificationsWhy;
+
+  /// No description provided for @settingsPairingFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing failed: {error}'**
+  String settingsPairingFailed(String error);
+
+  /// No description provided for @settingsConnectingFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting failed: {error}'**
+  String settingsConnectingFailed(String error);
+
+  /// The title of the dialog that says why a pairing ended without one.
+  ///
+  /// In en, this message translates to:
+  /// **'Not paired'**
+  String get settingsNotPaired;
+
+  /// The title of a dialog: the node removed this phone.
+  ///
+  /// In en, this message translates to:
+  /// **'This node is no longer yours'**
+  String get settingsNotOurs;
+
+  /// No description provided for @settingsNotOursHow.
+  ///
+  /// In en, this message translates to:
+  /// **'{node} no longer knows this phone. Pair again with the code on its screen.'**
+  String settingsNotOursHow(String node);
+
+  /// No description provided for @nodeConnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting…'**
+  String get nodeConnecting;
+
+  /// While the phone pairs with a node.
+  ///
+  /// In en, this message translates to:
+  /// **'Type the code on the node\'s screen'**
+  String get nodeTypeCode;
+
+  /// No description provided for @nodePairedConnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Paired, connecting…'**
+  String get nodePairedConnecting;
+
+  /// The heading of Settings' section on the node the phone is on.
+  ///
+  /// In en, this message translates to:
+  /// **'Node'**
+  String get nodeHeading;
+
+  /// A button that ends the link with the node; the pairing stays.
+  ///
+  /// In en, this message translates to:
+  /// **'Disconnect'**
+  String get nodeDisconnect;
+
+  /// A button: the phone stops looking for nodes by itself.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop looking'**
+  String get nodeStopLooking;
+
+  /// A button that looks for the nodes nearby.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan'**
+  String get nodeScan;
+
+  /// The button nodeScan while it looks.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop'**
+  String get nodeStopScan;
+
+  /// No description provided for @nodeScanFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan failed: {error}'**
+  String nodeScanFailed(String error);
+
+  /// No description provided for @nodeNoneFound.
+  ///
+  /// In en, this message translates to:
+  /// **'No node found nearby.'**
+  String get nodeNoneFound;
+
+  /// No description provided for @nodeNoneFoundHow.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch one on, or come closer.'**
+  String get nodeNoneFoundHow;
+
+  /// A heading above the nodes this phone is paired with.
+  ///
+  /// In en, this message translates to:
+  /// **'Paired with'**
+  String get nodePairedWith;
+
+  /// A button: this phone stops listing a node it was paired with.
+  ///
+  /// In en, this message translates to:
+  /// **'Forget'**
+  String get nodeForget;
+
+  /// The title of the help on a paired node that removed this phone.
+  ///
+  /// In en, this message translates to:
+  /// **'{node} does not know this phone'**
+  String nodeLostTitle(String node);
+
+  /// The help of nodeLostTitle. Pair again and Forget are the buttons pairAgain and nodeForget.
+  ///
+  /// In en, this message translates to:
+  /// **'Someone paired with it removed this phone, the node lost its memory, or you moved here from another phone: a pairing stays on the phone it was made on.\n\nPair again: pair anew with the code on its screen. Shown while the node is in reach.\n\nForget: stop listing the node here.'**
+  String get nodeLostHelp;
+
+  /// How a node in Settings stands, as a line of its own: the phone is connected to it. Also the first word of a found node's row, before words such as nodeFoundPublic.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected'**
+  String get nodeConnected;
+
+  /// How a paired node stands, under its ID: the person's home, and the phone is connected to it. The other nodeHome… messages are the same for the home.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home, connected'**
+  String get nodeHomeConnected;
+
+  /// How a paired node stands: it removed this phone.
+  ///
+  /// In en, this message translates to:
+  /// **'Does not know this phone'**
+  String get nodeLost;
+
+  /// No description provided for @nodeHomeLost.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home, does not know this phone'**
+  String get nodeHomeLost;
+
+  /// How a paired node stands: it or this app needs an update.
+  ///
+  /// In en, this message translates to:
+  /// **'Cannot be used yet. Tap to try again'**
+  String get nodeUnserved;
+
+  /// No description provided for @nodeHomeUnserved.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home, cannot be used yet. Tap to try again'**
+  String get nodeHomeUnserved;
+
+  /// How a paired node stands: the phone looks for it and does not hear it.
+  ///
+  /// In en, this message translates to:
+  /// **'Not in reach'**
+  String get nodeAway;
+
+  /// No description provided for @nodeHomeAway.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home, not in reach'**
+  String get nodeHomeAway;
+
+  /// How a paired node stands: the phone is not looking for nodes.
+  ///
+  /// In en, this message translates to:
+  /// **'Not looking. Tap to connect'**
+  String get nodeNotLooking;
+
+  /// No description provided for @nodeHomeNotLooking.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home, not looking. Tap to connect'**
+  String get nodeHomeNotLooking;
+
+  /// Under a paired node's ID: it is the person's home.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home'**
+  String get nodeYourHome;
+
+  /// A node found by a scan serves phones that have not paired. Lower case: it is one of a list of words joined by commas, such as nodeConnected, public, signalStrong.
+  ///
+  /// In en, this message translates to:
+  /// **'public'**
+  String get nodeFoundPublic;
+
+  /// As nodeFoundPublic: lower case, in the list of words under a found node.
+  ///
+  /// In en, this message translates to:
+  /// **'cannot be used yet'**
+  String get nodeFoundUnserved;
+
+  /// A button: pair with the node.
+  ///
+  /// In en, this message translates to:
+  /// **'Pair'**
+  String get nodePair;
+
+  /// No description provided for @nodePairTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Pair with {node}?'**
+  String nodePairTitle(String node);
+
+  /// It is the node.
+  ///
+  /// In en, this message translates to:
+  /// **'You can then change its settings and update it. Type the code on its screen.'**
+  String get nodePairHow;
+
+  /// No description provided for @nodeForgetTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Forget {node}?'**
+  String nodeForgetTitle(String node);
+
+  /// It is the node; staysYourHome may follow.
+  ///
+  /// In en, this message translates to:
+  /// **'This phone stops listing it.'**
+  String get nodeForgetHow;
+
+  /// The node was forgotten; staysYourHome, then forgetInBluetoothToo or nodeForgetLater, may follow.
+  ///
+  /// In en, this message translates to:
+  /// **'Forgotten.'**
+  String get nodeForgotten;
+
+  /// The phone is Android, which keeps its own pairing with the node.
+  ///
+  /// In en, this message translates to:
+  /// **'The phone drops its pairing when it next hears the node, or forget it in Bluetooth settings now.'**
+  String get nodeForgetLater;
+
+  /// No description provided for @nodeForgetFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Forgetting failed: {error}'**
+  String nodeForgetFailed(String error);
+
+  /// A button or menu item on a phone's row: that phone's person becomes the home node's owner.
+  ///
+  /// In en, this message translates to:
+  /// **'Make owner'**
+  String get peopleMakeOwner;
+
+  /// Under a phone in the node's list: it is this phone. Lower case, as it is one of a list of words joined by commas; so are the other words of that list, peopleOwner to peopleNeverSeen.
+  ///
+  /// In en, this message translates to:
+  /// **'this phone'**
+  String get peopleThisPhone;
+
+  /// In the list of words under a phone: it is the person's own.
+  ///
+  /// In en, this message translates to:
+  /// **'you'**
+  String get peopleYou;
+
+  /// No description provided for @peopleOwner.
+  ///
+  /// In en, this message translates to:
+  /// **'owner'**
+  String get peopleOwner;
+
+  /// Under a phone in the list of homes: it is paired with this node as well.
+  ///
+  /// In en, this message translates to:
+  /// **'paired too'**
+  String get peoplePairedToo;
+
+  /// Under a phone in the list of paired phones: it has its home here as well.
+  ///
+  /// In en, this message translates to:
+  /// **'has a home here too'**
+  String get peopleHomeToo;
+
+  /// The phone is connected to the node now.
+  ///
+  /// In en, this message translates to:
+  /// **'linked now'**
+  String get peopleLinked;
+
+  /// When the node last saw the phone.
+  ///
+  /// In en, this message translates to:
+  /// **'seen {when}'**
+  String peopleSeen(String when);
+
+  /// The node has not yet seen the phone.
+  ///
+  /// In en, this message translates to:
+  /// **'seen never'**
+  String get peopleNeverSeen;
+
+  /// The tooltip of a phone row's menu.
+  ///
+  /// In en, this message translates to:
+  /// **'Choices'**
+  String get peopleChoices;
+
+  /// A phone's row, when its person has given no name.
+  ///
+  /// In en, this message translates to:
+  /// **'A phone with no name'**
+  String get peopleNoName;
+
+  /// The title of a dialog. {name} is the name the phone's person gave.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {name}\'s phone and its home?'**
+  String peopleRemovePhoneAndHome(String name);
+
+  /// No description provided for @peopleRemoveUnnamedAndHome.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove the phone with no name and its home?'**
+  String get peopleRemoveUnnamedAndHome;
+
+  /// No description provided for @peopleRemovePhone.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {name}\'s phone?'**
+  String peopleRemovePhone(String name);
+
+  /// No description provided for @peopleRemoveUnnamed.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove the phone with no name?'**
+  String get peopleRemoveUnnamed;
+
+  /// No description provided for @peopleRemoveThisHome.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove this home?'**
+  String get peopleRemoveThisHome;
+
+  /// No description provided for @peoplePhoneGoes.
+  ///
+  /// In en, this message translates to:
+  /// **'{name}\'s phone can no longer use the node unless paired again.'**
+  String peoplePhoneGoes(String name);
+
+  /// No description provided for @peopleUnnamedGoes.
+  ///
+  /// In en, this message translates to:
+  /// **'The phone with no name can no longer use the node unless paired again.'**
+  String get peopleUnnamedGoes;
+
+  /// Their: the person of the phone being removed.
+  ///
+  /// In en, this message translates to:
+  /// **'The node stops keeping their mail.'**
+  String get peopleNodeStopsMail;
+
+  /// The owner removes a person's home at their home node.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {name}\'s home?'**
+  String peopleRemoveHome(String name);
+
+  /// As peopleRemoveHome, for a person with no name.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove this person\'s home?'**
+  String get peopleRemoveTheirHome;
+
+  /// No description provided for @peopleHomeStopsMail.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home stops keeping their mail.'**
+  String get peopleHomeStopsMail;
+
+  /// No description provided for @peopleMakeOwnerTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Make {name} the owner?'**
+  String peopleMakeOwnerTitle(String name);
+
+  /// No description provided for @peopleMakeThemOwner.
+  ///
+  /// In en, this message translates to:
+  /// **'Make this person the owner?'**
+  String get peopleMakeThemOwner;
+
+  /// No description provided for @peopleOwnerChooses.
+  ///
+  /// In en, this message translates to:
+  /// **'The owner chooses who has a home here.'**
+  String get peopleOwnerChooses;
+
+  /// The person, now the owner, hands the role on.
+  ///
+  /// In en, this message translates to:
+  /// **'The owner chooses who has a home here. You no longer can.'**
+  String get peopleOwnerChoosesNotYou;
+
+  /// Ends the dialog of a change made at the node, before the button peopleShowCode.
+  ///
+  /// In en, this message translates to:
+  /// **'You type the code the node then shows.'**
+  String get peopleTypeCodeNext;
+
+  /// A button: the node shows a code on its screen.
+  ///
+  /// In en, this message translates to:
+  /// **'Show the code'**
+  String get peopleShowCode;
+
+  /// Another phone removed the record first.
+  ///
+  /// In en, this message translates to:
+  /// **'Already gone.'**
+  String get peopleGone;
+
+  /// No description provided for @peopleCodeFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Asking the node for a code failed: {error}'**
+  String peopleCodeFailed(String error);
+
+  /// A phone's record was removed.
+  ///
+  /// In en, this message translates to:
+  /// **'Removed'**
+  String get peopleRemoved;
+
+  /// No description provided for @peopleIsOwner.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} is the owner'**
+  String peopleIsOwner(String name);
+
+  /// As peopleIsOwner, for a person with no name.
+  ///
+  /// In en, this message translates to:
+  /// **'This person is the owner'**
+  String get peopleThemOwner;
+
+  /// The title of a dialog: a wrong or late code changed nothing.
+  ///
+  /// In en, this message translates to:
+  /// **'Not changed'**
+  String get peopleNotChanged;
+
+  /// No description provided for @peopleNotRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'Not removed'**
+  String get peopleNotRemoved;
+
+  /// No description provided for @peopleWrongCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Wrong code, or too late. Each code works once.'**
+  String get peopleWrongCode;
+
+  /// A button: ask the node for another code.
+  ///
+  /// In en, this message translates to:
+  /// **'New code'**
+  String get peopleNewCode;
+
+  /// The change typed with the node's code failed.
+  ///
+  /// In en, this message translates to:
+  /// **'It failed: {error}'**
+  String peopleItFailed(String error);
+
+  /// The title of the dialog where the code is typed.
+  ///
+  /// In en, this message translates to:
+  /// **'The code on the node'**
+  String get peopleCodeTitle;
+
+  /// No description provided for @peopleCodeHow.
+  ///
+  /// In en, this message translates to:
+  /// **'Type the six digits under {word} on the node\'s screen, within 30 s.'**
+  String peopleCodeHow(String word);
+
+  /// The label of the field where the code is typed.
+  ///
+  /// In en, this message translates to:
+  /// **'Code'**
+  String get peopleCode;
+
+  /// No description provided for @linkNeedsFirmware.
+  ///
+  /// In en, this message translates to:
+  /// **'{node} needs newer firmware. Update the node.'**
+  String linkNeedsFirmware(String node);
+
+  /// No description provided for @linkNeedsApp.
+  ///
+  /// In en, this message translates to:
+  /// **'{node} needs a newer app. Update the app.'**
+  String linkNeedsApp(String node);
+
+  /// Why a value the node sent could not be read, after a colon, as in sessionBadValue; lower case. {what} stays English.
+  ///
+  /// In en, this message translates to:
+  /// **'malformed {what}'**
+  String linkMalformed(String what);
+
+  /// Why the node refused an update. Lower case, as it may follow other words, such as 'The node refused: '; so are the other linkRefused… reasons.
+  ///
+  /// In en, this message translates to:
+  /// **'the file is not firmware this node reads'**
+  String get linkRefusedHeader;
+
+  /// No description provided for @linkRefusedVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'the firmware is not newer than the version the node runs'**
+  String get linkRefusedVersion;
+
+  /// No description provided for @linkRefusedBusy.
+  ///
+  /// In en, this message translates to:
+  /// **'the node holds checked new firmware already: reboot it first'**
+  String get linkRefusedBusy;
+
+  /// No description provided for @linkRefusedIncomplete.
+  ///
+  /// In en, this message translates to:
+  /// **'the node does not hold every byte of the firmware'**
+  String get linkRefusedIncomplete;
+
+  /// No description provided for @linkRefusedHash.
+  ///
+  /// In en, this message translates to:
+  /// **'the bytes the node holds are not the firmware\'s; send it again'**
+  String get linkRefusedHash;
+
+  /// No description provided for @linkRefusedBattery.
+  ///
+  /// In en, this message translates to:
+  /// **'the node is on a low battery; it keeps the firmware, to go on once it is on USB or charged'**
+  String get linkRefusedBattery;
+
+  /// No description provided for @linkRefusedFlash.
+  ///
+  /// In en, this message translates to:
+  /// **'the node\'s flash memory failed'**
+  String get linkRefusedFlash;
+
+  /// No description provided for @linkRefusedSignature.
+  ///
+  /// In en, this message translates to:
+  /// **'the firmware is not signed by a key the node holds: a file built here is signed with `{command}`, a release\'s is signed already'**
+  String linkRefusedSignature(String command);
+
+  /// The node answered with a Bluetooth ATT error; it may follow other words, such as sendFailed's.
+  ///
+  /// In en, this message translates to:
+  /// **'ATT error 0x{code}'**
+  String linkAttError(String code);
+
+  /// Why something failed: the node removed this phone. It may follow other words.
+  ///
+  /// In en, this message translates to:
+  /// **'{node} no longer knows this phone'**
+  String linkNotOurs(String node);
+
+  /// The phone is Android, which kept its own pairing with the node.
+  ///
+  /// In en, this message translates to:
+  /// **'The phone kept its old pairing with {node}, so it cannot use the node. Forget it in Bluetooth settings.'**
+  String linkBondKept(String node);
+
+  /// Two sentences, the last without its full stop, which the app adds.
+  ///
+  /// In en, this message translates to:
+  /// **'The link to {node} ended. Try again nearer to it'**
+  String linkEnded(String node);
+
+  /// A sentence without its full stop, which the app adds.
+  ///
+  /// In en, this message translates to:
+  /// **'Not paired: cancelled, a wrong code, or the node is full (its screen says {full})'**
+  String linkNotPaired(String full);
+
+  /// A sentence without its full stop, which the app adds.
+  ///
+  /// In en, this message translates to:
+  /// **'{node} not found: come nearer and try again'**
+  String linkNotSeen(String node);
 }
 
 class _AppLocalizationsDelegate

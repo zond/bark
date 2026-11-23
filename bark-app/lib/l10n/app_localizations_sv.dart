@@ -697,7 +697,7 @@ class AppLocalizationsSv extends AppLocalizations {
       'Meddelandena blir kvar. Lägg till deras kort för att skriva igen.';
 
   @override
-  String get threadRemove => 'Ta bort';
+  String get remove => 'Ta bort';
 
   @override
   String get threadRemoveContact => 'Ta bort kontakten';
@@ -859,7 +859,7 @@ class AppLocalizationsSv extends AppLocalizations {
   }
 
   @override
-  String sessionSendFailed(String error) {
+  String sendFailed(String error) {
     return 'Det gick inte att skicka: $error';
   }
 
@@ -977,10 +977,10 @@ class AppLocalizationsSv extends AppLocalizations {
   }
 
   @override
-  String get cardNameNotSet => 'inte angivet';
+  String get nameNotSet => 'inte angivet';
 
   @override
-  String get cardChangeName => 'Ändra';
+  String get changeName => 'Ändra';
 
   @override
   String get cardDetails => 'Detaljer';
@@ -1127,4 +1127,568 @@ class AppLocalizationsSv extends AppLocalizations {
   @override
   String get factPaired =>
       'Den här telefonen är parkopplad med den här noden: noden skickar ut dina meddelanden i nätet och sparar dem som är till dig tills appen läser dem. Bara den parkopplade telefonen ser nodens grannar på den här kartan.';
+
+  @override
+  String get ok => 'OK';
+
+  @override
+  String get debug => 'Felsökning';
+
+  @override
+  String get pairAgain => 'Parkoppla igen';
+
+  @override
+  String get staysYourHome => 'Noden är fortfarande ditt hem.';
+
+  @override
+  String get forgetInBluetoothToo =>
+      'Glöm noden i Bluetooth-inställningarna också: telefonen behöll sin parkoppling.';
+
+  @override
+  String get settingsBackupAnnounce => 'Reservord: skriv ner dina 12 ord';
+
+  @override
+  String get settingsPlaceHere => 'Använd telefonens plats';
+
+  @override
+  String settingsPlaceSet(String place) {
+    return 'Platsen är nu $place.';
+  }
+
+  @override
+  String get settingsDegreesPlease => 'Ange latitud och longitud i grader';
+
+  @override
+  String get settingsNameHow => 'På ditt kort, så att andra ser det';
+
+  @override
+  String get settingsDebugHow => 'Vad anslutningen säger, för en felrapport';
+
+  @override
+  String get settingsThisNode => 'Den här noden';
+
+  @override
+  String get settingsPublic => 'Publik';
+
+  @override
+  String get settingsPublicHow =>
+      'Alla telefoner i närheten kan skicka meddelanden via den';
+
+  @override
+  String settingsPublicFailed(String error) {
+    return 'Det gick inte att ändra Publik: $error';
+  }
+
+  @override
+  String get settingsUnpair => 'Ta bort parkoppling';
+
+  @override
+  String settingsUnpairTitle(String node) {
+    return 'Ta bort parkopplingen med $node?';
+  }
+
+  @override
+  String get settingsUnpairHow =>
+      'Noden och den här telefonen glömmer varandra; meddelanden och kontakter finns kvar.';
+
+  @override
+  String get settingsUnpairLast => 'Utan någon telefon kvar blir den publik.';
+
+  @override
+  String get settingsUnpairOthers =>
+      'Telefonen är fortfarande parkopplad med dina andra noder.';
+
+  @override
+  String get settingsUnpaired => 'Parkopplingen borttagen.';
+
+  @override
+  String get settingsUnpairedPublic =>
+      'Parkopplingen borttagen. Noden är publik.';
+
+  @override
+  String settingsUnpairFailed(String error) {
+    return 'Det gick inte att ta bort parkopplingen: $error';
+  }
+
+  @override
+  String get settingsPhonesPaired => 'Telefoner parkopplade med den här noden';
+
+  @override
+  String get settingsPhonesHelp =>
+      'En nod kan ha upp till åtta telefoner. Vem som helst vid den kan parkoppla med koden på dess skärm, och varje parkopplad telefon kan ändra dess inställningar, så ta bort en telefon du inte känner igen eller en som är borta. Att ta bort en kräver också koden på nodens skärm, för att visa att du är där.\n\nEn telefon med hem här får sin post sparad på den här noden.\n\nÄgaren, en av dem, väljer vem som har hem här, även på långt håll: ägaren kan ge en kontakt ett hem här, ta bort ett eller göra någon annan till ägare. Den som först gör noden till sitt hem blir dess ägare. Vid noden kan varje parkopplad telefon göra en annan till ägare med koden på skärmen.';
+
+  @override
+  String get settingsPhonesFull =>
+      'Full: ta bort en innan en annan kan parkoppla.';
+
+  @override
+  String get settingsPhonesHome => 'Telefoner med hem här';
+
+  @override
+  String get settingsNoOwner => 'Den här noden har ingen ägare';
+
+  @override
+  String get settingsBecomeOwner => 'Bli ägare';
+
+  @override
+  String get settingsBattery => 'Batteri';
+
+  @override
+  String get settingsBatteryExempt => 'bark får köras med skärmen av.';
+
+  @override
+  String get settingsBatteryNotExempt =>
+      'Med skärmen av kan Android stänga appens anslutning efter några timmar.';
+
+  @override
+  String get settingsLetRun => 'Låt bark köras';
+
+  @override
+  String get settingsBackup => 'Reservord';
+
+  @override
+  String get settingsBackedUp =>
+      'Med dina 12 ord får du tillbaka din identitet på en annan telefon.';
+
+  @override
+  String get settingsNotBackedUp =>
+      'Skriv ner dina 12 ord: tappar du telefonen utan dem förlorar du din identitet.';
+
+  @override
+  String get settingsShowWords => 'Visa mina ord';
+
+  @override
+  String get settingsRestore => 'Återställ från ord';
+
+  @override
+  String get settingsMyWords => 'Mina 12 ord';
+
+  @override
+  String get settingsWroteThem => 'Jag har skrivit ner dem';
+
+  @override
+  String get settingsRestoreTitle => 'Återställa från ord?';
+
+  @override
+  String get settingsRestoreHow =>
+      'Telefonen tar över identiteten från orden. Kontakter når den först när de har dess kort.';
+
+  @override
+  String get settingsRestoreButton => 'Återställ';
+
+  @override
+  String get settingsYourWords => 'Dina 12 ord';
+
+  @override
+  String get settingsNotWords => 'Det är inte 12 reservord';
+
+  @override
+  String get settingsRestored => 'Identiteten återställd';
+
+  @override
+  String get settingsPlace => 'Plats';
+
+  @override
+  String get settingsNoPlace => 'Noden har ingen plats än.';
+
+  @override
+  String settingsPlaceByPerson(String address) {
+    return 'Angiven för hand: $address.';
+  }
+
+  @override
+  String settingsPlaceByGps(String address) {
+    return 'Från nodens GPS: $address.';
+  }
+
+  @override
+  String get settingsPlaceHow =>
+      'För en nod inomhus, utom räckhåll för GPS. Den går före GPS tills den rensas.';
+
+  @override
+  String get settingsLatitude => 'Latitud';
+
+  @override
+  String get settingsLongitude => 'Longitud';
+
+  @override
+  String get settingsPlaceSetButton => 'Ange';
+
+  @override
+  String get settingsPlaceClear => 'Rensa';
+
+  @override
+  String get settingsNotifications => 'Aviseringar';
+
+  @override
+  String get settingsNotificationsWhy =>
+      'bark säger till när ett meddelande kommer. Android frågar härnäst.';
+
+  @override
+  String settingsPairingFailed(String error) {
+    return 'Parkopplingen misslyckades: $error';
+  }
+
+  @override
+  String settingsConnectingFailed(String error) {
+    return 'Anslutningen misslyckades: $error';
+  }
+
+  @override
+  String get settingsNotPaired => 'Inte parkopplad';
+
+  @override
+  String get settingsNotOurs => 'Den här noden är inte längre din';
+
+  @override
+  String settingsNotOursHow(String node) {
+    return '$node känner inte längre igen den här telefonen. Parkoppla igen med koden på dess skärm.';
+  }
+
+  @override
+  String get nodeConnecting => 'Ansluter…';
+
+  @override
+  String get nodeTypeCode => 'Skriv koden från nodens skärm';
+
+  @override
+  String get nodePairedConnecting => 'Parkopplad, ansluter…';
+
+  @override
+  String get nodeHeading => 'Nod';
+
+  @override
+  String get nodeDisconnect => 'Koppla från';
+
+  @override
+  String get nodeStopLooking => 'Sluta leta';
+
+  @override
+  String get nodeScan => 'Sök';
+
+  @override
+  String get nodeStopScan => 'Stoppa';
+
+  @override
+  String nodeScanFailed(String error) {
+    return 'Sökningen misslyckades: $error';
+  }
+
+  @override
+  String get nodeNoneFound => 'Ingen nod hittades i närheten.';
+
+  @override
+  String get nodeNoneFoundHow => 'Slå på en eller gå närmare.';
+
+  @override
+  String get nodePairedWith => 'Parkopplad med';
+
+  @override
+  String get nodeForget => 'Glöm';
+
+  @override
+  String nodeLostTitle(String node) {
+    return '$node känner inte igen den här telefonen';
+  }
+
+  @override
+  String get nodeLostHelp =>
+      'Någon som är parkopplad med den tog bort den här telefonen, noden förlorade sitt minne, eller så flyttade du hit från en annan telefon: en parkoppling finns bara på telefonen där den gjordes.\n\nParkoppla igen: parkoppla på nytt med koden på dess skärm. Visas medan noden är inom räckhåll.\n\nGlöm: sluta visa noden här.';
+
+  @override
+  String get nodeConnected => 'Ansluten';
+
+  @override
+  String get nodeHomeConnected => 'Ditt hem, ansluten';
+
+  @override
+  String get nodeLost => 'Känner inte igen den här telefonen';
+
+  @override
+  String get nodeHomeLost => 'Ditt hem, känner inte igen den här telefonen';
+
+  @override
+  String get nodeUnserved => 'Kan inte användas än. Tryck för att försöka igen';
+
+  @override
+  String get nodeHomeUnserved =>
+      'Ditt hem, kan inte användas än. Tryck för att försöka igen';
+
+  @override
+  String get nodeAway => 'Inte inom räckhåll';
+
+  @override
+  String get nodeHomeAway => 'Ditt hem, inte inom räckhåll';
+
+  @override
+  String get nodeNotLooking => 'Letar inte. Tryck för att ansluta';
+
+  @override
+  String get nodeHomeNotLooking =>
+      'Ditt hem, letar inte. Tryck för att ansluta';
+
+  @override
+  String get nodeYourHome => 'Ditt hem';
+
+  @override
+  String get nodeFoundPublic => 'publik';
+
+  @override
+  String get nodeFoundUnserved => 'kan inte användas än';
+
+  @override
+  String get nodePair => 'Parkoppla';
+
+  @override
+  String nodePairTitle(String node) {
+    return 'Parkoppla med $node?';
+  }
+
+  @override
+  String get nodePairHow =>
+      'Sedan kan du ändra dess inställningar och uppdatera den. Skriv koden från dess skärm.';
+
+  @override
+  String nodeForgetTitle(String node) {
+    return 'Glömma $node?';
+  }
+
+  @override
+  String get nodeForgetHow => 'Telefonen slutar visa den.';
+
+  @override
+  String get nodeForgotten => 'Glömd.';
+
+  @override
+  String get nodeForgetLater =>
+      'Telefonen tar bort sin parkoppling nästa gång den hör noden, eller så kan du glömma den i Bluetooth-inställningarna nu.';
+
+  @override
+  String nodeForgetFailed(String error) {
+    return 'Det gick inte att glömma noden: $error';
+  }
+
+  @override
+  String get peopleMakeOwner => 'Gör till ägare';
+
+  @override
+  String get peopleThisPhone => 'den här telefonen';
+
+  @override
+  String get peopleYou => 'du';
+
+  @override
+  String get peopleOwner => 'ägare';
+
+  @override
+  String get peoplePairedToo => 'även parkopplad';
+
+  @override
+  String get peopleHomeToo => 'har även hem här';
+
+  @override
+  String get peopleLinked => 'ansluten nu';
+
+  @override
+  String peopleSeen(String when) {
+    return 'sedd $when';
+  }
+
+  @override
+  String get peopleNeverSeen => 'aldrig sedd';
+
+  @override
+  String get peopleChoices => 'Alternativ';
+
+  @override
+  String get peopleNoName => 'En telefon utan namn';
+
+  @override
+  String peopleRemovePhoneAndHome(String name) {
+    return 'Ta bort telefonen som tillhör $name och dess hem?';
+  }
+
+  @override
+  String get peopleRemoveUnnamedAndHome =>
+      'Ta bort telefonen utan namn och dess hem?';
+
+  @override
+  String peopleRemovePhone(String name) {
+    return 'Ta bort telefonen som tillhör $name?';
+  }
+
+  @override
+  String get peopleRemoveUnnamed => 'Ta bort telefonen utan namn?';
+
+  @override
+  String get peopleRemoveThisHome => 'Ta bort det här hemmet?';
+
+  @override
+  String peoplePhoneGoes(String name) {
+    return 'Telefonen som tillhör $name kan inte längre använda noden om den inte parkopplas igen.';
+  }
+
+  @override
+  String get peopleUnnamedGoes =>
+      'Telefonen utan namn kan inte längre använda noden om den inte parkopplas igen.';
+
+  @override
+  String get peopleNodeStopsMail => 'Noden slutar spara deras post.';
+
+  @override
+  String peopleRemoveHome(String name) {
+    return 'Ta bort hemmet för $name?';
+  }
+
+  @override
+  String get peopleRemoveTheirHome => 'Ta bort den här personens hem?';
+
+  @override
+  String get peopleHomeStopsMail => 'Ditt hem slutar spara deras post.';
+
+  @override
+  String peopleMakeOwnerTitle(String name) {
+    return 'Göra $name till ägare?';
+  }
+
+  @override
+  String get peopleMakeThemOwner => 'Göra den här personen till ägare?';
+
+  @override
+  String get peopleOwnerChooses => 'Ägaren väljer vem som har hem här.';
+
+  @override
+  String get peopleOwnerChoosesNotYou =>
+      'Ägaren väljer vem som har hem här. Det kan du inte längre.';
+
+  @override
+  String get peopleTypeCodeNext => 'Sedan skriver du koden som noden visar.';
+
+  @override
+  String get peopleShowCode => 'Visa koden';
+
+  @override
+  String get peopleGone => 'Redan borta.';
+
+  @override
+  String peopleCodeFailed(String error) {
+    return 'Det gick inte att be noden om en kod: $error';
+  }
+
+  @override
+  String get peopleRemoved => 'Borttagen';
+
+  @override
+  String peopleIsOwner(String name) {
+    return '$name är nu ägare';
+  }
+
+  @override
+  String get peopleThemOwner => 'Den här personen är nu ägare';
+
+  @override
+  String get peopleNotChanged => 'Inget ändrades';
+
+  @override
+  String get peopleNotRemoved => 'Inget togs bort';
+
+  @override
+  String get peopleWrongCode =>
+      'Fel kod, eller för sent. Varje kod fungerar en gång.';
+
+  @override
+  String get peopleNewCode => 'Ny kod';
+
+  @override
+  String peopleItFailed(String error) {
+    return 'Det misslyckades: $error';
+  }
+
+  @override
+  String get peopleCodeTitle => 'Koden på noden';
+
+  @override
+  String peopleCodeHow(String word) {
+    return 'Skriv de sex siffrorna under $word på nodens skärm inom 30 s.';
+  }
+
+  @override
+  String get peopleCode => 'Kod';
+
+  @override
+  String linkNeedsFirmware(String node) {
+    return '$node behöver nyare programvara. Uppdatera noden.';
+  }
+
+  @override
+  String linkNeedsApp(String node) {
+    return '$node behöver en nyare app. Uppdatera appen.';
+  }
+
+  @override
+  String linkMalformed(String what) {
+    return '$what har fel format';
+  }
+
+  @override
+  String get linkRefusedHeader =>
+      'filen är inte programvara som noden kan läsa';
+
+  @override
+  String get linkRefusedVersion =>
+      'programvaran är inte nyare än versionen som noden kör';
+
+  @override
+  String get linkRefusedBusy =>
+      'noden har redan ny kontrollerad programvara: starta om den först';
+
+  @override
+  String get linkRefusedIncomplete =>
+      'noden har inte fått alla byte av programvaran';
+
+  @override
+  String get linkRefusedHash =>
+      'bytena som noden har stämmer inte med programvaran; skicka den igen';
+
+  @override
+  String get linkRefusedBattery =>
+      'noden har lågt batteri; den sparar programvaran och fortsätter när den är på USB eller laddad';
+
+  @override
+  String get linkRefusedFlash => 'fel i nodens flashminne';
+
+  @override
+  String linkRefusedSignature(String command) {
+    return 'programvaran är inte signerad med en nyckel som noden har: en fil som byggts här signeras med `$command`, en från en utgåva är redan signerad';
+  }
+
+  @override
+  String linkAttError(String code) {
+    return 'ATT-fel 0x$code';
+  }
+
+  @override
+  String linkNotOurs(String node) {
+    return '$node känner inte längre igen den här telefonen';
+  }
+
+  @override
+  String linkBondKept(String node) {
+    return 'Telefonen behöll sin gamla parkoppling med $node, så den kan inte använda noden. Glöm den i Bluetooth-inställningarna.';
+  }
+
+  @override
+  String linkEnded(String node) {
+    return 'Anslutningen till $node bröts. Försök igen närmare den';
+  }
+
+  @override
+  String linkNotPaired(String full) {
+    return 'Inte parkopplad: avbruten, fel kod eller så är noden full (dess skärm visar $full)';
+  }
+
+  @override
+  String linkNotSeen(String node) {
+    return '$node hittades inte: gå närmare och försök igen';
+  }
 }

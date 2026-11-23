@@ -4,6 +4,7 @@
 
 import 'dart:typed_data';
 
+import 'l10n.dart';
 import 'link.dart';
 
 /// How long a node is away at its reboot into a new image: 55 s from the
@@ -14,20 +15,24 @@ import 'link.dart';
 const Duration swapAway = Duration(seconds: 55);
 
 /// The node answered a write with this ATT error.
-class AttException implements Exception {
+class AttException implements Exception, Spoken {
   final int code;
   const AttException(this.code);
   @override
-  String toString() => 'ATT error 0x${code.toRadixString(16)}';
+  String words(AppLocalizations w) => w.linkAttError(code.toRadixString(16));
+  @override
+  String toString() => words(english);
 }
 
 /// The phone's bond no longer opens the node `node`: a phone paired with
 /// it removed this one (spec "Phone link", The removed phone).
-class NotOurs implements Exception {
+class NotOurs implements Exception, Spoken {
   final String node;
   const NotOurs(this.node);
   @override
-  String toString() => '${shownName(node)} no longer knows this phone';
+  String words(AppLocalizations w) => w.linkNotOurs(shownName(node));
+  @override
+  String toString() => words(english);
 }
 
 /// Android kept its bond with the node `node`, which the app does not
@@ -37,38 +42,40 @@ class NotOurs implements Exception {
 /// 2026-11-10), so the phone cannot use the node until the person
 /// forgets it in the phone's Bluetooth settings (spec "Phone link",
 /// Pairing, Public).
-class BondKept implements Exception {
+class BondKept implements Exception, Spoken {
   final String node;
   const BondKept(this.node);
   @override
-  String toString() => bondKeptLine(node);
+  String words(AppLocalizations w) => bondKeptLine(node, w);
+  @override
+  String toString() => words(english);
 }
 
 /// What the person reads of a [BondKept] at `node`: what happened and the
-/// way out.
-String bondKeptLine(String node) =>
-    'The phone kept its old pairing with ${shownName(node)}, so it cannot '
-    'use the node. Forget it in Bluetooth settings.';
+/// way out; in `words`, by default the language spoken.
+String bondKeptLine(String node, [AppLocalizations? words]) =>
+    (words ?? tr).linkBondKept(shownName(node));
 
 /// The link to the node `node` ended before the app had read it: the
 /// node ended it, or went out of reach.
-class LinkEnded implements Exception {
+class LinkEnded implements Exception, Spoken {
   final String node;
   const LinkEnded(this.node);
   @override
-  String toString() =>
-      'The link to ${shownName(node)} ended. Try again nearer to it';
+  String words(AppLocalizations w) => w.linkEnded(shownName(node));
+  @override
+  String toString() => words(english);
 }
 
 /// The pairing did not complete: it was cancelled, the code typed was
 /// not the one on the node's screen, or the node keeps as many phones as
 /// it can and refused it (spec "Phone link", Pairing).
-class NotPaired implements Exception {
+class NotPaired implements Exception, Spoken {
   const NotPaired();
   @override
-  String toString() =>
-      'Not paired: cancelled, a wrong code, or the node is full (its '
-      'screen says PHONES FULL)';
+  String words(AppLocalizations w) => w.linkNotPaired('PHONES FULL');
+  @override
+  String toString() => words(english);
 }
 
 abstract class NodeLink {

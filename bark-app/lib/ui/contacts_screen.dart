@@ -155,7 +155,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
         card = PersonCard.parse(s);
         if (name.text.isEmpty) name.text = card!.name;
       } on BadCard catch (e) {
-        error = tr.contactsBadPaste('$e', PersonCard.prefix);
+        error = tr.contactsBadPaste(said(e), PersonCard.prefix);
       }
     });
   }

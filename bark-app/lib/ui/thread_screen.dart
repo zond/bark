@@ -148,7 +148,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
       await app.messenger.sendText(to, text.text, toward: toward);
       text.clear();
     } on BadPayload catch (e) {
-      if (mounted) say(context, tr.threadNotSent('$e'));
+      if (mounted) say(context, tr.threadNotSent(said(e)));
     }
   }
 
@@ -219,7 +219,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                           if (context.mounted) say(context, r);
                         } catch (e) {
                           if (context.mounted) {
-                            say(context, tr.commonFailed('$e'));
+                            say(context, tr.commonFailed(said(e)));
                           }
                         }
                       },
@@ -247,7 +247,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                         context,
                         tr.threadRemoveTitle(contact.name),
                         tr.threadRemoveHow,
-                        tr.threadRemove,
+                        tr.remove,
                       )) {
                         await app.contacts.remove(contact);
                       }
@@ -341,7 +341,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     try {
       n = app.messenger.partsOf(to, t).length;
     } on BadPayload catch (e) {
-      return e.why;
+      return said(e);
     }
     if (n <= 1) return null;
     return n > maxParts
@@ -555,7 +555,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     try {
       await app.messenger.react(e.arrived.first, picked);
     } on BadPayload catch (e) {
-      if (mounted) say(context, tr.threadNotSent('$e'));
+      if (mounted) say(context, tr.threadNotSent(said(e)));
     }
   }
 

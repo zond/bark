@@ -42,7 +42,7 @@ class _ScanScreenState extends State<ScanScreen> {
         if (mounted) Navigator.of(context).pop(card);
       } on BadCard catch (e) {
         // The camera reads the same code many times a second.
-        if (_problem != '$e') setState(() => _problem = '$e');
+        if (_problem != said(e)) setState(() => _problem = said(e));
       }
     });
   }

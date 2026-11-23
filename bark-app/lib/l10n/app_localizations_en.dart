@@ -686,7 +686,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Their texts stay; to write again, add their card.';
 
   @override
-  String get threadRemove => 'Remove';
+  String get remove => 'Remove';
 
   @override
   String get threadRemoveContact => 'Remove contact';
@@ -848,7 +848,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String sessionSendFailed(String error) {
+  String sendFailed(String error) {
     return 'Sending failed: $error';
   }
 
@@ -960,10 +960,10 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get cardNameNotSet => 'not set';
+  String get nameNotSet => 'not set';
 
   @override
-  String get cardChangeName => 'Change';
+  String get changeName => 'Change';
 
   @override
   String get cardDetails => 'Details';
@@ -1110,4 +1110,563 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get factPaired =>
       'This phone is paired with this node: the node sends your texts into the network, and keeps the ones for you until the app reads them. Only the paired phone sees the node\'s neighbours on this map.';
+
+  @override
+  String get ok => 'OK';
+
+  @override
+  String get debug => 'Debug';
+
+  @override
+  String get pairAgain => 'Pair again';
+
+  @override
+  String get staysYourHome => 'It stays your home.';
+
+  @override
+  String get forgetInBluetoothToo =>
+      'Forget the node in Bluetooth settings too: the phone kept its pairing.';
+
+  @override
+  String get settingsBackupAnnounce => 'Backup: write down your 12 words';
+
+  @override
+  String get settingsPlaceHere => 'Use this phone\'s location';
+
+  @override
+  String settingsPlaceSet(String place) {
+    return 'Place set to $place.';
+  }
+
+  @override
+  String get settingsDegreesPlease =>
+      'Latitude and longitude in degrees, please';
+
+  @override
+  String get settingsNameHow => 'On your card, for others to see';
+
+  @override
+  String get settingsDebugHow => 'What the link says, for a bug report';
+
+  @override
+  String get settingsThisNode => 'This node';
+
+  @override
+  String get settingsPublic => 'Public';
+
+  @override
+  String get settingsPublicHow => 'Any phone near it can text through it';
+
+  @override
+  String settingsPublicFailed(String error) {
+    return 'Setting Public failed: $error';
+  }
+
+  @override
+  String get settingsUnpair => 'Unpair';
+
+  @override
+  String settingsUnpairTitle(String node) {
+    return 'Unpair $node?';
+  }
+
+  @override
+  String get settingsUnpairHow =>
+      'The node and this phone forget each other; texts and contacts stay.';
+
+  @override
+  String get settingsUnpairLast => 'With no phone left, it turns public.';
+
+  @override
+  String get settingsUnpairOthers => 'It stays paired with your other nodes.';
+
+  @override
+  String get settingsUnpaired => 'Unpaired.';
+
+  @override
+  String get settingsUnpairedPublic => 'Unpaired. The node is public.';
+
+  @override
+  String settingsUnpairFailed(String error) {
+    return 'Unpairing failed: $error';
+  }
+
+  @override
+  String get settingsPhonesPaired => 'Phones paired with this node';
+
+  @override
+  String get settingsPhonesHelp =>
+      'A node keeps up to eight phones. Anyone at it can pair, by the code on its screen, and every paired phone can change its settings, so remove a phone you do not know or one that is gone. A removal also takes the code on the node\'s screen, to show you are there.\n\nA phone with a home here has its mail kept at this node.\n\nThe owner, one of them, chooses who has a home here, also from far away: they can give a contact a home here, remove one, or make someone else the owner. The first to make the node their home is its owner. At the node, any paired phone can make another the owner by the code on the screen.';
+
+  @override
+  String get settingsPhonesFull => 'Full: remove one before another can pair.';
+
+  @override
+  String get settingsPhonesHome => 'Phones with a home here';
+
+  @override
+  String get settingsNoOwner => 'This node has no owner';
+
+  @override
+  String get settingsBecomeOwner => 'Become owner';
+
+  @override
+  String get settingsBattery => 'Battery';
+
+  @override
+  String get settingsBatteryExempt => 'bark may run with the screen off.';
+
+  @override
+  String get settingsBatteryNotExempt =>
+      'With the screen off, Android may close bark\'s link after some hours.';
+
+  @override
+  String get settingsLetRun => 'Let bark run';
+
+  @override
+  String get settingsBackup => 'Backup';
+
+  @override
+  String get settingsBackedUp =>
+      'Your 12 words bring your identity back on another phone.';
+
+  @override
+  String get settingsNotBackedUp =>
+      'Write down your 12 words: a lost phone without them loses your identity.';
+
+  @override
+  String get settingsShowWords => 'Show my words';
+
+  @override
+  String get settingsRestore => 'Restore from words';
+
+  @override
+  String get settingsMyWords => 'My 12 words';
+
+  @override
+  String get settingsWroteThem => 'I wrote them down';
+
+  @override
+  String get settingsRestoreTitle => 'Restore from words?';
+
+  @override
+  String get settingsRestoreHow =>
+      'This phone takes the identity of the words. Contacts reach it only once they have its card.';
+
+  @override
+  String get settingsRestoreButton => 'Restore';
+
+  @override
+  String get settingsYourWords => 'Your 12 words';
+
+  @override
+  String get settingsNotWords => 'Those are not 12 words of a backup';
+
+  @override
+  String get settingsRestored => 'Identity restored';
+
+  @override
+  String get settingsPlace => 'Place';
+
+  @override
+  String get settingsNoPlace => 'The node has no place yet.';
+
+  @override
+  String settingsPlaceByPerson(String address) {
+    return 'Set by a person: $address.';
+  }
+
+  @override
+  String settingsPlaceByGps(String address) {
+    return 'From its GPS: $address.';
+  }
+
+  @override
+  String get settingsPlaceHow =>
+      'For a node indoors, out of GPS reach. It wins over GPS until cleared.';
+
+  @override
+  String get settingsLatitude => 'Latitude';
+
+  @override
+  String get settingsLongitude => 'Longitude';
+
+  @override
+  String get settingsPlaceSetButton => 'Set';
+
+  @override
+  String get settingsPlaceClear => 'Clear';
+
+  @override
+  String get settingsNotifications => 'Notifications';
+
+  @override
+  String get settingsNotificationsWhy =>
+      'bark tells you when a text comes. Android asks next.';
+
+  @override
+  String settingsPairingFailed(String error) {
+    return 'Pairing failed: $error';
+  }
+
+  @override
+  String settingsConnectingFailed(String error) {
+    return 'Connecting failed: $error';
+  }
+
+  @override
+  String get settingsNotPaired => 'Not paired';
+
+  @override
+  String get settingsNotOurs => 'This node is no longer yours';
+
+  @override
+  String settingsNotOursHow(String node) {
+    return '$node no longer knows this phone. Pair again with the code on its screen.';
+  }
+
+  @override
+  String get nodeConnecting => 'Connecting…';
+
+  @override
+  String get nodeTypeCode => 'Type the code on the node\'s screen';
+
+  @override
+  String get nodePairedConnecting => 'Paired, connecting…';
+
+  @override
+  String get nodeHeading => 'Node';
+
+  @override
+  String get nodeDisconnect => 'Disconnect';
+
+  @override
+  String get nodeStopLooking => 'Stop looking';
+
+  @override
+  String get nodeScan => 'Scan';
+
+  @override
+  String get nodeStopScan => 'Stop';
+
+  @override
+  String nodeScanFailed(String error) {
+    return 'Scan failed: $error';
+  }
+
+  @override
+  String get nodeNoneFound => 'No node found nearby.';
+
+  @override
+  String get nodeNoneFoundHow => 'Switch one on, or come closer.';
+
+  @override
+  String get nodePairedWith => 'Paired with';
+
+  @override
+  String get nodeForget => 'Forget';
+
+  @override
+  String nodeLostTitle(String node) {
+    return '$node does not know this phone';
+  }
+
+  @override
+  String get nodeLostHelp =>
+      'Someone paired with it removed this phone, the node lost its memory, or you moved here from another phone: a pairing stays on the phone it was made on.\n\nPair again: pair anew with the code on its screen. Shown while the node is in reach.\n\nForget: stop listing the node here.';
+
+  @override
+  String get nodeConnected => 'Connected';
+
+  @override
+  String get nodeHomeConnected => 'Your home, connected';
+
+  @override
+  String get nodeLost => 'Does not know this phone';
+
+  @override
+  String get nodeHomeLost => 'Your home, does not know this phone';
+
+  @override
+  String get nodeUnserved => 'Cannot be used yet. Tap to try again';
+
+  @override
+  String get nodeHomeUnserved =>
+      'Your home, cannot be used yet. Tap to try again';
+
+  @override
+  String get nodeAway => 'Not in reach';
+
+  @override
+  String get nodeHomeAway => 'Your home, not in reach';
+
+  @override
+  String get nodeNotLooking => 'Not looking. Tap to connect';
+
+  @override
+  String get nodeHomeNotLooking => 'Your home, not looking. Tap to connect';
+
+  @override
+  String get nodeYourHome => 'Your home';
+
+  @override
+  String get nodeFoundPublic => 'public';
+
+  @override
+  String get nodeFoundUnserved => 'cannot be used yet';
+
+  @override
+  String get nodePair => 'Pair';
+
+  @override
+  String nodePairTitle(String node) {
+    return 'Pair with $node?';
+  }
+
+  @override
+  String get nodePairHow =>
+      'You can then change its settings and update it. Type the code on its screen.';
+
+  @override
+  String nodeForgetTitle(String node) {
+    return 'Forget $node?';
+  }
+
+  @override
+  String get nodeForgetHow => 'This phone stops listing it.';
+
+  @override
+  String get nodeForgotten => 'Forgotten.';
+
+  @override
+  String get nodeForgetLater =>
+      'The phone drops its pairing when it next hears the node, or forget it in Bluetooth settings now.';
+
+  @override
+  String nodeForgetFailed(String error) {
+    return 'Forgetting failed: $error';
+  }
+
+  @override
+  String get peopleMakeOwner => 'Make owner';
+
+  @override
+  String get peopleThisPhone => 'this phone';
+
+  @override
+  String get peopleYou => 'you';
+
+  @override
+  String get peopleOwner => 'owner';
+
+  @override
+  String get peoplePairedToo => 'paired too';
+
+  @override
+  String get peopleHomeToo => 'has a home here too';
+
+  @override
+  String get peopleLinked => 'linked now';
+
+  @override
+  String peopleSeen(String when) {
+    return 'seen $when';
+  }
+
+  @override
+  String get peopleNeverSeen => 'seen never';
+
+  @override
+  String get peopleChoices => 'Choices';
+
+  @override
+  String get peopleNoName => 'A phone with no name';
+
+  @override
+  String peopleRemovePhoneAndHome(String name) {
+    return 'Remove $name\'s phone and its home?';
+  }
+
+  @override
+  String get peopleRemoveUnnamedAndHome =>
+      'Remove the phone with no name and its home?';
+
+  @override
+  String peopleRemovePhone(String name) {
+    return 'Remove $name\'s phone?';
+  }
+
+  @override
+  String get peopleRemoveUnnamed => 'Remove the phone with no name?';
+
+  @override
+  String get peopleRemoveThisHome => 'Remove this home?';
+
+  @override
+  String peoplePhoneGoes(String name) {
+    return '$name\'s phone can no longer use the node unless paired again.';
+  }
+
+  @override
+  String get peopleUnnamedGoes =>
+      'The phone with no name can no longer use the node unless paired again.';
+
+  @override
+  String get peopleNodeStopsMail => 'The node stops keeping their mail.';
+
+  @override
+  String peopleRemoveHome(String name) {
+    return 'Remove $name\'s home?';
+  }
+
+  @override
+  String get peopleRemoveTheirHome => 'Remove this person\'s home?';
+
+  @override
+  String get peopleHomeStopsMail => 'Your home stops keeping their mail.';
+
+  @override
+  String peopleMakeOwnerTitle(String name) {
+    return 'Make $name the owner?';
+  }
+
+  @override
+  String get peopleMakeThemOwner => 'Make this person the owner?';
+
+  @override
+  String get peopleOwnerChooses => 'The owner chooses who has a home here.';
+
+  @override
+  String get peopleOwnerChoosesNotYou =>
+      'The owner chooses who has a home here. You no longer can.';
+
+  @override
+  String get peopleTypeCodeNext => 'You type the code the node then shows.';
+
+  @override
+  String get peopleShowCode => 'Show the code';
+
+  @override
+  String get peopleGone => 'Already gone.';
+
+  @override
+  String peopleCodeFailed(String error) {
+    return 'Asking the node for a code failed: $error';
+  }
+
+  @override
+  String get peopleRemoved => 'Removed';
+
+  @override
+  String peopleIsOwner(String name) {
+    return '$name is the owner';
+  }
+
+  @override
+  String get peopleThemOwner => 'This person is the owner';
+
+  @override
+  String get peopleNotChanged => 'Not changed';
+
+  @override
+  String get peopleNotRemoved => 'Not removed';
+
+  @override
+  String get peopleWrongCode =>
+      'Wrong code, or too late. Each code works once.';
+
+  @override
+  String get peopleNewCode => 'New code';
+
+  @override
+  String peopleItFailed(String error) {
+    return 'It failed: $error';
+  }
+
+  @override
+  String get peopleCodeTitle => 'The code on the node';
+
+  @override
+  String peopleCodeHow(String word) {
+    return 'Type the six digits under $word on the node\'s screen, within 30 s.';
+  }
+
+  @override
+  String get peopleCode => 'Code';
+
+  @override
+  String linkNeedsFirmware(String node) {
+    return '$node needs newer firmware. Update the node.';
+  }
+
+  @override
+  String linkNeedsApp(String node) {
+    return '$node needs a newer app. Update the app.';
+  }
+
+  @override
+  String linkMalformed(String what) {
+    return 'malformed $what';
+  }
+
+  @override
+  String get linkRefusedHeader => 'the file is not firmware this node reads';
+
+  @override
+  String get linkRefusedVersion =>
+      'the firmware is not newer than the version the node runs';
+
+  @override
+  String get linkRefusedBusy =>
+      'the node holds checked new firmware already: reboot it first';
+
+  @override
+  String get linkRefusedIncomplete =>
+      'the node does not hold every byte of the firmware';
+
+  @override
+  String get linkRefusedHash =>
+      'the bytes the node holds are not the firmware\'s; send it again';
+
+  @override
+  String get linkRefusedBattery =>
+      'the node is on a low battery; it keeps the firmware, to go on once it is on USB or charged';
+
+  @override
+  String get linkRefusedFlash => 'the node\'s flash memory failed';
+
+  @override
+  String linkRefusedSignature(String command) {
+    return 'the firmware is not signed by a key the node holds: a file built here is signed with `$command`, a release\'s is signed already';
+  }
+
+  @override
+  String linkAttError(String code) {
+    return 'ATT error 0x$code';
+  }
+
+  @override
+  String linkNotOurs(String node) {
+    return '$node no longer knows this phone';
+  }
+
+  @override
+  String linkBondKept(String node) {
+    return 'The phone kept its old pairing with $node, so it cannot use the node. Forget it in Bluetooth settings.';
+  }
+
+  @override
+  String linkEnded(String node) {
+    return 'The link to $node ended. Try again nearer to it';
+  }
+
+  @override
+  String linkNotPaired(String full) {
+    return 'Not paired: cancelled, a wrong code, or the node is full (its screen says $full)';
+  }
+
+  @override
+  String linkNotSeen(String node) {
+    return '$node not found: come nearer and try again';
+  }
 }

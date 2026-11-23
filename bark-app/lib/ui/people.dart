@@ -7,6 +7,7 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
+import '../l10n.dart';
 import '../link.dart';
 import '../node_link.dart';
 import 'common.dart';
@@ -16,8 +17,8 @@ import 'settings_parts.dart';
 enum RecordAction { remove, makeOwner }
 
 String actionLabel(RecordAction a) => switch (a) {
-  RecordAction.remove => 'Remove',
-  RecordAction.makeOwner => 'Make owner',
+  RecordAction.remove => tr.remove,
+  RecordAction.makeOwner => tr.peopleMakeOwner,
 };
 
 /// A record's row: in the paired list, or with `home` in the homes list;
@@ -43,10 +44,15 @@ class RecordRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final both = r.paired && r.home;
     final words = [
-      if (r.mine) atNode ? 'this phone' : 'you',
-      if (r.owner) 'owner',
-      if (both && atNode) home ? 'paired too' : 'has a home here too',
-      if (r.linked) 'linked now' else 'seen ${lastSeen(r.day, app.now())}',
+      if (r.mine) atNode ? tr.peopleThisPhone : tr.peopleYou,
+      if (r.owner) tr.peopleOwner,
+      if (both && atNode) home ? tr.peoplePairedToo : tr.peopleHomeToo,
+      if (r.linked)
+        tr.peopleLinked
+      else if (dayOf(r.day) == null)
+        tr.peopleNeverSeen
+      else
+        tr.peopleSeen(lastSeen(r.day, app.now())),
     ];
     final acts = actionsOn(app, r, home: home, atNode: atNode);
     final Widget? trailing = r.mine && !home
@@ -58,7 +64,7 @@ class RecordRow extends StatelessWidget {
               child: Text(actionLabel(a)),
             ),
             _ => PopupMenuButton<RecordAction>(
-              tooltip: 'Choices',
+              tooltip: tr.peopleChoices,
               onSelected: (a) => act(context, app, r, a, atNode: atNode),
               itemBuilder: (_) => [
                 for (final a in acts)
@@ -69,7 +75,7 @@ class RecordRow extends StatelessWidget {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: Icon(home ? Icons.home_outlined : Icons.phone_android),
-      title: Text(r.name.isEmpty ? 'A phone with no name' : r.name),
+      title: Text(r.name.isEmpty ? tr.peopleNoName : r.name),
       subtitle: Text(capital(words.join(', '))),
       trailing: trailing,
     );
@@ -93,9 +99,6 @@ List<RecordAction> actionsOn(
   ];
 }
 
-/// `r`'s person, in a sentence.
-String _who(PhoneRecord r) => r.name.isEmpty ? 'this person' : r.name;
-
 /// Does `a` to `r`, after a dialog that says what follows: at the node by
 /// the code its screen then shows, from away by a command to the home.
 Future<void> act(
@@ -105,31 +108,32 @@ Future<void> act(
   RecordAction a, {
   required bool atNode,
 }) async {
-  final who = _who(r);
-  final String title, body;
+  final name = r.name, named = name.isNotEmpty;
+  final String title;
+  final List<String> body;
   switch (a) {
     case RecordAction.remove when atNode:
-      final phone = r.name.isEmpty
-          ? 'the phone with no name'
-          : '${r.name}\'s phone';
       title = r.paired && r.home
-          ? 'Remove $phone and its home?'
+          ? (named
+                ? tr.peopleRemovePhoneAndHome(name)
+                : tr.peopleRemoveUnnamedAndHome)
           : r.paired
-          ? 'Remove $phone?'
-          : 'Remove this home?';
+          ? (named ? tr.peopleRemovePhone(name) : tr.peopleRemoveUnnamed)
+          : tr.peopleRemoveThisHome;
       body = [
-        if (r.paired)
-          '${capital(phone)} can no longer use the node unless paired again.',
-        if (r.home) 'The node stops keeping their mail.',
-      ].join(' ');
+        if (r.paired) named ? tr.peoplePhoneGoes(name) : tr.peopleUnnamedGoes,
+        if (r.home) tr.peopleNodeStopsMail,
+      ];
     case RecordAction.remove:
-      title = 'Remove $who\'s home?';
-      body = 'Your home stops keeping their mail.';
+      title = named ? tr.peopleRemoveHome(name) : tr.peopleRemoveTheirHome;
+      body = [tr.peopleHomeStopsMail];
     case RecordAction.makeOwner:
-      title = 'Make $who the owner?';
-      body =
-          'The owner chooses who has a home here.'
-          '${!r.mine && app.mailbox.isOwner && !atNode ? ' You no longer can.' : ''}';
+      title = named ? tr.peopleMakeOwnerTitle(name) : tr.peopleMakeThemOwner;
+      body = [
+        !r.mine && app.mailbox.isOwner && !atNode
+            ? tr.peopleOwnerChoosesNotYou
+            : tr.peopleOwnerChooses,
+      ];
   }
   final label = actionLabel(a);
   final (ok, gone) = await _whileListed<bool>(
@@ -139,24 +143,22 @@ Future<void> act(
     atNode,
     (context) => AlertDialog(
       title: Text(title),
-      content: Text(
-        atNode ? '$body You type the code the node then shows.' : body,
-      ),
+      content: Text([...body, if (atNode) tr.peopleTypeCodeNext].join(' ')),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context, false),
-          child: const Text('Cancel'),
+          child: Text(tr.cancel),
         ),
         FilledButton(
           onPressed: () => Navigator.pop(context, true),
-          child: Text(atNode ? 'Show the code' : label),
+          child: Text(atNode ? tr.peopleShowCode : label),
         ),
       ],
     ),
   );
   if (!context.mounted) return;
   if (gone) {
-    say(context, 'Already gone.');
+    say(context, tr.peopleGone);
     return;
   }
   if (ok != true) return;
@@ -166,7 +168,7 @@ Future<void> act(
           ? app.mailbox.removeHome(r)
           : app.mailbox.handOver(r));
       if (context.mounted) say(context, s);
-    }, 'Sending failed');
+    }, tr.sendFailed);
     return;
   }
   await _byCode(
@@ -242,7 +244,7 @@ Future<void> _byCode(
       await s.askCode();
     } catch (e) {
       if (context.mounted) {
-        say(context, 'Asking the node for a code failed: $e');
+        say(context, tr.peopleCodeFailed(said(e)));
       }
       return;
     }
@@ -256,31 +258,38 @@ Future<void> _byCode(
     );
     if (!context.mounted) return;
     if (gone) {
-      say(context, 'Already gone.');
+      say(context, tr.peopleGone);
       return;
     }
     if (code == null) return;
     try {
       await s.byCode(r, change, int.parse(code));
       if (context.mounted) {
-        say(context, owner ? '${capital(_who(r))} is the owner' : 'Removed');
+        say(
+          context,
+          !owner
+              ? tr.peopleRemoved
+              : r.name.isEmpty
+              ? tr.peopleThemOwner
+              : tr.peopleIsOwner(r.name),
+        );
       }
       return;
     } on AttException catch (e) {
       if (!context.mounted) return;
       if (e.code != AttError.refused) {
-        say(context, 'Already gone.');
+        say(context, tr.peopleGone);
         return;
       }
       final again = await confirm(
         context,
-        owner ? 'Not changed' : 'Not removed',
-        'Wrong code, or too late. Each code works once.',
-        'New code',
+        owner ? tr.peopleNotChanged : tr.peopleNotRemoved,
+        tr.peopleWrongCode,
+        tr.peopleNewCode,
       );
       if (!again) return;
     } catch (e) {
-      if (context.mounted) say(context, 'It failed: $e');
+      if (context.mounted) say(context, tr.peopleItFailed(said(e)));
       return;
     }
   }
@@ -310,22 +319,19 @@ class _CodeDialogState extends State<_CodeDialog> {
   Widget build(BuildContext context) => AlertDialog(
     // Its field stays in reach above the keyboard on a phone held sideways.
     scrollable: true,
-    title: const Text('The code on the node'),
+    title: Text(tr.peopleCodeTitle),
     content: Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Type the six digits under CONFIRM on the node\'s screen, within '
-          '30 s.',
-        ),
+        Text(tr.peopleCodeHow('CONFIRM')),
         TextField(
           key: const Key('node code'),
           controller: _code,
           autofocus: true,
           keyboardType: TextInputType.number,
           maxLength: 6,
-          decoration: const InputDecoration(labelText: 'Code'),
+          decoration: InputDecoration(labelText: tr.peopleCode),
           onChanged: (_) => setState(() {}),
         ),
       ],
@@ -333,7 +339,7 @@ class _CodeDialogState extends State<_CodeDialog> {
     actions: [
       TextButton(
         onPressed: () => Navigator.pop(context),
-        child: const Text('Cancel'),
+        child: Text(tr.cancel),
       ),
       FilledButton(
         onPressed: _whole ? () => Navigator.pop(context, _code.text) : null,

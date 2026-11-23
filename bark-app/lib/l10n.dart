@@ -19,6 +19,16 @@ AppLocalizations tr = AppLocalizationsEn();
 /// them.
 final AppLocalizations english = AppLocalizationsEn();
 
+/// An error a person may read: it says itself in the words given. Its
+/// `toString()` is English, so a log line that puts it in stays English.
+abstract interface class Spoken {
+  String words(AppLocalizations w);
+}
+
+/// `e` as a person reads it, in `w`, by default the language spoken.
+String said(Object e, [AppLocalizations? w]) =>
+    e is Spoken ? e.words(w ?? tr) : '$e';
+
 /// The first of the phone's languages the app has, else English.
 Locale languageOf(List<Locale> phone) {
   for (final want in phone) {

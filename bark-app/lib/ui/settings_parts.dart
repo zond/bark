@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../app.dart';
 import '../ble_link.dart';
+import '../l10n.dart';
 import '../link.dart';
 import '../node_link.dart';
 import 'common.dart';
@@ -28,16 +29,17 @@ class SettingsHeading extends StatelessWidget {
   );
 }
 
-/// Runs `f`, and says why it `failed` if it does.
+/// Runs `f`, and if it fails says so in the sentence `failed` makes of
+/// the error.
 Future<void> trySay(
   BuildContext context,
   Future<void> Function() f,
-  String failed,
+  String Function(String error) failed,
 ) async {
   try {
     await f();
   } catch (e) {
-    if (context.mounted) say(context, '$failed: $e');
+    if (context.mounted) say(context, failed(said(e)));
   }
 }
 
@@ -81,18 +83,16 @@ class ConnectAsk {
           await showDialog<bool>(
             context: context,
             builder: (context) => AlertDialog(
-              title: const Text('Notifications'),
-              content: const Text(
-                'bark tells you when a text comes. Android asks next.',
-              ),
+              title: Text(tr.settingsNotifications),
+              content: Text(tr.settingsNotificationsWhy),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Not now'),
+                  child: Text(tr.notNow),
                 ),
                 FilledButton(
                   onPressed: () => Navigator.pop(context, true),
-                  child: const Text('Continue'),
+                  child: Text(tr.commonContinue),
                 ),
               ],
             ),
@@ -104,14 +104,16 @@ class ConnectAsk {
     } on NotOurs catch (e) {
       if (context.mounted) await _notOurs(context, e);
     } on BondKept catch (e) {
-      if (context.mounted) await askToForget(context, app, '$e');
+      if (context.mounted) await askToForget(context, app, said(e));
     } catch (e) {
       if (!context.mounted) return;
       final why = asGuest
           ? notPairedLine(e)
           : e is NotPaired || e is LinkEnded || e is NotSeen
-          ? '$e.'
-          : '${pairs ? 'Pairing' : 'Connecting'} failed: $e';
+          ? '${said(e)}.'
+          : pairs
+          ? tr.settingsPairingFailed(said(e))
+          : tr.settingsConnectingFailed(said(e));
       if (pairs) {
         await _notPaired(context, why);
       } else {
@@ -124,12 +126,12 @@ class ConnectAsk {
   Future<void> _notPaired(BuildContext context, String why) => showDialog<void>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('Not paired'),
+      title: Text(tr.settingsNotPaired),
       content: Text(why),
       actions: [
         FilledButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('OK'),
+          child: Text(tr.ok),
         ),
       ],
     ),
@@ -141,19 +143,16 @@ class ConnectAsk {
     final again = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('This node is no longer yours'),
-        content: Text(
-          '${shownName(e.node)} no longer knows this phone. Pair again with '
-          'the code on its screen.',
-        ),
+        title: Text(tr.settingsNotOurs),
+        content: Text(tr.settingsNotOursHow(shownName(e.node))),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Not now'),
+            child: Text(tr.notNow),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Pair again'),
+            child: Text(tr.pairAgain),
           ),
         ],
       ),

@@ -70,6 +70,8 @@ languages it has, else English.
   and its `one` also serves 21, 31 and so on, so it carries the number.
 - **The log.** A notice is shown in the language spoken and logged in
   English: `english`, in `lib/l10n.dart`, is the words for a log line.
+  An error a person may read implements `Spoken`: a screen shows
+  `said(e)`, never `'$e'`, and `'$e'` in a log line is English.
 - **What stays English.** The debug screen's log, which is what a fault
   report carries; the words on the node's screen, which the app quotes
   as they are shown; and the twelve backup words.

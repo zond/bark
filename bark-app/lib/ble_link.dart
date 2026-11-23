@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:universal_ble/universal_ble.dart';
 
+import 'l10n.dart';
 import 'link.dart';
 import 'node_link.dart';
 
@@ -188,11 +189,13 @@ Future<BleDevice?> _scanUntil(
 const Duration pairWait = Duration(seconds: 4 * 30);
 
 /// The node `node` was not seen in a scan.
-class NotSeen implements Exception {
+class NotSeen implements Exception, Spoken {
   final String node;
   const NotSeen(this.node);
   @override
-  String toString() => '$node not found: come nearer and try again';
+  String words(AppLocalizations w) => w.linkNotSeen(node);
+  @override
+  String toString() => words(english);
 }
 
 Future<void> stopBleScan() async {

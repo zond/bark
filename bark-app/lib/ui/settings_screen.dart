@@ -11,6 +11,7 @@ import 'package:flutter/semantics.dart';
 
 import '../app.dart';
 import '../app_layer.dart';
+import '../l10n.dart';
 import '../link.dart';
 import '../phone_place.dart';
 import 'common.dart';
@@ -80,7 +81,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!mounted) return;
     SemanticsService.sendAnnouncement(
       View.of(context),
-      'Backup: write down your 12 words',
+      tr.settingsBackupAnnounce,
       TextDirection.ltr,
     );
     setState(() => _backupLit = false);
@@ -106,7 +107,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       return await app.place.here();
     } on NoPlace catch (e) {
-      if (mounted) say(context, '$e');
+      if (mounted) say(context, said(e));
       return null;
     }
   }
@@ -134,13 +135,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       alignment: Alignment.centerLeft,
       child: OutlinedButton.icon(
         icon: const Icon(Icons.my_location),
-        label: const Text('Use this phone\'s location'),
+        label: Text(tr.settingsPlaceHere),
         onPressed: _placeHere,
       ),
     ),
     if (_placeSet != null)
       Text(
-        'Place set to $_placeSet.',
+        tr.settingsPlaceSet(_placeSet!),
         style: Theme.of(context).textTheme.bodySmall,
       ),
   ];
@@ -149,7 +150,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final la = double.tryParse(lat.text.trim());
     final lo = double.tryParse(lon.text.trim());
     if (la == null || lo == null || la.abs() > 90 || lo.abs() > 180) {
-      say(context, 'Latitude and longitude in degrees, please');
+      say(context, tr.settingsDegreesPlease);
       return;
     }
     await app.session.setMapPoint(Position.fromDegrees(la, lo));
@@ -159,7 +160,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) => Watch(
     app,
     (context) => Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      appBar: AppBar(title: Text(tr.settings)),
       body: SafeArea(
         top: false,
         // Built whole, not lazily, so that the backup can be scrolled to.
@@ -174,13 +175,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               HomeSection(app, _connect),
               ..._thisNode(),
               UpdatesSection(app),
-              SettingsHeading('My name'),
+              SettingsHeading(tr.commonMyName),
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: Text(app.me.name.isEmpty ? 'not set' : app.me.name),
-                subtitle: const Text('On your card, for others to see'),
+                title: Text(app.me.name.isEmpty ? tr.nameNotSet : app.me.name),
+                subtitle: Text(tr.settingsNameHow),
                 trailing: IconButton(
-                  tooltip: 'Change',
+                  tooltip: tr.changeName,
                   icon: const Icon(Icons.edit),
                   onPressed: () => askMyName(context, app),
                 ),
@@ -206,8 +207,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.bug_report_outlined),
-                title: const Text('Debug'),
-                subtitle: const Text('What the link says, for a bug report'),
+                title: Text(tr.debug),
+                subtitle: Text(tr.settingsDebugHow),
                 onTap: () => Navigator.of(context)
                     .push(MaterialPageRoute(builder: (_) => DebugScreen(app))),
               ),
@@ -224,7 +225,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final s = app.session;
     if (!s.connected || s.guest) return [];
     return [
-      SettingsHeading('This node'),
+      SettingsHeading(tr.settingsThisNode),
       ..._public(),
       ..._place(),
       ..._phones(),
@@ -239,13 +240,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return [
       SwitchListTile(
         contentPadding: EdgeInsets.zero,
-        title: const Text('Public'),
-        subtitle: const Text('Any phone near it can text through it'),
+        title: Text(tr.settingsPublic),
+        subtitle: Text(tr.settingsPublicHow),
         value: p,
         onChanged: (v) => trySay(
           context,
           () => app.session.writePublic(v),
-          'Setting Public failed',
+          tr.settingsPublicFailed,
         ),
       ),
     ];
@@ -267,33 +268,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
       r,
       home: home,
       atNode: true,
-      ownAction: TextButton(onPressed: _askUnpair, child: const Text('Unpair')),
+      ownAction: TextButton(
+        onPressed: _askUnpair,
+        child: Text(tr.settingsUnpair),
+      ),
     );
     return [
-      _subheading('Phones paired with this node', help: _phonesHelp),
+      _subheading(tr.settingsPhonesPaired, help: tr.settingsPhonesHelp),
       if ((s.node?.room ?? 1) == 0)
         Padding(
           padding: const EdgeInsets.only(top: 8),
           child: Text(
-            'Full: remove one before another can pair.',
+            tr.settingsPhonesFull,
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
       for (final r in paired) row(r, home: false),
       if (homes.isNotEmpty) ...[
-        _subheading('Phones with a home here'),
+        _subheading(tr.settingsPhonesHome),
         for (final r in homes) row(r, home: true),
         if (!homes.any((r) => r.owner))
           ListTile(
             contentPadding: EdgeInsets.zero,
-            title: const Text('This node has no owner'),
+            title: Text(tr.settingsNoOwner),
             trailing: app.mailbox.atHome
                 ? TextButton(
                     onPressed: () => trySay(context, () async {
                       final r = await app.mailbox.becomeOwner();
                       if (mounted) say(context, r);
-                    }, 'Failed'),
-                    child: const Text('Become owner'),
+                    }, tr.commonFailed),
+                    child: Text(tr.settingsBecomeOwner),
                   )
                 : null,
           ),
@@ -314,29 +318,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _askUnpair() async {
     final s = app.session;
     final name = nodeName(s.node!.id);
-    final others = app.session.nodes.paired.length > 1
-        ? ' It stays paired with your other nodes.'
-        : '';
+    final others = app.session.nodes.paired.length > 1;
     // With the last phone gone a node is public, whatever its phones set.
     final last = !(s.phones ?? const []).any((r) => r.paired && !r.mine);
-    final after = last ? ' With no phone left, it turns public.' : '';
-    final done = last ? 'Unpaired. The node is public.' : 'Unpaired.';
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Unpair ${shownName(name)}?'),
+        title: Text(tr.settingsUnpairTitle(shownName(name))),
         content: Text(
-          'The node and this phone forget each other; texts and contacts '
-          'stay.$after$others',
+          [
+            tr.settingsUnpairHow,
+            if (last) tr.settingsUnpairLast,
+            if (others) tr.settingsUnpairOthers,
+          ].join(' '),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text(tr.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Unpair'),
+            child: Text(tr.settingsUnpair),
           ),
         ],
       ),
@@ -344,79 +347,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (ok != true || !mounted) return;
     await trySay(context, () async {
       // The home is the node's mailbox key, which it keeps.
-      final home = app.mailbox.atHome ? ' It stays your home.' : '';
+      final done = [
+        last ? tr.settingsUnpairedPublic : tr.settingsUnpaired,
+        if (app.mailbox.atHome) tr.staysYourHome,
+      ];
       final forgotten = await app.links.unpair();
       if (!mounted) return;
       if (forgotten) {
-        say(context, '$done$home');
+        say(context, done.join(' '));
         return;
       }
       await askToForget(
         context,
         app,
-        '$done$home Forget the node in Bluetooth settings too: the phone '
-        'kept its pairing.',
+        [...done, tr.forgetInBluetoothToo].join(' '),
       );
-    }, 'Unpairing failed');
+    }, tr.settingsUnpairFailed);
   }
 
   List<Widget> _battery() {
     final e = _exempt;
     if (e == null) return [];
     return [
-      SettingsHeading('Battery'),
-      Text(
-        e
-            ? 'bark may run with the screen off.'
-            : 'With the screen off, Android may close bark\'s link after '
-                  'some hours.',
-      ),
+      SettingsHeading(tr.settingsBattery),
+      Text(e ? tr.settingsBatteryExempt : tr.settingsBatteryNotExempt),
       if (!e) ...[
         const SizedBox(height: 8),
         Align(
           alignment: Alignment.centerLeft,
           child: FilledButton(
             onPressed: app.notifier.askBatteryExempt,
-            child: const Text('Let bark run'),
+            child: Text(tr.settingsLetRun),
           ),
         ),
       ],
     ];
   }
 
-  /// What the node's phones are, for whoever asks.
-  static const _phonesHelp =
-      'A node keeps up to eight phones. Anyone at it can pair, by the code '
-      'on its screen, and every paired phone can change its settings, so '
-      'remove a phone you do not know or one that is gone. A removal also '
-      'takes the code on the node\'s screen, to show you are there.\n\n'
-      'A phone with a home here has its mail kept at this node.\n\n'
-      'The owner, one of them, chooses who has a home here, also from far '
-      'away: they can give a contact a home here, remove one, or make '
-      'someone else the owner. The first to make the node their home is its '
-      'owner. At the node, any paired phone can make another the owner by '
-      'the code on the screen.';
-
   List<Widget> _backup() => [
-    SettingsHeading('Backup'),
-    Text(
-      app.me.backedUp
-          ? 'Your 12 words bring your identity back on another phone.'
-          : 'Write down your 12 words: a lost phone without them loses your '
-                'identity.',
-    ),
+    SettingsHeading(tr.settingsBackup),
+    Text(app.me.backedUp ? tr.settingsBackedUp : tr.settingsNotBackedUp),
     const SizedBox(height: 8),
     Wrap(
       spacing: 8,
       children: [
         FilledButton(
           onPressed: () => _showWords(),
-          child: const Text('Show my words'),
+          child: Text(tr.settingsShowWords),
         ),
-        OutlinedButton(
-          onPressed: _restore,
-          child: const Text('Restore from words'),
-        ),
+        OutlinedButton(onPressed: _restore, child: Text(tr.settingsRestore)),
       ],
     ),
   ];
@@ -426,7 +405,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (context) => Secret(
         child: AlertDialog(
-          title: const Text('My 12 words'),
+          title: Text(tr.settingsMyWords),
           content: SelectableText(
             app.me.phrase.join(' '),
             style: const TextStyle(fontSize: 18),
@@ -434,7 +413,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           actions: [
             FilledButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('I wrote them down'),
+              child: Text(tr.settingsWroteThem),
             ),
           ],
         ),
@@ -446,21 +425,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _restore() async {
     final go = await confirm(
       context,
-      'Restore from words?',
-      'This phone takes the identity of the words. Contacts reach it only '
-          'once they have its card.',
-      'Restore',
+      tr.settingsRestoreTitle,
+      tr.settingsRestoreHow,
+      tr.settingsRestoreButton,
     );
     if (!go || !mounted) return;
-    final w = await askText(context, 'Your 12 words', '', secret: true);
+    final w = await askText(context, tr.settingsYourWords, '', secret: true);
     if (w == null || w.isEmpty) return;
     final seed = seedOfPhrase(w);
     if (seed == null) {
-      if (mounted) say(context, 'Those are not 12 words of a backup');
+      if (mounted) say(context, tr.settingsNotWords);
       return;
     }
     await app.moving.restoreWords(seed);
-    if (mounted) say(context, 'Identity restored');
+    if (mounted) say(context, tr.settingsRestored);
   }
 
   /// The node's place, from its GPS or set here.
@@ -468,25 +446,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final s = app.session;
     final st = s.status;
     return [
-      _subheading('Place'),
+      _subheading(tr.settingsPlace),
       Text(
         st == null || !st.placed
-            ? 'The node has no place yet.'
+            ? tr.settingsNoPlace
             : st.mapPoint
-            ? 'Set by a person: ${st.address}.'
-            : 'From its GPS: ${st.address}.',
+            ? tr.settingsPlaceByPerson('${st.address}')
+            : tr.settingsPlaceByGps('${st.address}'),
       ),
       const SizedBox(height: 4),
-      Text(
-        'For a node indoors, out of GPS reach. It wins over GPS until '
-        'cleared.',
-        style: Theme.of(context).textTheme.bodySmall,
-      ),
+      Text(tr.settingsPlaceHow, style: Theme.of(context).textTheme.bodySmall),
       Row(
         children: [
-          Expanded(child: _degrees(lat, 'Latitude')),
+          Expanded(child: _degrees(lat, tr.settingsLatitude)),
           const SizedBox(width: 16),
-          Expanded(child: _degrees(lon, 'Longitude')),
+          Expanded(child: _degrees(lon, tr.settingsLongitude)),
         ],
       ),
       const SizedBox(height: 8),
@@ -495,10 +469,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       Wrap(
         spacing: 8,
         children: [
-          FilledButton(onPressed: _setMapPoint, child: const Text('Set')),
+          FilledButton(
+            onPressed: _setMapPoint,
+            child: Text(tr.settingsPlaceSetButton),
+          ),
           OutlinedButton(
             onPressed: () => s.setMapPoint(null),
-            child: const Text('Clear'),
+            child: Text(tr.settingsPlaceClear),
           ),
         ],
       ),

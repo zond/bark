@@ -437,9 +437,9 @@
     "placeholders": {"name": {"type": "String"}}
   },
   "threadRemoveHow": "Their texts stay; to write again, add their card.",
-  "threadRemove": "Remove",
-  "@threadRemove": {
-    "description": "The button that removes a contact, in the dialog that asks."
+  "remove": "Remove",
+  "@remove": {
+    "description": "A button that removes a contact or a phone's record, in the dialog that asks or on the phone's row."
   },
   "threadRemoveContact": "Remove contact",
   "threadNotVerified": "Not verified yet: their first reply proves it is them.",
@@ -559,8 +559,9 @@
     "description": "{id} is a message ID in hex.",
     "placeholders": {"id": {"type": "String"}}
   },
-  "sessionSendFailed": "Sending failed: {error}",
-  "@sessionSendFailed": {
+  "sendFailed": "Sending failed: {error}",
+  "@sendFailed": {
+    "description": "A text, or a command to the home node, could not be sent.",
     "placeholders": {"error": {"type": "String"}}
   },
   "sessionConfirmRefused": "The node refused the inbox confirmation: {error}",
@@ -674,12 +675,12 @@
   "@cardShareFailed": {
     "placeholders": {"error": {"type": "String"}}
   },
-  "cardNameNotSet": "not set",
-  "@cardNameNotSet": {
-    "description": "Under My name, when the person has no name yet."
+  "nameNotSet": "not set",
+  "@nameNotSet": {
+    "description": "In place of the person's name, when they have none yet."
   },
-  "cardChangeName": "Change",
-  "@cardChangeName": {
+  "changeName": "Change",
+  "@changeName": {
     "description": "The tooltip of the button that changes the person's name."
   },
   "cardDetails": "Details",
@@ -766,5 +767,542 @@
   "factExchanged": "This node has handed it a text and it took it. That proves the link works both ways: it hears this node, as well as being heard.",
   "factDemoted": "It did not answer this node's last three tries to pass it a text, so it may no longer hear this node. Until it answers again, or for six and a half minutes, it is tried only after every other neighbour with a good enough link.",
   "factAvoided": "It turned a text down, asking for a wait, or did not answer one. Nothing is sent to it for a while; texts go round it meanwhile, and wait for it only where there is no other way.",
-  "factPaired": "This phone is paired with this node: the node sends your texts into the network, and keeps the ones for you until the app reads them. Only the paired phone sees the node's neighbours on this map."
+  "factPaired": "This phone is paired with this node: the node sends your texts into the network, and keeps the ones for you until the app reads them. Only the paired phone sees the node's neighbours on this map.",
+
+  "ok": "OK",
+  "@ok": {
+    "description": "The button that closes a dialog that only tells something."
+  },
+  "debug": "Debug",
+  "@debug": {
+    "description": "The screen of the app's log, and the row in Settings that opens it."
+  },
+  "pairAgain": "Pair again",
+  "@pairAgain": {
+    "description": "A button: pair anew, by the code on the node's screen, with a node that no longer knows this phone."
+  },
+  "staysYourHome": "It stays your home.",
+  "@staysYourHome": {
+    "description": "A sentence after one that says a node was unpaired or forgotten: that node is still the person's home node."
+  },
+  "forgetInBluetoothToo": "Forget the node in Bluetooth settings too: the phone kept its pairing.",
+  "@forgetInBluetoothToo": {
+    "description": "After the app unpaired or forgot a node: Android's own pairing with it is still there. Shown above a button to Bluetooth settings."
+  },
+
+  "settingsBackupAnnounce": "Backup: write down your 12 words",
+  "@settingsBackupAnnounce": {
+    "description": "What a screen reader says when Settings opens scrolled to the backup."
+  },
+  "settingsPlaceHere": "Use this phone's location",
+  "@settingsPlaceHere": {
+    "description": "A button that sets the node's place to where the phone is."
+  },
+  "settingsPlaceSet": "Place set to {place}.",
+  "@settingsPlaceSet": {
+    "description": "Under settingsPlaceHere, once it has set the node's place.",
+    "placeholders": {"place": {"type": "String", "example": "59.329300, 18.068600", "description": "Latitude and longitude in degrees."}}
+  },
+  "settingsDegreesPlease": "Latitude and longitude in degrees, please",
+  "@settingsDegreesPlease": {
+    "description": "The place typed is not two numbers in degrees."
+  },
+  "settingsNameHow": "On your card, for others to see",
+  "@settingsNameHow": {
+    "description": "Under the person's name in Settings."
+  },
+  "settingsDebugHow": "What the link says, for a bug report",
+  "@settingsDebugHow": {
+    "description": "Under the row Debug in Settings; the link is the phone's Bluetooth link with the node."
+  },
+  "settingsThisNode": "This node",
+  "@settingsThisNode": {
+    "description": "A heading in Settings: the paired node the phone is connected to, and its own settings."
+  },
+  "settingsPublic": "Public",
+  "@settingsPublic": {
+    "description": "The title of a switch: whether the node serves phones that have not paired with it."
+  },
+  "settingsPublicHow": "Any phone near it can text through it",
+  "@settingsPublicHow": {
+    "description": "Under the switch settingsPublic; it is the node."
+  },
+  "settingsPublicFailed": "Setting Public failed: {error}",
+  "@settingsPublicFailed": {
+    "description": "Public is the switch settingsPublic.",
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "settingsUnpair": "Unpair",
+  "@settingsUnpair": {
+    "description": "A button: this phone and the node forget their pairing."
+  },
+  "settingsUnpairTitle": "Unpair {node}?",
+  "@settingsUnpairTitle": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "settingsUnpairHow": "The node and this phone forget each other; texts and contacts stay.",
+  "@settingsUnpairHow": {
+    "description": "The dialog that asks before unpairing; settingsUnpairLast and settingsUnpairOthers may follow it."
+  },
+  "settingsUnpairLast": "With no phone left, it turns public.",
+  "@settingsUnpairLast": {
+    "description": "It is the node: this phone is the last paired with it."
+  },
+  "settingsUnpairOthers": "It stays paired with your other nodes.",
+  "@settingsUnpairOthers": {
+    "description": "It is this phone."
+  },
+  "settingsUnpaired": "Unpaired.",
+  "settingsUnpairedPublic": "Unpaired. The node is public.",
+  "settingsUnpairFailed": "Unpairing failed: {error}",
+  "@settingsUnpairFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "settingsPhonesPaired": "Phones paired with this node",
+  "@settingsPhonesPaired": {
+    "description": "A heading, and the title of its help (settingsPhonesHelp)."
+  },
+  "settingsPhonesHelp": "A node keeps up to eight phones. Anyone at it can pair, by the code on its screen, and every paired phone can change its settings, so remove a phone you do not know or one that is gone. A removal also takes the code on the node's screen, to show you are there.\n\nA phone with a home here has its mail kept at this node.\n\nThe owner, one of them, chooses who has a home here, also from far away: they can give a contact a home here, remove one, or make someone else the owner. The first to make the node their home is its owner. At the node, any paired phone can make another the owner by the code on the screen.",
+  "@settingsPhonesHelp": {
+    "description": "The help on the node's phones. 'One of them' is one of the phones with a home here."
+  },
+  "settingsPhonesFull": "Full: remove one before another can pair.",
+  "@settingsPhonesFull": {
+    "description": "Under settingsPhonesPaired, when the node has as many phones as it can."
+  },
+  "settingsPhonesHome": "Phones with a home here",
+  "@settingsPhonesHome": {
+    "description": "A heading: the phones whose home node this node is."
+  },
+  "settingsNoOwner": "This node has no owner",
+  "settingsBecomeOwner": "Become owner",
+  "@settingsBecomeOwner": {
+    "description": "A button beside settingsNoOwner."
+  },
+  "settingsBattery": "Battery",
+  "@settingsBattery": {
+    "description": "A heading in Settings: whether Android lets the app run with the screen off."
+  },
+  "settingsBatteryExempt": "bark may run with the screen off.",
+  "@settingsBatteryExempt": {
+    "description": "bark is the app's name, always in lower case."
+  },
+  "settingsBatteryNotExempt": "With the screen off, Android may close bark's link after some hours.",
+  "@settingsBatteryNotExempt": {
+    "description": "The link is the app's Bluetooth link with the node."
+  },
+  "settingsLetRun": "Let bark run",
+  "@settingsLetRun": {
+    "description": "A button that asks Android to let the app run with the screen off."
+  },
+  "settingsBackup": "Backup",
+  "@settingsBackup": {
+    "description": "A heading in Settings: the 12 backup words."
+  },
+  "settingsBackedUp": "Your 12 words bring your identity back on another phone.",
+  "settingsNotBackedUp": "Write down your 12 words: a lost phone without them loses your identity.",
+  "settingsShowWords": "Show my words",
+  "settingsRestore": "Restore from words",
+  "@settingsRestore": {
+    "description": "A button that opens settingsRestoreTitle."
+  },
+  "settingsMyWords": "My 12 words",
+  "@settingsMyWords": {
+    "description": "The title of the dialog that shows the backup words."
+  },
+  "settingsWroteThem": "I wrote them down",
+  "@settingsWroteThem": {
+    "description": "The button that closes the dialog of the backup words."
+  },
+  "settingsRestoreTitle": "Restore from words?",
+  "settingsRestoreHow": "This phone takes the identity of the words. Contacts reach it only once they have its card.",
+  "settingsRestoreButton": "Restore",
+  "@settingsRestoreButton": {
+    "description": "The button in the dialog settingsRestoreTitle."
+  },
+  "settingsYourWords": "Your 12 words",
+  "@settingsYourWords": {
+    "description": "The title of the dialog where the backup words are typed."
+  },
+  "settingsNotWords": "Those are not 12 words of a backup",
+  "settingsRestored": "Identity restored",
+  "settingsPlace": "Place",
+  "@settingsPlace": {
+    "description": "A heading: the node's position, from its GPS or set by hand."
+  },
+  "settingsNoPlace": "The node has no place yet.",
+  "settingsPlaceByPerson": "Set by a person: {address}.",
+  "@settingsPlaceByPerson": {
+    "description": "The node's place, set by hand in the app.",
+    "placeholders": {"address": {"type": "String", "description": "The node's position in degrees."}}
+  },
+  "settingsPlaceByGps": "From its GPS: {address}.",
+  "@settingsPlaceByGps": {
+    "description": "The node's place, from its own GPS.",
+    "placeholders": {"address": {"type": "String", "description": "The node's position in degrees."}}
+  },
+  "settingsPlaceHow": "For a node indoors, out of GPS reach. It wins over GPS until cleared.",
+  "@settingsPlaceHow": {
+    "description": "Under settingsPlace: what a place set by hand is for. It is that place; cleared by the button settingsPlaceClear."
+  },
+  "settingsLatitude": "Latitude",
+  "@settingsLatitude": {
+    "description": "The label of a field, in degrees."
+  },
+  "settingsLongitude": "Longitude",
+  "settingsPlaceSetButton": "Set",
+  "@settingsPlaceSetButton": {
+    "description": "A button: set the node's place to the latitude and longitude typed."
+  },
+  "settingsPlaceClear": "Clear",
+  "@settingsPlaceClear": {
+    "description": "A button: the node's place set by hand goes, and its GPS gives the place again."
+  },
+  "settingsNotifications": "Notifications",
+  "@settingsNotifications": {
+    "description": "The title of the dialog shown before Android asks to allow notifications."
+  },
+  "settingsNotificationsWhy": "bark tells you when a text comes. Android asks next.",
+  "@settingsNotificationsWhy": {
+    "description": "bark is the app's name, always in lower case."
+  },
+  "settingsPairingFailed": "Pairing failed: {error}",
+  "@settingsPairingFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "settingsConnectingFailed": "Connecting failed: {error}",
+  "@settingsConnectingFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "settingsNotPaired": "Not paired",
+  "@settingsNotPaired": {
+    "description": "The title of the dialog that says why a pairing ended without one."
+  },
+  "settingsNotOurs": "This node is no longer yours",
+  "@settingsNotOurs": {
+    "description": "The title of a dialog: the node removed this phone."
+  },
+  "settingsNotOursHow": "{node} no longer knows this phone. Pair again with the code on its screen.",
+  "@settingsNotOursHow": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+
+  "nodeConnecting": "Connecting…",
+  "nodeTypeCode": "Type the code on the node's screen",
+  "@nodeTypeCode": {
+    "description": "While the phone pairs with a node."
+  },
+  "nodePairedConnecting": "Paired, connecting…",
+  "nodeHeading": "Node",
+  "@nodeHeading": {
+    "description": "The heading of Settings' section on the node the phone is on."
+  },
+  "nodeDisconnect": "Disconnect",
+  "@nodeDisconnect": {
+    "description": "A button that ends the link with the node; the pairing stays."
+  },
+  "nodeStopLooking": "Stop looking",
+  "@nodeStopLooking": {
+    "description": "A button: the phone stops looking for nodes by itself."
+  },
+  "nodeScan": "Scan",
+  "@nodeScan": {
+    "description": "A button that looks for the nodes nearby."
+  },
+  "nodeStopScan": "Stop",
+  "@nodeStopScan": {
+    "description": "The button nodeScan while it looks."
+  },
+  "nodeScanFailed": "Scan failed: {error}",
+  "@nodeScanFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "nodeNoneFound": "No node found nearby.",
+  "nodeNoneFoundHow": "Switch one on, or come closer.",
+  "nodePairedWith": "Paired with",
+  "@nodePairedWith": {
+    "description": "A heading above the nodes this phone is paired with."
+  },
+  "nodeForget": "Forget",
+  "@nodeForget": {
+    "description": "A button: this phone stops listing a node it was paired with."
+  },
+  "nodeLostTitle": "{node} does not know this phone",
+  "@nodeLostTitle": {
+    "description": "The title of the help on a paired node that removed this phone.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "nodeLostHelp": "Someone paired with it removed this phone, the node lost its memory, or you moved here from another phone: a pairing stays on the phone it was made on.\n\nPair again: pair anew with the code on its screen. Shown while the node is in reach.\n\nForget: stop listing the node here.",
+  "@nodeLostHelp": {
+    "description": "The help of nodeLostTitle. Pair again and Forget are the buttons pairAgain and nodeForget."
+  },
+  "nodeConnected": "Connected",
+  "@nodeConnected": {
+    "description": "How a node in Settings stands, as a line of its own: the phone is connected to it. Also the first word of a found node's row, before words such as nodeFoundPublic."
+  },
+  "nodeHomeConnected": "Your home, connected",
+  "@nodeHomeConnected": {
+    "description": "How a paired node stands, under its ID: the person's home, and the phone is connected to it. The other nodeHome… messages are the same for the home."
+  },
+  "nodeLost": "Does not know this phone",
+  "@nodeLost": {
+    "description": "How a paired node stands: it removed this phone."
+  },
+  "nodeHomeLost": "Your home, does not know this phone",
+  "nodeUnserved": "Cannot be used yet. Tap to try again",
+  "@nodeUnserved": {
+    "description": "How a paired node stands: it or this app needs an update."
+  },
+  "nodeHomeUnserved": "Your home, cannot be used yet. Tap to try again",
+  "nodeAway": "Not in reach",
+  "@nodeAway": {
+    "description": "How a paired node stands: the phone looks for it and does not hear it."
+  },
+  "nodeHomeAway": "Your home, not in reach",
+  "nodeNotLooking": "Not looking. Tap to connect",
+  "@nodeNotLooking": {
+    "description": "How a paired node stands: the phone is not looking for nodes."
+  },
+  "nodeHomeNotLooking": "Your home, not looking. Tap to connect",
+  "nodeYourHome": "Your home",
+  "@nodeYourHome": {
+    "description": "Under a paired node's ID: it is the person's home."
+  },
+  "nodeFoundPublic": "public",
+  "@nodeFoundPublic": {
+    "description": "A node found by a scan serves phones that have not paired. Lower case: it is one of a list of words joined by commas, such as nodeConnected, public, signalStrong."
+  },
+  "nodeFoundUnserved": "cannot be used yet",
+  "@nodeFoundUnserved": {
+    "description": "As nodeFoundPublic: lower case, in the list of words under a found node."
+  },
+  "nodePair": "Pair",
+  "@nodePair": {
+    "description": "A button: pair with the node."
+  },
+  "nodePairTitle": "Pair with {node}?",
+  "@nodePairTitle": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "nodePairHow": "You can then change its settings and update it. Type the code on its screen.",
+  "@nodePairHow": {
+    "description": "It is the node."
+  },
+  "nodeForgetTitle": "Forget {node}?",
+  "@nodeForgetTitle": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "nodeForgetHow": "This phone stops listing it.",
+  "@nodeForgetHow": {
+    "description": "It is the node; staysYourHome may follow."
+  },
+  "nodeForgotten": "Forgotten.",
+  "@nodeForgotten": {
+    "description": "The node was forgotten; staysYourHome, then forgetInBluetoothToo or nodeForgetLater, may follow."
+  },
+  "nodeForgetLater": "The phone drops its pairing when it next hears the node, or forget it in Bluetooth settings now.",
+  "@nodeForgetLater": {
+    "description": "The phone is Android, which keeps its own pairing with the node."
+  },
+  "nodeForgetFailed": "Forgetting failed: {error}",
+  "@nodeForgetFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+
+  "peopleMakeOwner": "Make owner",
+  "@peopleMakeOwner": {
+    "description": "A button or menu item on a phone's row: that phone's person becomes the home node's owner."
+  },
+  "peopleThisPhone": "this phone",
+  "@peopleThisPhone": {
+    "description": "Under a phone in the node's list: it is this phone. Lower case, as it is one of a list of words joined by commas; so are the other words of that list, peopleOwner to peopleNeverSeen."
+  },
+  "peopleYou": "you",
+  "@peopleYou": {
+    "description": "In the list of words under a phone: it is the person's own."
+  },
+  "peopleOwner": "owner",
+  "peoplePairedToo": "paired too",
+  "@peoplePairedToo": {
+    "description": "Under a phone in the list of homes: it is paired with this node as well."
+  },
+  "peopleHomeToo": "has a home here too",
+  "@peopleHomeToo": {
+    "description": "Under a phone in the list of paired phones: it has its home here as well."
+  },
+  "peopleLinked": "linked now",
+  "@peopleLinked": {
+    "description": "The phone is connected to the node now."
+  },
+  "peopleSeen": "seen {when}",
+  "@peopleSeen": {
+    "description": "When the node last saw the phone.",
+    "placeholders": {"when": {"type": "String", "description": "A day, such as timeToday, timeYesterday or timeDaysAgo."}}
+  },
+  "peopleNeverSeen": "seen never",
+  "@peopleNeverSeen": {
+    "description": "The node has not yet seen the phone."
+  },
+  "peopleChoices": "Choices",
+  "@peopleChoices": {
+    "description": "The tooltip of a phone row's menu."
+  },
+  "peopleNoName": "A phone with no name",
+  "@peopleNoName": {
+    "description": "A phone's row, when its person has given no name."
+  },
+  "peopleRemovePhoneAndHome": "Remove {name}'s phone and its home?",
+  "@peopleRemovePhoneAndHome": {
+    "description": "The title of a dialog. {name} is the name the phone's person gave.",
+    "placeholders": {"name": {"type": "String"}}
+  },
+  "peopleRemoveUnnamedAndHome": "Remove the phone with no name and its home?",
+  "peopleRemovePhone": "Remove {name}'s phone?",
+  "@peopleRemovePhone": {
+    "placeholders": {"name": {"type": "String"}}
+  },
+  "peopleRemoveUnnamed": "Remove the phone with no name?",
+  "peopleRemoveThisHome": "Remove this home?",
+  "peoplePhoneGoes": "{name}'s phone can no longer use the node unless paired again.",
+  "@peoplePhoneGoes": {
+    "placeholders": {"name": {"type": "String"}}
+  },
+  "peopleUnnamedGoes": "The phone with no name can no longer use the node unless paired again.",
+  "peopleNodeStopsMail": "The node stops keeping their mail.",
+  "@peopleNodeStopsMail": {
+    "description": "Their: the person of the phone being removed."
+  },
+  "peopleRemoveHome": "Remove {name}'s home?",
+  "@peopleRemoveHome": {
+    "description": "The owner removes a person's home at their home node.",
+    "placeholders": {"name": {"type": "String"}}
+  },
+  "peopleRemoveTheirHome": "Remove this person's home?",
+  "@peopleRemoveTheirHome": {
+    "description": "As peopleRemoveHome, for a person with no name."
+  },
+  "peopleHomeStopsMail": "Your home stops keeping their mail.",
+  "peopleMakeOwnerTitle": "Make {name} the owner?",
+  "@peopleMakeOwnerTitle": {
+    "placeholders": {"name": {"type": "String"}}
+  },
+  "peopleMakeThemOwner": "Make this person the owner?",
+  "peopleOwnerChooses": "The owner chooses who has a home here.",
+  "peopleOwnerChoosesNotYou": "The owner chooses who has a home here. You no longer can.",
+  "@peopleOwnerChoosesNotYou": {
+    "description": "The person, now the owner, hands the role on."
+  },
+  "peopleTypeCodeNext": "You type the code the node then shows.",
+  "@peopleTypeCodeNext": {
+    "description": "Ends the dialog of a change made at the node, before the button peopleShowCode."
+  },
+  "peopleShowCode": "Show the code",
+  "@peopleShowCode": {
+    "description": "A button: the node shows a code on its screen."
+  },
+  "peopleGone": "Already gone.",
+  "@peopleGone": {
+    "description": "Another phone removed the record first."
+  },
+  "peopleCodeFailed": "Asking the node for a code failed: {error}",
+  "@peopleCodeFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "peopleRemoved": "Removed",
+  "@peopleRemoved": {
+    "description": "A phone's record was removed."
+  },
+  "peopleIsOwner": "{name} is the owner",
+  "@peopleIsOwner": {
+    "placeholders": {"name": {"type": "String"}}
+  },
+  "peopleThemOwner": "This person is the owner",
+  "@peopleThemOwner": {
+    "description": "As peopleIsOwner, for a person with no name."
+  },
+  "peopleNotChanged": "Not changed",
+  "@peopleNotChanged": {
+    "description": "The title of a dialog: a wrong or late code changed nothing."
+  },
+  "peopleNotRemoved": "Not removed",
+  "peopleWrongCode": "Wrong code, or too late. Each code works once.",
+  "peopleNewCode": "New code",
+  "@peopleNewCode": {
+    "description": "A button: ask the node for another code."
+  },
+  "peopleItFailed": "It failed: {error}",
+  "@peopleItFailed": {
+    "description": "The change typed with the node's code failed.",
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "peopleCodeTitle": "The code on the node",
+  "@peopleCodeTitle": {
+    "description": "The title of the dialog where the code is typed."
+  },
+  "peopleCodeHow": "Type the six digits under {word} on the node's screen, within 30 s.",
+  "@peopleCodeHow": {
+    "placeholders": {"word": {"type": "String", "example": "CONFIRM", "description": "The word on the node's screen, which stays as the node shows it."}}
+  },
+  "peopleCode": "Code",
+  "@peopleCode": {
+    "description": "The label of the field where the code is typed."
+  },
+
+  "linkNeedsFirmware": "{node} needs newer firmware. Update the node.",
+  "@linkNeedsFirmware": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "linkNeedsApp": "{node} needs a newer app. Update the app.",
+  "@linkNeedsApp": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "linkMalformed": "malformed {what}",
+  "@linkMalformed": {
+    "description": "Why a value the node sent could not be read, after a colon, as in sessionBadValue; lower case. {what} stays English.",
+    "placeholders": {"what": {"type": "String", "example": "Status", "description": "The value's English name in the link's specification."}}
+  },
+  "linkRefusedHeader": "the file is not firmware this node reads",
+  "@linkRefusedHeader": {
+    "description": "Why the node refused an update. Lower case, as it may follow other words, such as 'The node refused: '; so are the other linkRefused… reasons."
+  },
+  "linkRefusedVersion": "the firmware is not newer than the version the node runs",
+  "linkRefusedBusy": "the node holds checked new firmware already: reboot it first",
+  "linkRefusedIncomplete": "the node does not hold every byte of the firmware",
+  "linkRefusedHash": "the bytes the node holds are not the firmware's; send it again",
+  "linkRefusedBattery": "the node is on a low battery; it keeps the firmware, to go on once it is on USB or charged",
+  "linkRefusedFlash": "the node's flash memory failed",
+  "linkRefusedSignature": "the firmware is not signed by a key the node holds: a file built here is signed with `{command}`, a release's is signed already",
+  "@linkRefusedSignature": {
+    "placeholders": {"command": {"type": "String", "example": "image.py sign", "description": "The command that signs a firmware file, as it is typed."}}
+  },
+  "linkAttError": "ATT error 0x{code}",
+  "@linkAttError": {
+    "description": "The node answered with a Bluetooth ATT error; it may follow other words, such as sendFailed's.",
+    "placeholders": {"code": {"type": "String", "example": "13", "description": "The error's code in hex."}}
+  },
+  "linkNotOurs": "{node} no longer knows this phone",
+  "@linkNotOurs": {
+    "description": "Why something failed: the node removed this phone. It may follow other words.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "linkBondKept": "The phone kept its old pairing with {node}, so it cannot use the node. Forget it in Bluetooth settings.",
+  "@linkBondKept": {
+    "description": "The phone is Android, which kept its own pairing with the node.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "linkEnded": "The link to {node} ended. Try again nearer to it",
+  "@linkEnded": {
+    "description": "Two sentences, the last without its full stop, which the app adds.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "linkNotPaired": "Not paired: cancelled, a wrong code, or the node is full (its screen says {full})",
+  "@linkNotPaired": {
+    "description": "A sentence without its full stop, which the app adds.",
+    "placeholders": {"full": {"type": "String", "example": "PHONES FULL", "description": "The words on the node's screen, which stay as the node shows them."}}
+  },
+  "linkNotSeen": "{node} not found: come nearer and try again",
+  "@linkNotSeen": {
+    "description": "A sentence without its full stop, which the app adds.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  }
 }

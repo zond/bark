@@ -10,6 +10,7 @@ import 'dart:math';
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter/foundation.dart';
 
+import 'l10n.dart';
 import 'link.dart';
 import 'node_link.dart';
 import 'releases.dart';
@@ -350,7 +351,10 @@ class Updater extends ChangeNotifier {
         _set(Phase.committed, 'The node holds version ${img.version}');
       case Step.begin || Step.send:
         // The node forgot the image: a flash that failed.
-        _set(Phase.failed, p.refused?.why ?? 'The node lost the firmware');
+        _set(
+          Phase.failed,
+          p.refused?.why(english) ?? 'The node lost the firmware',
+        );
     }
   }
 
@@ -393,7 +397,7 @@ class Updater extends ChangeNotifier {
     session.note('Update: refused, ${why?.name ?? '?'}');
     _set(
       why == Refusal.battery ? kept : Phase.failed,
-      'The node refused: ${why?.why ?? 'it did not say why'}',
+      'The node refused: ${why?.why(english) ?? 'it did not say why'}',
     );
   }
 

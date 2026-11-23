@@ -6,6 +6,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'l10n.dart';
+
 /// The link version this app speaks.
 const int linkVersion = 1;
 
@@ -20,10 +22,14 @@ bool servesEachOther(NodeInfo n) =>
 
 /// What the person reads of a node that, by [servesEachOther], this app
 /// and it do not serve: the node, as the phone may be on another by then,
-/// and the side to update.
-String notServedLine(NodeInfo n) => n.version < oldestNode
-    ? '${nodeLabel(n.id)} needs newer firmware. Update the node.'
-    : '${nodeLabel(n.id)} needs a newer app. Update the app.';
+/// and the side to update; in `words`, by default the language spoken.
+String notServedLine(NodeInfo n, [AppLocalizations? words]) {
+  final w = words ?? tr;
+  final node = nodeLabel(n.id);
+  return n.version < oldestNode
+      ? w.linkNeedsFirmware(node)
+      : w.linkNeedsApp(node);
+}
 
 /// The ATT MTU the node offers and the app asks for (spec "Phone link",
 /// "MTU").
@@ -91,12 +97,15 @@ class AttError {
   static const incompatible = 0x82;
 }
 
-/// A value too short, or of a length it never has.
-class Malformed implements Exception {
+/// A value too short, or of a length it never has; `what` names the
+/// value as the spec does, in English in every language.
+class Malformed implements Exception, Spoken {
   final String what;
   const Malformed(this.what);
   @override
-  String toString() => 'malformed $what';
+  String words(AppLocalizations w) => w.linkMalformed(what);
+  @override
+  String toString() => words(english);
 }
 
 String hex(List<int> bytes) =>
@@ -232,6 +241,7 @@ String nodeName(List<int> id) => 'bark-${hex(id)}';
 /// own screen shows it, `ID FA4E00000001`; a name not a node's as it is.
 String shownName(String name) {
   final m = RegExp(r'^bark-([0-9a-f]{12})$').firstMatch(name);
+  // The node's own screen says "ID", in every language.
   return m == null ? name : 'ID ${m[1]!.toUpperCase()}';
 }
 
@@ -820,23 +830,29 @@ enum UpdateState { idle, receiving, staged, committed }
 
 /// Why the node refused a begin, a commit or a reboot.
 enum Refusal {
-  header('the file is not firmware this node reads'),
-  version('the firmware is not newer than the version the node runs'),
-  busy('the node holds checked new firmware already: reboot it first'),
-  incomplete('the node does not hold every byte of the firmware'),
-  hash('the bytes the node holds are not the firmware\'s; send it again'),
-  battery(
-    'the node is on a low battery; it keeps the firmware, to go on once '
-    'it is on USB or charged',
-  ),
-  flash('the node\'s flash memory failed'),
-  signature(
-    'the firmware is not signed by a key the node holds: a file built '
-    'here is signed with `image.py sign`, a release\'s is signed already',
-  );
+  header,
+  version,
+  busy,
+  incomplete,
+  hash,
+  battery,
+  flash,
+  signature;
 
-  final String why;
-  const Refusal(this.why);
+  /// Why, in `words`, by default the language spoken.
+  String why([AppLocalizations? words]) {
+    final w = words ?? tr;
+    return switch (this) {
+      Refusal.header => w.linkRefusedHeader,
+      Refusal.version => w.linkRefusedVersion,
+      Refusal.busy => w.linkRefusedBusy,
+      Refusal.incomplete => w.linkRefusedIncomplete,
+      Refusal.hash => w.linkRefusedHash,
+      Refusal.battery => w.linkRefusedBattery,
+      Refusal.flash => w.linkRefusedFlash,
+      Refusal.signature => w.linkRefusedSignature('image.py sign'),
+    };
+  }
 }
 
 /// Update, read.

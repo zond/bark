@@ -702,7 +702,7 @@ class AppLocalizationsUk extends AppLocalizations {
       'Повідомлення лишаться. Щоб написати знову, додайте їхню картку.';
 
   @override
-  String get threadRemove => 'Видалити';
+  String get remove => 'Видалити';
 
   @override
   String get threadRemoveContact => 'Видалити контакт';
@@ -870,7 +870,7 @@ class AppLocalizationsUk extends AppLocalizations {
   }
 
   @override
-  String sessionSendFailed(String error) {
+  String sendFailed(String error) {
     return 'Не вдалося надіслати: $error';
   }
 
@@ -983,10 +983,10 @@ class AppLocalizationsUk extends AppLocalizations {
   }
 
   @override
-  String get cardNameNotSet => 'не вказано';
+  String get nameNotSet => 'не вказано';
 
   @override
-  String get cardChangeName => 'Змінити';
+  String get changeName => 'Змінити';
 
   @override
   String get cardDetails => 'Подробиці';
@@ -1133,4 +1133,572 @@ class AppLocalizationsUk extends AppLocalizations {
   @override
   String get factPaired =>
       'Цей телефон спарений із цим вузлом: вузол надсилає ваші повідомлення в мережу й зберігає ті, що для вас, доки застосунок їх не прочитає. Лише спарений телефон бачить сусідів вузла на цій карті.';
+
+  @override
+  String get ok => 'OK';
+
+  @override
+  String get debug => 'Налагодження';
+
+  @override
+  String get pairAgain => 'Створити пару знову';
+
+  @override
+  String get staysYourHome => 'Вузол і далі ваш дім.';
+
+  @override
+  String get forgetInBluetoothToo =>
+      'Забудьте вузол і в налаштуваннях Bluetooth: телефон зберіг пару з ним.';
+
+  @override
+  String get settingsBackupAnnounce => 'Резервні слова: запишіть свої 12 слів';
+
+  @override
+  String get settingsPlaceHere => 'Використати місцезнаходження телефону';
+
+  @override
+  String settingsPlaceSet(String place) {
+    return 'Місце задано: $place.';
+  }
+
+  @override
+  String get settingsDegreesPlease => 'Введіть широту й довготу в градусах';
+
+  @override
+  String get settingsNameHow => 'На вашій картці, щоб інші бачили';
+
+  @override
+  String get settingsDebugHow =>
+      'Журнал зв\'язку з вузлом, для звіту про помилку';
+
+  @override
+  String get settingsThisNode => 'Цей вузол';
+
+  @override
+  String get settingsPublic => 'Публічний';
+
+  @override
+  String get settingsPublicHow =>
+      'Будь-який телефон поруч може надсилати через нього повідомлення';
+
+  @override
+  String settingsPublicFailed(String error) {
+    return 'Не вдалося змінити «Публічний»: $error';
+  }
+
+  @override
+  String get settingsUnpair => 'Розірвати пару';
+
+  @override
+  String settingsUnpairTitle(String node) {
+    return 'Розірвати пару з $node?';
+  }
+
+  @override
+  String get settingsUnpairHow =>
+      'Вузол і цей телефон забудуть один одного; повідомлення й контакти залишаться.';
+
+  @override
+  String get settingsUnpairLast =>
+      'Коли не залишиться жодного телефону, вузол стане публічним.';
+
+  @override
+  String get settingsUnpairOthers =>
+      'Телефон і далі спарений з іншими вашими вузлами.';
+
+  @override
+  String get settingsUnpaired => 'Пару розірвано.';
+
+  @override
+  String get settingsUnpairedPublic => 'Пару розірвано. Вузол тепер публічний.';
+
+  @override
+  String settingsUnpairFailed(String error) {
+    return 'Не вдалося розірвати пару: $error';
+  }
+
+  @override
+  String get settingsPhonesPaired => 'Телефони, спарені з цим вузлом';
+
+  @override
+  String get settingsPhonesHelp =>
+      'Вузол може мати до восьми телефонів. Будь-хто біля нього може створити пару за кодом на його екрані, а кожен спарений телефон може змінювати його налаштування, тож видаляйте телефони, яких ви не знаєте або яких уже немає. Для видалення теж потрібен код з екрана вузла: так видно, що ви поруч.\n\nПошту телефону, що має тут дім, зберігає цей вузол.\n\nВласник, один із цих телефонів, вирішує, хто має тут дім, навіть здалеку: він може дати контакту дім тут, видалити чийсь дім або передати право власника іншому. Власником стає перший, хто зробить вузол своїм домом. Біля вузла будь-який спарений телефон може передати право власника іншому за кодом на екрані.';
+
+  @override
+  String get settingsPhonesFull =>
+      'Місць немає: видаліть один телефон, щоб інший міг створити пару.';
+
+  @override
+  String get settingsPhonesHome => 'Телефони, що мають тут дім';
+
+  @override
+  String get settingsNoOwner => 'У цього вузла немає власника';
+
+  @override
+  String get settingsBecomeOwner => 'Стати власником';
+
+  @override
+  String get settingsBattery => 'Батарея';
+
+  @override
+  String get settingsBatteryExempt =>
+      'bark може працювати з вимкненим екраном.';
+
+  @override
+  String get settingsBatteryNotExempt =>
+      'Коли екран вимкнено, Android може за кілька годин розірвати зв\'язок застосунку з вузлом.';
+
+  @override
+  String get settingsLetRun => 'Дозволити bark працювати';
+
+  @override
+  String get settingsBackup => 'Резервні слова';
+
+  @override
+  String get settingsBackedUp =>
+      'Ваші 12 слів повернуть вашу особу на іншому телефоні.';
+
+  @override
+  String get settingsNotBackedUp =>
+      'Запишіть свої 12 слів: якщо ви втратите телефон без них, то втратите й свою особу.';
+
+  @override
+  String get settingsShowWords => 'Показати мої слова';
+
+  @override
+  String get settingsRestore => 'Відновити зі слів';
+
+  @override
+  String get settingsMyWords => 'Мої 12 слів';
+
+  @override
+  String get settingsWroteThem => 'Записано';
+
+  @override
+  String get settingsRestoreTitle => 'Відновити зі слів?';
+
+  @override
+  String get settingsRestoreHow =>
+      'Цей телефон отримає особу, записану в словах. Контакти зможуть писати на нього, лише коли отримають його картку.';
+
+  @override
+  String get settingsRestoreButton => 'Відновити';
+
+  @override
+  String get settingsYourWords => 'Ваші 12 слів';
+
+  @override
+  String get settingsNotWords => 'Це не 12 резервних слів';
+
+  @override
+  String get settingsRestored => 'Особу відновлено';
+
+  @override
+  String get settingsPlace => 'Місце';
+
+  @override
+  String get settingsNoPlace => 'Місце вузла ще не задано.';
+
+  @override
+  String settingsPlaceByPerson(String address) {
+    return 'Задано вручну: $address.';
+  }
+
+  @override
+  String settingsPlaceByGps(String address) {
+    return 'З GPS вузла: $address.';
+  }
+
+  @override
+  String get settingsPlaceHow =>
+      'Для вузла в приміщенні, куди не сягає GPS. Діє замість GPS, доки його не очистять.';
+
+  @override
+  String get settingsLatitude => 'Широта';
+
+  @override
+  String get settingsLongitude => 'Довгота';
+
+  @override
+  String get settingsPlaceSetButton => 'Задати';
+
+  @override
+  String get settingsPlaceClear => 'Очистити';
+
+  @override
+  String get settingsNotifications => 'Сповіщення';
+
+  @override
+  String get settingsNotificationsWhy =>
+      'bark сповіщає вас про нові повідомлення. Далі запитає Android.';
+
+  @override
+  String settingsPairingFailed(String error) {
+    return 'Не вдалося створити пару: $error';
+  }
+
+  @override
+  String settingsConnectingFailed(String error) {
+    return 'Не вдалося підключитися: $error';
+  }
+
+  @override
+  String get settingsNotPaired => 'Пару не створено';
+
+  @override
+  String get settingsNotOurs => 'Цей вузол більше не ваш';
+
+  @override
+  String settingsNotOursHow(String node) {
+    return '$node більше не знає цього телефону. Створіть пару знову за кодом на його екрані.';
+  }
+
+  @override
+  String get nodeConnecting => 'Підключення…';
+
+  @override
+  String get nodeTypeCode => 'Введіть код з екрана вузла';
+
+  @override
+  String get nodePairedConnecting => 'Пару створено, підключення…';
+
+  @override
+  String get nodeHeading => 'Вузол';
+
+  @override
+  String get nodeDisconnect => 'Відключитися';
+
+  @override
+  String get nodeStopLooking => 'Припинити пошук';
+
+  @override
+  String get nodeScan => 'Шукати';
+
+  @override
+  String get nodeStopScan => 'Зупинити';
+
+  @override
+  String nodeScanFailed(String error) {
+    return 'Не вдалося виконати пошук: $error';
+  }
+
+  @override
+  String get nodeNoneFound => 'Поблизу не знайдено жодного вузла.';
+
+  @override
+  String get nodeNoneFoundHow => 'Увімкніть вузол або підійдіть ближче.';
+
+  @override
+  String get nodePairedWith => 'Спарені вузли';
+
+  @override
+  String get nodeForget => 'Забути';
+
+  @override
+  String nodeLostTitle(String node) {
+    return '$node не знає цього телефону';
+  }
+
+  @override
+  String get nodeLostHelp =>
+      'Хтось зі спарених із ним телефонів видалив цей телефон, вузол утратив пам\'ять, або ви перейшли сюди з іншого телефону: пара існує лише на тому телефоні, де її створили.\n\n«Створити пару знову»: нова пара за кодом на його екрані. Кнопку видно, поки вузол поруч.\n\n«Забути»: прибрати вузол із цього списку.';
+
+  @override
+  String get nodeConnected => 'Підключено';
+
+  @override
+  String get nodeHomeConnected => 'Ваш дім, підключено';
+
+  @override
+  String get nodeLost => 'Не знає цього телефону';
+
+  @override
+  String get nodeHomeLost => 'Ваш дім, не знає цього телефону';
+
+  @override
+  String get nodeUnserved =>
+      'Поки не можна використати. Натисніть, щоб спробувати знову';
+
+  @override
+  String get nodeHomeUnserved =>
+      'Ваш дім, поки не можна використати. Натисніть, щоб спробувати знову';
+
+  @override
+  String get nodeAway => 'Не поруч';
+
+  @override
+  String get nodeHomeAway => 'Ваш дім, не поруч';
+
+  @override
+  String get nodeNotLooking => 'Пошук вимкнено. Натисніть, щоб підключитися';
+
+  @override
+  String get nodeHomeNotLooking =>
+      'Ваш дім, пошук вимкнено. Натисніть, щоб підключитися';
+
+  @override
+  String get nodeYourHome => 'Ваш дім';
+
+  @override
+  String get nodeFoundPublic => 'публічний';
+
+  @override
+  String get nodeFoundUnserved => 'поки не можна використати';
+
+  @override
+  String get nodePair => 'Створити пару';
+
+  @override
+  String nodePairTitle(String node) {
+    return 'Створити пару з $node?';
+  }
+
+  @override
+  String get nodePairHow =>
+      'Тоді ви зможете змінювати його налаштування й оновлювати його. Введіть код з його екрана.';
+
+  @override
+  String nodeForgetTitle(String node) {
+    return 'Забути $node?';
+  }
+
+  @override
+  String get nodeForgetHow => 'Цей телефон більше не показуватиме його.';
+
+  @override
+  String get nodeForgotten => 'Забуто.';
+
+  @override
+  String get nodeForgetLater =>
+      'Телефон видалить свою пару з вузлом, коли знову його почує, або ж забудьте вузол у налаштуваннях Bluetooth зараз.';
+
+  @override
+  String nodeForgetFailed(String error) {
+    return 'Не вдалося забути вузол: $error';
+  }
+
+  @override
+  String get peopleMakeOwner => 'Зробити власником';
+
+  @override
+  String get peopleThisPhone => 'цей телефон';
+
+  @override
+  String get peopleYou => 'ви';
+
+  @override
+  String get peopleOwner => 'власник';
+
+  @override
+  String get peoplePairedToo => 'також спарений';
+
+  @override
+  String get peopleHomeToo => 'також має тут дім';
+
+  @override
+  String get peopleLinked => 'зараз на зв\'язку';
+
+  @override
+  String peopleSeen(String when) {
+    return 'на зв\'язку $when';
+  }
+
+  @override
+  String get peopleNeverSeen => 'ще не був на зв\'язку';
+
+  @override
+  String get peopleChoices => 'Дії';
+
+  @override
+  String get peopleNoName => 'Телефон без імені';
+
+  @override
+  String peopleRemovePhoneAndHome(String name) {
+    return 'Видалити телефон «$name» разом із домом?';
+  }
+
+  @override
+  String get peopleRemoveUnnamedAndHome =>
+      'Видалити телефон без імені разом із домом?';
+
+  @override
+  String peopleRemovePhone(String name) {
+    return 'Видалити телефон «$name»?';
+  }
+
+  @override
+  String get peopleRemoveUnnamed => 'Видалити телефон без імені?';
+
+  @override
+  String get peopleRemoveThisHome => 'Видалити цей дім?';
+
+  @override
+  String peoplePhoneGoes(String name) {
+    return 'Телефон «$name» більше не зможе користуватися вузлом, якщо не створить пару знову.';
+  }
+
+  @override
+  String get peopleUnnamedGoes =>
+      'Телефон без імені більше не зможе користуватися вузлом, якщо не створить пару знову.';
+
+  @override
+  String get peopleNodeStopsMail =>
+      'Вузол більше не зберігатиме пошту цієї людини.';
+
+  @override
+  String peopleRemoveHome(String name) {
+    return 'Видалити дім «$name»?';
+  }
+
+  @override
+  String get peopleRemoveTheirHome => 'Видалити дім цієї людини?';
+
+  @override
+  String get peopleHomeStopsMail =>
+      'Ваш дім більше не зберігатиме пошту цієї людини.';
+
+  @override
+  String peopleMakeOwnerTitle(String name) {
+    return 'Зробити «$name» власником?';
+  }
+
+  @override
+  String get peopleMakeThemOwner => 'Призначити цю людину власником?';
+
+  @override
+  String get peopleOwnerChooses => 'Власник вирішує, хто має тут дім.';
+
+  @override
+  String get peopleOwnerChoosesNotYou =>
+      'Власник вирішує, хто має тут дім. Ви більше не зможете.';
+
+  @override
+  String get peopleTypeCodeNext => 'Потім введіть код, який покаже вузол.';
+
+  @override
+  String get peopleShowCode => 'Показати код';
+
+  @override
+  String get peopleGone => 'Уже видалено.';
+
+  @override
+  String peopleCodeFailed(String error) {
+    return 'Не вдалося отримати код від вузла: $error';
+  }
+
+  @override
+  String get peopleRemoved => 'Видалено';
+
+  @override
+  String peopleIsOwner(String name) {
+    return 'Тепер власник: $name';
+  }
+
+  @override
+  String get peopleThemOwner => 'Власника змінено';
+
+  @override
+  String get peopleNotChanged => 'Не змінено';
+
+  @override
+  String get peopleNotRemoved => 'Не видалено';
+
+  @override
+  String get peopleWrongCode =>
+      'Неправильний код або запізно. Кожен код діє лише раз.';
+
+  @override
+  String get peopleNewCode => 'Новий код';
+
+  @override
+  String peopleItFailed(String error) {
+    return 'Не вдалося: $error';
+  }
+
+  @override
+  String get peopleCodeTitle => 'Код на вузлі';
+
+  @override
+  String peopleCodeHow(String word) {
+    return 'Введіть шість цифр під $word на екрані вузла протягом 30 с.';
+  }
+
+  @override
+  String get peopleCode => 'Код';
+
+  @override
+  String linkNeedsFirmware(String node) {
+    return '$node потребує новішої прошивки. Оновіть вузол.';
+  }
+
+  @override
+  String linkNeedsApp(String node) {
+    return '$node потребує новішого застосунку. Оновіть застосунок.';
+  }
+
+  @override
+  String linkMalformed(String what) {
+    return '$what має неправильний формат';
+  }
+
+  @override
+  String get linkRefusedHeader =>
+      'файл не є прошивкою, яку може прочитати цей вузол';
+
+  @override
+  String get linkRefusedVersion =>
+      'прошивка не новіша за версію, на якій працює вузол';
+
+  @override
+  String get linkRefusedBusy =>
+      'вузол уже має нову перевірену прошивку: спершу перезавантажте його';
+
+  @override
+  String get linkRefusedIncomplete => 'вузол отримав не всі байти прошивки';
+
+  @override
+  String get linkRefusedHash =>
+      'байти на вузлі не збігаються з прошивкою; надішліть її знову';
+
+  @override
+  String get linkRefusedBattery =>
+      'у вузла низький заряд батареї; він зберігає прошивку й продовжить, коли його підключать до USB або зарядять';
+
+  @override
+  String get linkRefusedFlash => 'збій флешпам\'яті вузла';
+
+  @override
+  String linkRefusedSignature(String command) {
+    return 'прошивку не підписано ключем, який має вузол: файл, зібраний тут, підписують командою `$command`, а файл випуску вже підписано';
+  }
+
+  @override
+  String linkAttError(String code) {
+    return 'помилка ATT 0x$code';
+  }
+
+  @override
+  String linkNotOurs(String node) {
+    return '$node більше не знає цього телефону';
+  }
+
+  @override
+  String linkBondKept(String node) {
+    return 'Телефон зберіг стару пару з $node, тож не може користуватися вузлом. Забудьте вузол у налаштуваннях Bluetooth.';
+  }
+
+  @override
+  String linkEnded(String node) {
+    return 'Зв\'язок із $node обірвався. Спробуйте знову ближче до вузла';
+  }
+
+  @override
+  String linkNotPaired(String full) {
+    return 'Пару не створено: скасовано, неправильний код або на вузлі немає місць (на його екрані $full)';
+  }
+
+  @override
+  String linkNotSeen(String node) {
+    return '$node не знайдено: підійдіть ближче й спробуйте знову';
+  }
 }
