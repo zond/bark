@@ -289,7 +289,7 @@ class Me extends ChangeNotifier {
   }
 
   Future<void> setName(String n) async {
-    _s.name = n.trim();
+    _s.name = PersonCard.fitName(n.trim());
     await _changed();
   }
 
@@ -346,7 +346,8 @@ class Me extends ChangeNotifier {
     _take(
       MeState(
         f.seed,
-        name: f.name,
+        // A file from an app before names were cut may hold a longer one.
+        name: PersonCard.fitName(f.name),
         home: f.home?.address,
         givenKey: given == null || hex(given) == hex(k.mailbox.extractBytes())
             ? null

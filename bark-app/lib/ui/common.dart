@@ -1,12 +1,14 @@
 // Small pieces the screens share.
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../app.dart';
 import '../ble_link.dart' show strongDbm, weakDbm;
+import '../card.dart';
 import '../l10n.dart';
 import '../link.dart';
 import '../node_link.dart';
@@ -620,7 +622,12 @@ class SendCardLine extends StatelessWidget {
 
 /// Asks for the person's name and sets it, as Settings and My card do.
 Future<void> askMyName(BuildContext context, AppModel app) async {
-  final n = await askText(context, tr.commonMyName, app.me.name);
+  final n = await askText(
+    context,
+    tr.commonMyName,
+    app.me.name,
+    maxBytes: PersonCard.maxName,
+  );
   if (n != null) await app.setName(n);
 }
 
@@ -631,6 +638,7 @@ Future<String?> askText(
   String label,
   String initial, {
   bool secret = false,
+  int? maxBytes,
 }) {
   final c = TextEditingController(text: initial);
   return showDialog<String>(
@@ -648,6 +656,14 @@ Future<String?> askText(
           enableSuggestions: !secret,
           autocorrect: !secret,
           enableIMEPersonalizedLearning: !secret,
+          // What would not fit is not typed, so the person sees the limit.
+          inputFormatters: [
+            if (maxBytes != null)
+              TextInputFormatter.withFunction(
+                (was, now) =>
+                    utf8.encode(now.text).length <= maxBytes ? now : was,
+              ),
+          ],
           onSubmitted: (v) => Navigator.pop(context, v.trim()),
         ),
         actions: [

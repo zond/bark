@@ -27,6 +27,21 @@ void main() {
     expect(me.shownCard!.key, me.key);
   });
 
+  test('a name is cut to what a card holds, in whole characters', () {
+    expect(PersonCard.fitName('Ann'), 'Ann');
+    // 32 bytes fit; a 33rd letter does not.
+    expect(PersonCard.fitName('a' * 33), 'a' * 32);
+    // Sixteen two-byte letters fit, and half a letter is never kept.
+    expect(PersonCard.fitName('a${'й' * 16}'), 'a${'й' * 15}');
+    // A flag is one character of eight bytes: four fit, with or without
+    // a letter before them, and no half flag is kept.
+    expect(PersonCard.fitName('🇺🇦' * 5), '🇺🇦' * 4);
+    expect(PersonCard.fitName('a${'🇺🇦' * 4}'), 'a${'🇺🇦' * 3}');
+    final name = PersonCard.fitName('й' * 40);
+    final card = PersonCard(List.filled(32, 1), null, 1, name);
+    expect(PersonCard.decode(card.encode()).name, 'й' * 16);
+  });
+
   test('a nameless card: listed as Unnamed until a name comes', () async {
     final cs = Contacts(MemoryStore());
     final id = List.filled(32, 0xab);

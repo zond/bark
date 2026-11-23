@@ -7,6 +7,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:characters/characters.dart';
+
 import 'app_layer.dart';
 import 'l10n.dart';
 import 'link.dart';
@@ -74,6 +76,17 @@ class PersonCard {
   /// No home: they can be reached only at the node they last used, which
   /// keeps their mail only while they come back to it.
   bool get temporary => home == null;
+
+  /// The longest start of `name` a card holds, in whole characters: a
+  /// name is cut where it is set, so that every card made of it encodes.
+  static String fitName(String name) {
+    var fits = '';
+    for (final c in name.characters) {
+      if (utf8.encode(fits + c).length > maxName) break;
+      fits += c;
+    }
+    return fits;
+  }
 
   Uint8List encode() {
     final n = utf8.encode(name);
