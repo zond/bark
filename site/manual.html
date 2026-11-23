@@ -116,7 +116,10 @@ by whether it moves:</p>
 <ul>
 <li><strong>On a charger</strong> it is a relay, and helps everyone around it.</li>
 <li><strong>On battery, standing still,</strong> it goes on relaying until the
-battery is low, then turns sleepy.</li>
+battery is low, then turns sleepy. This is on purpose: when the power
+goes out, the relays of a whole district lose it together, and the
+network must not go with it. A full battery relays for about four
+days.</li>
 <li><strong>On battery, carried,</strong> it is sleepy.</li>
 </ul>
 <p>A sleepy node passes on nobody else's messages. The one exception is
@@ -124,7 +127,10 @@ when it hears no relay at all: then sleepy nodes pass messages among
 themselves, slowly, until a relay turns up.</p>
 <p>To choose yourself, hold the lower button for 3 seconds: it switches
 the node between relay and sleepy
-(<a href="#the-nodes-screen-and-buttons">the screen and buttons</a>).</p>
+(<a href="#the-nodes-screen-and-buttons">the screen and buttons</a>).
+A pocket node that lies still for long, on a desk or in a drawer, counts
+as standing still and relays; make it sleepy this way if you would
+rather keep its battery for yourself.</p>
 <figure class="anim">
 <canvas id="a-sleepy" role="img" aria-label="Two relays and a sleepy node. A message waits at the sleepy node's relay until the sleepy node wakes."></canvas>
 <figcaption>Relays announce themselves often and pass messages on at once. A sleepy node wakes now and then; the relay it talks through keeps its messages until it does.</figcaption>
