@@ -588,8 +588,10 @@ address from an earlier message, a person's card
 ([the payload](#the-payload)), or a directory; the network has no lookup.
 Sending to an area: open item O7.
 
-The network carries no sender address and sends no failure notices; its
-only acknowledgement is the per-hop ACK ([hand-over](#hand-over)).
+The network carries no sender address and no failure frame; its only
+acknowledgement is the per-hop ACK ([hand-over](#hand-over)). A message
+whose search finds no way comes back itself, to its origin
+([return to parent](#return-to-parent)).
 
 The app hands a node a message only when the node says it will take one
 ([receiving DATA](#receiving-data)). Afterwards it hears of the message
@@ -599,11 +601,12 @@ back; roadmap D244):
 | why | |
 |---|---|
 | busy | refused, with the wait the refusal asks: a sleepy node's, refused by its anchor ([a sleepy node's own message](#a-sleepy-nodes-own-message)), or a relay's, refused by its own gate (roadmap D29, D54) |
-| no neighbour | the node still holds it and has no live neighbour left ([receiving DATA](#receiving-data)) |
+| no neighbour | it never left the node: no live neighbour is left, or none took it ([receiving DATA](#receiving-data), [return to parent](#return-to-parent)) |
 | no way | its search came back to the node with nowhere left to go ([return to parent](#return-to-parent)) |
 
 A message that ends anywhere else ([overload waits](#overload-waits)) is
-not told of.
+not told of, nor one whose origin's record was replaced while its search
+was out ([message records](#message-records)).
 
 ### Duty cycle cap
 
@@ -1084,7 +1087,8 @@ depends on what the packet gives it to do:
     banned; failing either it goes back to the application, busy, with the
     wait a refusal would tell, at least a ban.
   - One it still holds when its last live neighbour is gone goes back to
-    the application, no neighbour (roadmap D244).
+    the application, no neighbour, unless a frame of its hand-over has
+    gone out; then the hand-over's own end decides (roadmap D244).
   - One from its own application for a sleepy node it holds for, when the
     delivery queue is full, is kept aside until the queue has a place.
 - **Something to deliver.** Taken only if the bucket holds the reply
@@ -1150,12 +1154,22 @@ as a message for that node does and goes in the node's window
 ([delivery](#delivery)), with the long preamble only in the flush of a
 relay that turns sleepy ([sleepy nodes](#sleepy-nodes)): one attempt, as
 for any message it holds, and what that does not deliver is dropped, not
-handed on. With no place in the queue a return is dropped, as is one
-whose node the relay no longer hears; nobody is told (roadmap D244).
+handed on. A return takes only a free place in the queue and gives it up
+to a message for a node that arrives when the queue is full
+([delivery queue](#delivery-queue)); it keeps no newer message of its
+node waiting outside the window ([delivery](#delivery)). With no place it
+is dropped, as is one whose node the relay does not hear or holds no mail
+for, being carried or sleepy, and one the relay holds when it reboots
+into a new image; nobody is told (roadmap D244).
 
 **The origin** has no parent: with no candidate left it gives the message
-back to its application, no way ([addresses](#addresses);
-[sending](#sending), Given back; roadmap D244).
+back to its application ([addresses](#addresses); [sending](#sending),
+Given back; roadmap D244): no neighbour if no node ever took it or
+answered it seen, else no way. After a no way it keeps the record, and
+answers any copy that comes later as one that has arrived
+([receiving DATA](#receiving-data), case 1). A sleepy node with an anchor
+gives its own message back, no way, when it is returned to it, whatever
+other neighbours it hears.
 
 A message whose next hop is banned is neither returned nor dropped: it
 waits ([overload waits](#overload-waits)); a node's own application's
@@ -1229,6 +1243,10 @@ A message ends only:
   ([return to parent](#return-to-parent));
 - when a return's parent is demoted or gone ([hand-over](#hand-over)
   step 6), or answers it seen ([the ACK](#the-ack));
+- when it is given back to its application, busy or for no neighbour
+  ([addresses](#addresses));
+- when a return to a sleepy parent finds no place, no holder or no window
+  ([return to parent](#return-to-parent));
 - when a newer message needs its place in the delivery queue
   ([delivery queue](#delivery-queue)), or when the relay holding it comes
   to own its destination while it is queued and finds that queue full
@@ -1523,7 +1541,7 @@ nodes, 23 texts a day each ([capacity and sizing](#capacity-and-sizing)),
 |---|---|
 | age | counted from arrival in the queue |
 | stale | queued the delivery TTL ago or longer; it stays, and goes at its node's next beat as any other |
-| a message arriving at a full queue | takes the place of the oldest stale message; with none stale, a message for another node is refused ([receiving DATA](#receiving-data)) |
+| a message arriving at a full queue | takes the place of the oldest stale message, else of a return held for a sleepy parent ([return to parent](#return-to-parent)); with neither, a message for another node is refused ([receiving DATA](#receiving-data)) |
 | **inbox** | every node, sleepy or not, keeps the messages for its own application by the same rule, 23 of them ([receiving](#receiving)) |
 
 A queued message goes to the send queue one per node at a time, oldest
