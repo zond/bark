@@ -249,12 +249,14 @@ fn a_neighbour_hears_a_draining_relay_leaving() {
     };
     assert!(!leaving(&h));
     h.command(m, AppCommand::Drain(true));
-    // Within a worst-case rotation its heartbeat reaches every channel.
-    let rotation = Config::default().boot_listen;
-    assert!(h.run_until(h.now + rotation, leaving), "not heard leaving");
+    // Within a worst-case rotation its heartbeat reaches every channel,
+    // and within two the neighbour's channel while it is not sending its
+    // own.
+    let rotations = Config::default().boot_listen.mul(2);
+    assert!(h.run_until(h.now + rotations, leaving), "not heard leaving");
     h.command(m, AppCommand::Drain(false));
     assert!(
-        h.run_until(h.now + rotation, |h| !leaving(h)),
+        h.run_until(h.now + rotations, |h| !leaving(h)),
         "still leaving"
     );
 }

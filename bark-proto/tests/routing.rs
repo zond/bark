@@ -498,7 +498,7 @@ fn a_split_heals_at_a_sender_that_waits() {
 
 /// A split heals at a sender that holds on until the demotion. X's
 /// hand-over to Y is taken, but Y's ACKs are lost for
-/// two hand-overs, six ACKs: X counts two failures, which do not yet
+/// two hand-overs: X counts two failures, which do not yet
 /// demote Y, and waits for each ban. Y holds the message meanwhile, its
 /// own frames to E lost. X's third offer carries the count of the first,
 /// nothing having succeeded since, so Y answers it as it answered the
@@ -526,14 +526,21 @@ fn a_split_heals_at_a_sender_that_holds_on_until_the_demotion() {
         &[(x, y), (x, z), (y, e), (e, d), (z, d)],
     );
     let [nx, ny, ne] = [x, y, e].map(|i| core(&h, i).id());
-    let mut acks_lost = 0;
-    h.lose = Some(Box::new(move |_, _, _, bytes| {
+    // A hand-over's ACKs are less than a ban apart; Y may miss an offer
+    // of X's while it sends to E.
+    let (mut failing, mut last) = (0, None::<bark_proto::Instant>);
+    h.lose = Some(Box::new(move |now, _, _, bytes| {
         if let Some(names) = ack_names(bytes) {
-            let lose = names == (ny, nx) && acks_lost < 6;
-            acks_lost += usize::from(lose);
-            return lose;
+            if names != (ny, nx) {
+                return false;
+            }
+            if last.is_none_or(|t| now.since(t) >= BAN) {
+                failing += 1;
+            }
+            last = Some(now);
+            return failing <= 2;
         }
-        data_names(bytes) == Some((ny, ne)) && acks_lost < 6
+        data_names(bytes) == Some((ny, ne)) && failing <= 2
     }));
     let id = send(&mut h, x, d, b"held on");
     assert!(
