@@ -1147,8 +1147,7 @@ one whose node the relay no longer hears; nobody is told (roadmap D244).
 
 **The origin** has no parent: with no candidate left it gives the message
 back to its application, no way ([addresses](#addresses);
-[sending](#sending), Given back). (roadmap
-D244).
+[sending](#sending), Given back; roadmap D244).
 
 A message whose next hop is banned is neither returned nor dropped: it
 waits ([overload waits](#overload-waits)); a node's own application's
