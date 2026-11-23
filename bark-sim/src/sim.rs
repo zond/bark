@@ -3940,6 +3940,16 @@ impl Sim {
         };
         *r = Relay::new(config, seed);
         self.power_on(node);
+        // The flash keeps the image and the gather, as it keeps the stored
+        // state, unless wiped.
+        let told = self
+            .update
+            .as_mut()
+            .map(|u| u.rebooted(node, kind == BootKind::Wipe))
+            .unwrap_or_default();
+        for c in told {
+            self.deliver(node, Event::App(c));
+        }
         self.watch_boot(node, kind);
     }
 

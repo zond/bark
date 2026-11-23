@@ -116,6 +116,8 @@ pub struct UpdateRun {
     pub next_holds_at: Vec<Option<Instant>>,
     /// Per node, the image it gathers.
     gathers: Vec<Option<Image>>,
+    /// Per node, the image its flash holds whole, which a reboot keeps.
+    held: Vec<Option<Image>>,
     /// The release's gathers given up unproven: the node and when.
     pub dropped: Vec<(u32, Instant)>,
     /// Per node gathering the release, when it began, until its proof.
@@ -183,6 +185,7 @@ impl UpdateRun {
             },
             next_holds_at: vec![None; nodes],
             gathers: vec![None; nodes],
+            held: vec![None; nodes],
             dropped: Vec::new(),
             began: std::collections::HashMap::new(),
             proved_after: Vec::new(),
@@ -194,11 +197,48 @@ impl UpdateRun {
     /// The image is given to its first holder.
     pub fn give(&mut self, now: Instant) {
         self.holds_at[self.holder as usize] = Some(now);
+        self.held[self.holder as usize] = Some(self.image);
     }
 
     /// The second release is given to the first holder.
     pub fn give_next(&mut self, now: Instant) {
         self.next_holds_at[self.holder as usize] = Some(now);
+        self.held[self.holder as usize] = Some(self.next);
+    }
+
+    /// `node` rebooted, its flash kept unless `wiped`: what its driver
+    /// tells the new core (`docs/core-interface.md`, the update). The image
+    /// it holds whole, and a gather whose proof it holds from the first
+    /// block it lacks, the blocks after that taken again; one not proven
+    /// is forgotten, as the core's bound on it does not outlast a reboot.
+    pub fn rebooted(&mut self, node: u32, wiped: bool) -> Vec<AppCommand<'static>> {
+        let i = node as usize;
+        if wiped {
+            self.held[i] = None;
+        }
+        let mut told: Vec<AppCommand<'static>> =
+            self.held[i].map(AppCommand::Holds).into_iter().collect();
+        let proven = (0..bark_proto::update::PROOF_BLOCKS).all(|b| self.has.contains(&(node, b)));
+        match self.gathers[i].filter(|_| proven && !wiped) {
+            Some(image) => {
+                let from = (0..image.blocks)
+                    .find(|&b| !self.has.contains(&(node, b)))
+                    .unwrap_or(image.blocks);
+                self.has.retain(|k| k.0 != node || k.1 < from);
+                self.kept.retain(|k, _| k.0 != node);
+                self.decoded[i] = from;
+                told.push(AppCommand::Gather { image, from });
+            }
+            None => {
+                self.gathers[i] = None;
+                self.began.remove(&node);
+                self.forged_since.remove(&node);
+                self.kept.retain(|k, _| k.0 != node);
+                self.has.retain(|k| k.0 != node);
+                self.decoded[i] = 0;
+            }
+        }
+        told
     }
 
     /// The policy takes every image offered.
@@ -307,6 +347,7 @@ impl UpdateRun {
         ));
         if all {
             let image = self.gathers[node as usize].take().unwrap_or(self.image);
+            self.held[node as usize] = Some(image);
             self.owed.push((node, AppCommand::Holds(image)));
             let at = match image == self.next {
                 true => &mut self.next_holds_at,
