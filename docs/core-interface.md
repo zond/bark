@@ -466,8 +466,9 @@ a neighbour's status asked or told, 16 B, with two marks in each neighbour's ent
 its padding (roadmap D157),
 and its stored state as handed back and as last kept, 80 B, what it learns of its
 battery's drain, 16 B (spec "Sleepy nodes"), and beside them what it keeps
-of the update, 1 960 B, with 16 B of each neighbour's entry for its heartbeats' section and
-when it was heard, and the four images the sections name kept once in the table, 48 B (spec
+of the update, 1 960 B, with 18 B of each neighbour's entry for its heartbeats' section,
+when it was heard and how long it had told the same, 2 B that fit the entry's padding
+(roadmap D247), and the four images the sections name kept once in the table, 48 B (spec
 "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
 `SleepyNode` is 82 856 B (80.9 KiB), without the heard table and the delivery
 queue, 18.9 KiB (roadmap D58), for a driver whose node never switches, as the simulator's

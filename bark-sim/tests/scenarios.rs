@@ -1147,10 +1147,22 @@ fn nodes_reboot_into_a_staged_image_within_the_bound() {
 /// comes to every node (spec "Updates over the mesh").
 #[test]
 fn a_forged_section_holds_no_node_and_spreads_no_further() {
+    a_forged_section(1);
+}
+
+/// As above at seed 10, where a relay's one holder in reach stood back
+/// for a nearer one that did not hear it.
+#[test]
+fn a_forged_section_holds_no_node_and_spreads_no_further_at_seed_10() {
+    a_forged_section(10);
+}
+
+fn a_forged_section(seed: u64) {
     let config = bark_proto::Config::default();
     let bound = bark_proto::update::unproven_within(&config);
     let release = bound + bark_proto::Duration::from_secs(3600);
     let mut sc = scenario("mesh-spread.toml");
+    sc.seed = seed;
     sc.duration_s = (release + bark_proto::Duration::from_secs(8 * 3600)).as_micros() as f64 / 1e6;
     sc.update = Some(bark_sim::scenario::UpdateSpec {
         at_s: Some(release.as_micros() as f64 / 1e6),
@@ -1205,6 +1217,14 @@ fn a_release_that_follows_another_reaches_every_node() {
 #[test]
 fn a_release_that_follows_another_reaches_every_node_at_seed_5() {
     a_release_follows_another(5);
+}
+
+/// As above at seed 10, where a relay's one holder in reach stood back
+/// for a nearer one that did not hear it, and its other holder was too
+/// weakly linked to feed it.
+#[test]
+fn a_release_that_follows_another_reaches_every_node_at_seed_10() {
+    a_release_follows_another(10);
 }
 
 fn a_release_follows_another(seed: u64) {

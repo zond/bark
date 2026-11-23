@@ -763,7 +763,8 @@ impl Spread {
     /// a relay this node hears, at home on another channel than `n`, that
     /// holds more blocks from the first than `n`, lies no farther from `n`
     /// than this node, and holds more of them than this node, or as many
-    /// with a lower ID (spec "Updates over the mesh").
+    /// with a lower ID; but not once `n` shows no progress for its lease
+    /// ([`Spread::stalled`]; spec "Updates over the mesh").
     /// `complete` holds [`Spread::complete_of`] by slot, and `mine` this
     /// node's own count.
     fn streams_to(
@@ -782,6 +783,9 @@ impl Spread {
         let Some(u) = v.neighbours.section(n) else {
             return false;
         };
+        if Self::stalled(v, n, now) {
+            return true;
+        }
         let far = n.local.distance2(Point::default());
         !v.neighbours.live(now).any(|(j, m)| {
             let k = complete[j];
@@ -823,16 +827,31 @@ impl Spread {
     /// and one whose restatement was lost once goes on
     /// (spec "Updates over the mesh").
     fn gatherer(v: &View<'_>, n: &Neighbour, image: Image, now: Instant) -> Option<Section> {
-        let rotation = match n.sleepy {
-            true => beat_period(v.config.delivery_ttl),
-            false => heartbeat_interval(n.id, v.config).mul(u64::from(CHANNELS)),
-        };
-        let lease = rotation.mul(LEASE_ROTATIONS) + heartbeat_lag(v.config);
+        let lease = Self::lease(v, n);
         let at = Neighbours::section_at(n)?;
         if now > at + lease {
             return None;
         }
         v.neighbours.section(n).filter(|u| u.gathers(image.version))
+    }
+
+    /// Whether gatherer `n` shows no progress: its section has told the
+    /// same for its lease, so whoever this node would stand back for does
+    /// not reach it. Once its own pieces show, it stands back again: going
+    /// on to the end of the block sent more pieces twice in the simulator
+    /// (roadmap D247).
+    fn stalled(v: &View<'_>, n: &Neighbour, now: Instant) -> bool {
+        Neighbours::section_still(n, now).is_some_and(|still| still > Self::lease(v, n))
+    }
+
+    /// A gatherer's lease: [`LEASE_ROTATIONS`] of its rotations and a
+    /// heartbeat's lag, a sleepy node's rotation being its beat.
+    fn lease(v: &View<'_>, n: &Neighbour) -> Duration {
+        let rotation = match n.sleepy {
+            true => beat_period(v.config.delivery_ttl),
+            false => heartbeat_interval(n.id, v.config).mul(u64::from(CHANNELS)),
+        };
+        rotation.mul(LEASE_ROTATIONS) + heartbeat_lag(v.config)
     }
 
     fn needs(&self, v: &View<'_>, now: Instant) -> [Need; CHANNELS as usize] {
@@ -1721,6 +1740,91 @@ mod tests {
         assert_eq!(lacking(&r, after), 1, "a section renews it");
     }
 
+    /// A holder that stands back for a better one streams to a gatherer
+    /// on another channel once the gatherer's section has told the same
+    /// for its lease, and stands back again once it tells more
+    /// (spec "Updates over the mesh").
+    #[test]
+    fn a_holder_stands_back_only_while_the_gatherer_progresses() {
+        use crate::position::Position;
+        use crate::wire::Heartbeat;
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            ..Config::default()
+        };
+        let mut r = crate::Relay::new(config, 1);
+        let t0 = Instant::ZERO + Duration::from_secs(2);
+        let image = Image {
+            version: 2,
+            blocks: 5,
+            last: 7,
+            key: 0,
+        };
+        // It holds three blocks; the better holder all five, nearer the
+        // gatherer, on another channel.
+        r.gather(image, 3, t0);
+        let me = r.config.position;
+        let node = |lat: i32, home: u8, n: u64| {
+            let at = Position {
+                lat: me.lat + lat,
+                ..me
+            };
+            let hb = Heartbeat {
+                sleepy: false,
+                anchorless: false,
+                carried: false,
+                home: Channel::new(home).unwrap(),
+                format: crate::wire::FORMAT,
+                map_point: false,
+                leaving: false,
+                id: NodeId::from_u64(n),
+                short: at.short(),
+            };
+            (hb, at)
+        };
+        let gatherer = node(5_000, 5, 7);
+        let better = node(5_200, 7, 9);
+        let told = |complete, have| Section {
+            runs: 1,
+            image: Some(image),
+            complete,
+            have,
+        };
+        let plane = r.plane;
+        let hear = |r: &mut crate::Relay, (hb, at): (Heartbeat, Position), s: Section, t| {
+            r.neighbours.heard(&hb, at, -80, &plane, t);
+            r.neighbours.section_heard(hb.id, s, t);
+        };
+        let served = |r: &crate::Relay, t: Instant| {
+            let v = view!(r);
+            let (j, _) = v.neighbours.by_id(gatherer.0.id).unwrap();
+            r.spread.served(&v, Some(Channel::new(5).unwrap()), t) & 1 << j != 0
+        };
+        hear(&mut r, gatherer, told(1, 0), t0);
+        let lease = {
+            let v = view!(r);
+            Spread::lease(&v, r.neighbours.get(gatherer.0.id).unwrap())
+        };
+        hear(&mut r, better, told(5, 0), t0);
+        assert!(!served(&r, t0), "it stands back");
+        // The gatherer tells the same each minute: no progress.
+        let step = Duration::from_secs(60);
+        let mut t = t0;
+        while t + step <= t0 + lease {
+            t += step;
+            hear(&mut r, gatherer, told(1, 0), t);
+            hear(&mut r, better, told(5, 0), t);
+            assert!(!served(&r, t), "within the lease");
+        }
+        let stalled = t0 + lease + Duration::from_secs(1);
+        hear(&mut r, better, told(5, 0), stalled);
+        assert!(served(&r, stalled), "the gatherer shows no progress");
+        // Its pieces show: it stands back again.
+        hear(&mut r, gatherer, told(1, 3), stalled);
+        assert!(!served(&r, stalled), "progress");
+    }
+
     /// Whether this node streams to `n`, worked out alone, as
     /// [`Spread::served`] works it out for the whole table at once for the
     /// gatherers.
@@ -1740,6 +1844,9 @@ mod tests {
         let Some(u) = v.neighbours.section(n) else {
             return false;
         };
+        if Spread::stalled(v, n, now) {
+            return true;
+        }
         let mine = s.section(v.config.version).map_or(0, |s| s.complete);
         let far = n.local.distance2(Point::default());
         !v.neighbours.live(now).any(|(_, m)| {
