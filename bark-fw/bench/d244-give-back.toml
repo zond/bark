@@ -18,8 +18,8 @@ place_m = -50.0
 name = "B"
 place_m = 50.0
 
-# After the first rotation, 195 s after the later boot (spec "Channel at
-# boot").
+# After the first rotation, 195 s after the later boot
+# (spec "Channel at boot").
 [[actions]]
 at_s = 240.0
 board = "A"
