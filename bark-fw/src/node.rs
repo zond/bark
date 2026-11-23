@@ -15,10 +15,11 @@
 use core::mem::MaybeUninit;
 
 use bark_driver::{App, Driver, Outgoing, Ready, Request};
+use bark_fw_logic::given_back::{goes_again, why_text, Given, Sender};
 use bark_fw_logic::install::{Install, Seen};
 use bark_link::Status;
 use bark_proto::wire::MAX_PAYLOAD;
-use bark_proto::{AppEvent, BatteryLevels, Config, Core, Event, Instant, Position, Stored};
+use bark_proto::{AppEvent, BatteryLevels, Config, Core, Event, Instant, Position, Stored, Why};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
@@ -36,14 +37,6 @@ const REPORT_EVERY: Duration = Duration::from_secs(10);
 /// After a radio failure, how long to wait before trying again, so that a
 /// radio that stays broken logs once a second instead of filling the log.
 const RETRY_PAUSE: Duration = Duration::from_secs(1);
-
-/// The tag every message of the application is sent with for now
-/// (`bark_driver::Outgoing::tag`).
-// TODO(D244 firmware): a tag for each phone's link, the mailbox and the
-// message carried across a reboot, with each `AppEvent::GivenBack` routed
-// by its tag to that sender and told with its why (spec "Sending", Given
-// back), a mailbox reply given back no way dropped (spec "Mailbox").
-pub(crate) const UNTAGGED: u8 = 0;
 
 /// What wakes the node's loop for its application ([`LinkApp::ready`]):
 /// a signal for each part that tells it something, raised by that part
@@ -115,9 +108,6 @@ pub struct LinkApp<'a> {
     /// The core's inbox's oldest message while the node places it
     /// ([`LinkApp::place`]).
     placing: Option<Placing>,
-    /// The mailbox's reply the core holds, to tell its given back from
-    /// the phone's.
-    replying: Option<bark_proto::MsgId>,
     kept: &'a mut Kept,
 }
 
@@ -269,12 +259,11 @@ impl App for LinkApp<'_> {
                     out.number
                 );
             }
-            self.replying = Some(out.msg_id);
             Some(Outgoing {
                 dst_pos: out.address.position,
                 dst_id: out.address.node,
                 len: out.len,
-                tag: UNTAGGED,
+                tag: Sender::Mailbox.tag(),
             })
         })
     }
@@ -282,25 +271,12 @@ impl App for LinkApp<'_> {
         let now = bark_driver::Clock::now(&self.clock);
         match event {
             AppEvent::Message { msg_id } => log::info!("message id={:08x}", msg_id.0),
-            // The person is to be told and may send again after the wait
-            // (spec "A sleepy node's own message").
-            AppEvent::GivenBack { msg_id, .. } if self.kept.carry.given_back(*msg_id) => {
-                log::info!("carry: id={:08x} given back", msg_id.0);
-            }
-            AppEvent::GivenBack { msg_id, .. } if self.replying == Some(*msg_id) => {
-                log::info!("mailbox: reply id={:08x} given back", msg_id.0);
-                crate::mailbox::with(|m| m.given_back(*msg_id));
-            }
             AppEvent::GivenBack {
-                msg_id, retry_at, ..
-            } => {
-                log::warn!(
-                    "given back id={:08x} reason=refused retry_in_ms={}",
-                    msg_id.0,
-                    retry_at.since(now).as_micros() / 1000
-                );
-                crate::ble::given_back(*msg_id, *retry_at);
-            }
+                msg_id,
+                retry_at,
+                why,
+                tag,
+            } => self.given_back(*msg_id, *retry_at, *why, *tag, now),
             AppEvent::Boot { relays, ends } => {
                 let left = ends.map(|t| t.since(now).as_micros() / 1_000_000);
                 log::info!("boot relays={} first_rotation_left_s={:?}", relays, left);
@@ -436,28 +412,76 @@ impl LinkApp<'_> {
 
     /// The phone's message, if it wrote one (`ble.rs`, Send).
     fn phone_message(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
-        crate::ble::take_request(|_, r| match *r {
-            crate::ble::Request::Send {
+        crate::ble::take_send(|dst_pos, dst_id, p, tag| {
+            payload[..p.len()].copy_from_slice(p);
+            let id = bark_proto::MsgId::of(dst_pos, dst_id, p);
+            log::info!(
+                "ble: send id={:08x} len={} taken tag={}",
+                id.0,
+                p.len(),
+                tag
+            );
+            Outgoing {
                 dst_pos,
                 dst_id,
-                len,
-                payload: p,
-            } => {
-                payload[..len as usize].copy_from_slice(&p[..len as usize]);
-                let id = bark_proto::MsgId::of(dst_pos, dst_id, &p[..len as usize]);
-                log::info!("ble: send id={:08x} len={} taken", id.0, len);
-                Some((
-                    Outgoing {
-                        dst_pos,
-                        dst_id,
-                        len: len as usize,
-                        tag: UNTAGGED,
-                    },
-                    true,
-                ))
+                len: p.len(),
+                tag,
             }
-            _ => None,
         })
+    }
+
+    /// The core gave back a message sent with `tag`, to its sender
+    /// (`bark_fw_logic::given_back`).
+    fn given_back(
+        &mut self,
+        msg_id: bark_proto::MsgId,
+        retry_at: Instant,
+        why: Why,
+        tag: u8,
+        now: Instant,
+    ) {
+        let again = goes_again(why);
+        match Sender::of(tag) {
+            Sender::Carried => {
+                let ours = self.kept.carry.given_back(msg_id, again);
+                log::info!(
+                    "carry: id={:08x} given back why={} ours={}",
+                    msg_id.0,
+                    why_text(why),
+                    ours
+                );
+            }
+            Sender::Mailbox => {
+                log::info!(
+                    "mailbox: reply id={:08x} given back why={} again={}",
+                    msg_id.0,
+                    why_text(why),
+                    again
+                );
+                if again {
+                    crate::mailbox::with(|m| m.given_back(msg_id));
+                }
+            }
+            // A bench build's command, which its own App reads first.
+            Sender::Bench => {}
+            Sender::Record(_) | Sender::Guest(_) => {
+                log::warn!(
+                    "given back id={:08x} tag={} why={} retry_in_ms={}",
+                    msg_id.0,
+                    tag,
+                    why_text(why),
+                    retry_at.since(now).as_micros() / 1000
+                );
+                crate::ble::given_back(
+                    tag,
+                    Given {
+                        msg_id,
+                        retry_at,
+                        why,
+                    },
+                );
+            }
+        }
     }
 }
 
@@ -741,7 +765,6 @@ pub async fn run<'a>(
         serving: false,
         power: None,
         placing: None,
-        replying: None,
         kept,
     };
     #[cfg(feature = "bench")]

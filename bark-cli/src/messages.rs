@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use bark_app_layer::card::{self, Card};
 use bark_link::Clock;
-use bark_proto::MsgId;
+use bark_proto::{MsgId, Why};
 
 use crate::link::{id_text, Error, Result, Transport};
 use crate::person::{self, hex, Contact, Opened};
@@ -16,6 +16,19 @@ use crate::state::State;
 
 fn msg(id: MsgId) -> String {
     format!("{:08x}", id.0)
+}
+
+/// The line for a message the node gave back, with why (spec "Sending",
+/// Given back). The tool keeps no message it sent, so it sends none again:
+/// the person does, after the wait for busy, once the node is ready for no
+/// neighbour, and for no way only as a new message.
+fn given_back(g: &bark_link::GivenBack) -> String {
+    let why = match g.why {
+        Why::Busy => "busy",
+        Why::NoNeighbour => "no-neighbour",
+        Why::NoWay => "no-way",
+    };
+    format!("given_back {} wait_s {} why {why}", msg(g.msg_id), g.wait_s)
 }
 
 /// Sends `text` to the contact `to` through the node `sel` names: to where
@@ -125,7 +138,7 @@ pub fn inbox<T: Transport>(
     let (n, mut l) = phone::connect(t, state, sel, time, clock)?;
     let mut lines = Vec::new();
     if let Some(g) = phone::given_back(&mut l)? {
-        lines.push(format!("given_back {} wait_s {}", msg(g.msg_id), g.wait_s));
+        lines.push(given_back(&g));
     }
     let mut keep = |state: &mut State, id: MsgId, payload: &[u8]| -> Result<()> {
         let State { me, contacts, .. } = &mut *state;
@@ -390,6 +403,43 @@ mod tests {
         );
         assert_eq!(state.ring(node), 2);
         assert!(state.contacts[0].has_mine);
+        let lines = inbox(&mut radio, &mut state, &sel("01"), SCAN_TIME, CLOCK).unwrap();
+        assert_eq!(lines, ["inbox empty"]);
+    }
+
+    #[test]
+    fn a_message_given_back_shows_with_why() {
+        let (mut radio, mut state) = at_node();
+        for (why, wait_s, text) in [
+            (Why::Busy, 40, "given_back 00000042 wait_s 40 why busy"),
+            (
+                Why::NoNeighbour,
+                0,
+                "given_back 00000042 wait_s 0 why no-neighbour",
+            ),
+            (Why::NoWay, 0, "given_back 00000042 wait_s 0 why no-way"),
+        ] {
+            radio.nodes[0].borrow_mut().given_back = Some(bark_link::GivenBack {
+                msg_id: MsgId(0x42),
+                wait_s,
+                why,
+            });
+            let lines = inbox(&mut radio, &mut state, &sel("01"), SCAN_TIME, CLOCK).unwrap();
+            assert_eq!(lines, [text]);
+            // Nothing is sent again by itself.
+            assert!(radio.nodes[0].borrow().sent.is_empty());
+        }
+        // A message the node takes ends it.
+        send(
+            &mut radio,
+            &mut state,
+            &sel("01"),
+            "friend",
+            "hej",
+            SCAN_TIME,
+            CLOCK,
+        )
+        .unwrap();
         let lines = inbox(&mut radio, &mut state, &sel("01"), SCAN_TIME, CLOCK).unwrap();
         assert_eq!(lines, ["inbox empty"]);
     }

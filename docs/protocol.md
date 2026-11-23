@@ -1892,8 +1892,11 @@ phone sent it ([message records](#message-records)), so one that comes
 back long after is given to the right phone. It is the last message given
 back and stays until the node takes another message from that phone; an
 earlier one it replaces unread stays, to its app, taken. A paired phone
-reads it when it next links. A message given back to a guest whose link
-has ended is dropped.
+reads it when it next links, unless the node has rebooted since, which
+forgets it. A message given back to a guest whose link has ended is
+dropped, as is one the node kept across a reboot into a new image
+([updates over the mesh](#updates-over-the-mesh)), whose sender it does
+not keep.
 
 The app finds the message by its ID among those it sent, computing each
 one's as the node does, and tells the person why:

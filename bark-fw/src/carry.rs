@@ -5,7 +5,9 @@
 //! put back where it was, after the tables kept with it. The application's
 //! own message, if the node held one, is offered to the core again as the
 //! application's, through its send slot, before the phone's and the
-//! mailbox's; given back, it is offered again after its wait. Once every
+//! mailbox's, with a tag of its own, as the flash keeps no sender; given
+//! back busy or with no neighbour, it is offered again once the node takes
+//! one, and for no way it is let go. Once every
 //! message is back the region is erased; a reset before then puts them
 //! back again, and the network knows each by its ID.
 
@@ -105,7 +107,7 @@ impl Carry {
                     dst_pos: m.dst_pos,
                     dst_id: m.dst_id,
                     len: m.payload.len(),
-                    tag: crate::node::UNTAGGED,
+                    tag: bark_fw_logic::given_back::Sender::Carried.tag(),
                 }
             });
         if out.is_none() {
@@ -115,8 +117,9 @@ impl Carry {
     }
 
     /// The core gave `msg_id` back: whether it was the application's own
-    /// message kept, which is then offered again.
-    pub fn given_back(&mut self, msg_id: MsgId) -> bool {
+    /// message kept, which is then offered again if `again`, and else let
+    /// go.
+    pub fn given_back(&mut self, msg_id: MsgId, again: bool) -> bool {
         let mut s = [0; SLOT_LEN];
         let ours = self.offered
             && self
@@ -126,6 +129,9 @@ impl Carry {
                 .is_some_and(|m| m.msg_id == msg_id);
         if ours {
             self.offered = false;
+            if !again {
+                self.own = None;
+            }
         }
         ours
     }

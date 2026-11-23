@@ -39,6 +39,7 @@
 use core::cell::RefCell;
 use core::mem::MaybeUninit;
 
+use bark_fw_logic::given_back::{Given, GivenBacks, To};
 use bark_fw_logic::link::{self, Access};
 use bark_image::policy::Links;
 use bark_link::neighbours;
@@ -465,8 +466,7 @@ impl From {
 struct Peer {
     /// A link is up in the slot.
     live: bool,
-    /// Counts the slot's links, so that a message given back is not handed
-    /// to a later phone in the slot.
+    /// Counts the slot's links, for the log.
     link: u32,
     /// The record whose bond the link is encrypted with: a paired
     /// phone's.
@@ -483,9 +483,6 @@ struct Peer {
     /// A reply to its write or a notification is on its way to it, until
     /// it is sent.
     sending: bool,
-    /// A guest's message given back, and the end of its wait; a paired
-    /// phone's is its record's, [`State::given_back`].
-    given_back: Option<(MsgId, Instant)>,
     /// The slot it reads the neighbour table from (spec "Phone link",
     /// Neighbours); 0 at each connection.
     neighbours_from: u8,
@@ -504,7 +501,6 @@ impl Peer {
         pairing: false,
         refuses: false,
         sending: false,
-        given_back: None,
         neighbours_from: 0,
         phones_from: 0,
     };
@@ -525,9 +521,9 @@ pub struct State {
     /// For each record, its person's items not yet confirmed, as Status
     /// says them to its phone.
     counts: [u8; RECORDS],
-    /// For each record, its phone's message last given back and the end of
-    /// its wait, until the node takes another; kept across its links.
-    given_back: [Option<(MsgId, Instant)>; RECORDS],
+    /// What each phone was last given back, a paired phone's kept across
+    /// its links.
+    given_back: GivenBacks<LINKS>,
     /// The records' numbers as last followed ([`records_changed`]).
     numbers: [Option<u16>; RECORDS],
     /// The node's Node value but for `room`, which [`refresh`] reads from
@@ -538,9 +534,6 @@ pub struct State {
     told_status: Option<bark_link::Answer>,
     /// The phones, by their links' slots.
     phones: [Peer; LINKS],
-    /// The message the node took last from a phone: its ID, slot and link,
-    /// to give it back to that phone.
-    took: Option<(MsgId, From, u32)>,
     /// Whose turn it is at the one message the node holds for its phones,
     /// and so whose Ready is set (spec "Phone link", Sending).
     turn: Turn<LINKS>,
@@ -625,12 +618,11 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
     boot_ends: None,
     heads: [None; RECORDS],
     counts: [0; RECORDS],
-    given_back: [None; RECORDS],
+    given_back: GivenBacks::new(),
     numbers: [None; RECORDS],
     node: None,
     told_status: None,
     phones: [Peer::NONE; LINKS],
-    took: None,
     turn: Turn::new(),
     public: true,
     request: None,
@@ -787,29 +779,21 @@ pub fn booting(ends: Option<Instant>) {
     LINK.lock(|l| l.borrow_mut().boot_ends = ends);
 }
 
-/// The node's side: a phone's message was given back, to the phone it
-/// came from: a guest's while its link lasts, a paired phone's kept with
+/// The node's side: a phone's message was given back, to the phone its
+/// `tag` names: a guest's while its link lasts, a paired phone's kept with
 /// its record for its next (spec "Phone link", Given back, Public).
-pub fn given_back(msg_id: MsgId, retry_at: Instant) {
+pub fn given_back(tag: u8, given: Given) {
     let to = LINK.lock(|l| {
         let mut l = l.borrow_mut();
-        match l.took.filter(|&(id, ..)| id == msg_id) {
-            Some((_, from, link)) => match from.record {
-                None => {
-                    let p = &mut l.phones[from.slot];
-                    let here = p.live && p.link == link;
-                    if here {
-                        p.given_back = Some((msg_id, retry_at));
-                    }
-                    here.then_some(from.slot)
-                }
-                Some(i) => {
-                    l.given_back[i] = Some((msg_id, retry_at));
-                    l.slots_of(i).next()
-                }
-            },
+        match l.given_back.give_back(tag, given) {
+            Some(To::Record(i)) => l.slots_of(i).next(),
+            Some(To::Guest(slot)) => Some(slot),
             None => {
-                log::warn!("ble: given back id={:08x}, whose is not known", msg_id.0);
+                log::info!(
+                    "ble: given back id={:08x} tag={}: its guest's link has ended; dropped",
+                    given.msg_id.0,
+                    tag
+                );
                 None
             }
         }
@@ -860,30 +844,40 @@ pub fn take_request<R>(f: impl FnOnce(From, &Request) -> Option<(R, bool)>) -> O
         let mut l = l.borrow_mut();
         let (from, request) = l.request?;
         let (r, answer) = f(from, &request)?;
-        if let Request::Send {
-            dst_pos,
-            dst_id,
-            len,
-            payload,
-        } = request
-        {
-            if answer {
-                // A phone's message taken: what it was given back before
-                // is over, and the turn passes on.
-                match from.record {
-                    Some(i) => l.given_back[i] = None,
-                    None => l.phones[from.slot].given_back = None,
-                }
-                let id = MsgId::of(dst_pos, dst_id, &payload[..usize::from(len)]);
-                l.took = Some((id, from, l.phones[from.slot].link));
-                l.turn.taken(from.slot);
-            }
+        if let (Request::Send { .. }, true) = (request, answer) {
+            // A phone's message taken: what it was given back before is
+            // over, and the turn passes on.
+            l.given_back.taken(from.slot, from.record);
+            l.turn.taken(from.slot);
         }
         l.request = None;
         l.answer = Some(answer);
         Some(r)
     });
     taken
+}
+
+/// The node's side: take the phone's message if one waits, as `f` hands
+/// it to the core with the tag of its sender (`bark_fw_logic::given_back`).
+/// One whose link is down is not taken.
+pub fn take_send<R>(f: impl FnOnce(Position, NodeId, &[u8], u8) -> R) -> Option<R> {
+    let tag = LINK.lock(|l| {
+        let l = l.borrow();
+        let (from, _) = l.request?;
+        l.given_back.tag(from.slot, from.record)
+    })?;
+    take_request(|_, r| match r {
+        Request::Send {
+            dst_pos,
+            dst_id,
+            len,
+            payload,
+        } => Some((
+            f(*dst_pos, *dst_id, &payload[..usize::from(*len)], tag),
+            true,
+        )),
+        _ => None,
+    })
 }
 
 /// The node's side, after a step and its [`publish`]: answer the request
@@ -961,18 +955,8 @@ fn status_now(slot: usize) -> Status {
 fn given_back_now(slot: usize) -> heapless::Vec<u8, { GivenBack::LEN }> {
     LINK.lock(|l| {
         let l = l.borrow();
-        let given = match l.phones[slot].record {
-            Some(i) => l.given_back[i],
-            None => l.phones[slot].given_back,
-        };
-        match given {
-            Some((msg_id, retry_at)) => {
-                let g = GivenBack {
-                    msg_id,
-                    wait_s: seconds_left(now(), retry_at),
-                };
-                heapless::Vec::from_slice(&g.encode()).expect("it fits")
-            }
+        match l.given_back.read(slot, l.phones[slot].record) {
+            Some(g) => heapless::Vec::from_slice(&g.value(now()).encode()).expect("it fits"),
             None => heapless::Vec::new(),
         }
     })
@@ -1209,6 +1193,7 @@ async fn serve(
             };
             let link = p.link;
             l.turn.linked(i);
+            l.given_back.linked(i);
             link
         });
         log::info!("ble: link {} in slot {}", link, i);
@@ -1232,6 +1217,7 @@ async fn serve(
             let link = l.phones[i].link;
             l.phones[i] = Peer { link, ..Peer::NONE };
             l.turn.ended(i);
+            l.given_back.ended(i);
         });
         phones_moved();
         // A message waiting for this guest alone is now nobody's, and its
@@ -1297,9 +1283,9 @@ pub fn records_changed() {
         let mut l = l.borrow_mut();
         // A message given back to a record's phone is not a new record's.
         let l = &mut *l;
-        for ((given, was), now) in l.given_back.iter_mut().zip(&l.numbers).zip(numbers) {
+        for (i, (was, now)) in l.numbers.iter().zip(numbers).enumerate() {
             if *was != now {
-                *given = None;
+                l.given_back.record_changed(i);
             }
         }
         l.numbers = numbers;

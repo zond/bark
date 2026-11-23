@@ -57,10 +57,11 @@ proptest! {
     }
 
     #[test]
-    fn confirm_and_given_back_round_trip(id: u32, wait_s: u16) {
+    fn confirm_and_given_back_round_trip(id: u32, wait_s: u16, why in 0u8..3) {
         let c = Confirm(MsgId(id));
         prop_assert_eq!(Confirm::decode(&c.encode()), Ok(c));
-        let g = GivenBack { msg_id: MsgId(id), wait_s };
+        let why = [Why::Busy, Why::NoNeighbour, Why::NoWay][why as usize];
+        let g = GivenBack { msg_id: MsgId(id), wait_s, why };
         prop_assert_eq!(GivenBack::decode(&g.encode()), Ok(Some(g)));
     }
 
@@ -158,8 +159,17 @@ fn vectors() {
     let given = GivenBack {
         msg_id: MsgId(0x357b_6010),
         wait_s: 200,
+        why: Why::Busy,
     };
-    assert_eq!(given.encode(), [0x35, 0x7b, 0x60, 0x10, 0, 200]);
+    assert_eq!(given.encode(), [0x35, 0x7b, 0x60, 0x10, 0, 200, 0]);
+    for (why, code) in [(Why::NoNeighbour, 1), (Why::NoWay, 2)] {
+        let given = GivenBack {
+            msg_id: MsgId(0x357b_6010),
+            wait_s: 0,
+            why,
+        };
+        assert_eq!(given.encode(), [0x35, 0x7b, 0x60, 0x10, 0, 0, code]);
+    }
 
     let node = Node {
         version: VERSION,
@@ -344,11 +354,20 @@ fn reads_ignore_what_a_later_version_appends() {
     let g = GivenBack {
         msg_id: MsgId(1),
         wait_s: 2,
+        why: Why::NoWay,
     };
     let mut longer = [0xAA; GivenBack::LEN + 1];
     longer[..GivenBack::LEN].copy_from_slice(&g.encode());
     assert_eq!(GivenBack::decode(&longer), Ok(Some(g)));
     assert_eq!(GivenBack::decode(&[]), Ok(None));
+    // The six bytes before why are no value: nothing ever sent them.
+    assert_eq!(
+        GivenBack::decode(&longer[..GivenBack::LEN - 1]),
+        Err(Malformed::Length)
+    );
+    let mut unknown = g.encode();
+    unknown[GivenBack::LEN - 1] = 3;
+    assert_eq!(GivenBack::decode(&unknown), Err(Malformed::Value));
     assert_eq!(Message::decode(&[]), Ok(None));
     assert_eq!(Message::decode(&[1, 2, 3]), Err(Malformed::Length));
     let t = NodeTime {

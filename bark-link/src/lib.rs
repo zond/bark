@@ -9,7 +9,7 @@
 #![warn(missing_docs)]
 
 use bark_proto::wire::MAX_PAYLOAD;
-use bark_proto::{Instant, MsgId, NodeId, Position};
+use bark_proto::{Instant, MsgId, NodeId, Position, Why};
 
 /// The link version this crate speaks, in [`Node::version`]. Every change
 /// to the attribute table takes a new one: the node tells a bonded phone of
@@ -497,26 +497,29 @@ impl Confirm {
     }
 }
 
-/// Given back, read and notify: the app's message the node refused, and
-/// the wait the refusal asked for; empty when none was given back since the
-/// node last took one (spec "Sending").
+/// Given back, read and notify: the app's message the node gave back, the
+/// wait before it takes another, and why; empty when none was given back
+/// since the node last took one (spec "Sending").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GivenBack {
     /// The message's ID ([`Send::msg_id`]).
     pub msg_id: MsgId,
-    /// Seconds left of the wait ([`seconds_left`]).
+    /// Seconds left of the wait ([`seconds_left`]); 0 but for busy.
     pub wait_s: u16,
+    /// Why, by the core's codes ([`bark_proto::Why::code`]).
+    pub why: Why,
 }
 
 impl GivenBack {
     /// Bytes in the value.
-    pub const LEN: usize = MSG_ID + 2;
+    pub const LEN: usize = MSG_ID + 2 + 1;
 
     /// The value.
     pub fn encode(&self) -> [u8; Self::LEN] {
         let mut b = [0u8; Self::LEN];
         b[..MSG_ID].copy_from_slice(&self.msg_id.0.to_be_bytes());
-        b[MSG_ID..].copy_from_slice(&self.wait_s.to_be_bytes());
+        b[MSG_ID..MSG_ID + 2].copy_from_slice(&self.wait_s.to_be_bytes());
+        b[MSG_ID + 2] = self.why.code();
         b
     }
 
@@ -529,6 +532,7 @@ impl GivenBack {
             _ => Ok(Some(GivenBack {
                 msg_id: msg_id(b),
                 wait_s: u16_at(b, MSG_ID),
+                why: Why::from_code(b[MSG_ID + 2]).ok_or(Malformed::Value)?,
             })),
         }
     }
