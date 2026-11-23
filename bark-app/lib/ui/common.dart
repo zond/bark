@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import '../app.dart';
 import '../ble_link.dart' show strongDbm, weakDbm;
+import '../l10n.dart';
 import '../link.dart';
 import '../node_link.dart';
 import '../session.dart';
@@ -128,10 +129,10 @@ String when(DateTime t) {
 
 /// How long ago, in a few words.
 String ago(Duration d) {
-  if (d.inMinutes < 1) return 'just now';
-  if (d.inHours < 1) return '${d.inMinutes} min ago';
-  if (d.inDays < 2) return '${d.inHours} h ago';
-  return '${d.inDays} days ago';
+  if (d.inMinutes < 1) return tr.timeJustNow;
+  if (d.inHours < 1) return tr.timeMinutesAgo(d.inMinutes);
+  if (d.inDays < 2) return tr.timeHoursAgo(d.inHours);
+  return tr.timeDaysAgo(d.inDays);
 }
 
 /// What a sent text's state means to the person, in words that claim no
@@ -139,14 +140,14 @@ String ago(Duration d) {
 /// says nothing more until the recipient confirms (spec "Addresses").
 /// Lower case, as it follows other words; [capital] for a line of its own.
 String stateLabel(Session s, Outgoing o) => switch (o.state) {
-  OutState.queued => 'waiting for a node',
-  OutState.writing => 'being handed to the node',
-  OutState.taken => 'sent into the network',
+  OutState.queued => tr.sentQueued,
+  OutState.writing => tr.sentWriting,
+  OutState.taken => tr.sentTaken,
   OutState.givenBack => switch (s.waitLeftS(o)) {
-    0 => 'the network is busy, sending again now',
-    final w => 'the network is busy, sending again in ${clock(w)}',
+    0 => tr.sentBusyNow,
+    final w => tr.sentBusyIn(clock(w)),
   },
-  OutState.refused => 'refused by the node',
+  OutState.refused => tr.sentRefused,
 };
 
 /// The day a record's person was last seen, as a node counts it
@@ -154,13 +155,13 @@ String stateLabel(Session s, Outgoing o) => switch (o.state) {
 /// or "never" when the node had no time at any of its links.
 String lastSeen(int day, DateTime now) {
   final d = dayOf(day);
-  if (d == null) return 'never';
+  if (d == null) return tr.timeNever;
   final t = now.toUtc();
   final ago = DateTime.utc(t.year, t.month, t.day).difference(d).inDays;
   return switch (ago) {
-    <= 0 => 'today',
-    1 => 'yesterday',
-    _ => '$ago days ago',
+    <= 0 => tr.timeToday,
+    1 => tr.timeYesterday,
+    _ => tr.timeDaysAgo(ago),
   };
 }
 
@@ -171,74 +172,28 @@ String capital(String s) =>
 /// The states of a sent text, in the order it moves through them, each
 /// with its icon, and the reaction it may get, for the sheet a tap on the
 /// text opens.
-const List<(IconData, String, String)> sentStates = [
-  (
-    Icons.schedule,
-    'Waiting for a node',
-    'On this phone, until a node is linked and ready for it.',
-  ),
-  (
-    Icons.sync,
-    'Being handed to the node',
-    'The phone is giving it to the node.',
-  ),
-  (
-    Icons.check,
-    'Sent into the network',
-    'The node has it and passes it on. The network gives no further '
-        'news: it does not say when it arrives.',
-  ),
-  (
-    Icons.hourglass_bottom,
-    'The network is busy',
-    'The network gave it back for now. The app sends it again by itself '
-        'once the wait is over.',
-  ),
-  (
-    Icons.block,
-    'Refused by the node',
-    'The node will not take it as it is, a fault of the app or the node. '
-        'Cancel removes it; Debug shows the reason.',
-  ),
-  (
-    Icons.add_reaction_outlined,
-    'Their reaction',
-    'The emoji on the text\'s corner, if they picked one.',
-  ),
+List<(IconData, String, String)> get sentStates => [
+  (Icons.schedule, capital(tr.sentQueued), tr.sentQueuedHelp),
+  (Icons.sync, capital(tr.sentWriting), tr.sentWritingHelp),
+  (Icons.check, capital(tr.sentTaken), tr.sentTakenHelp),
+  (Icons.hourglass_bottom, tr.sentBusy, tr.sentBusyHelp),
+  (Icons.block, capital(tr.sentRefused), tr.sentRefusedHelp),
+  (Icons.add_reaction_outlined, tr.sentReaction, tr.sentReactionHelp),
 ];
 
 /// What each mark on a received text means, for the sheet a tap on its
 /// marks opens; checked against the spec's "Payload" and "Mailbox"
 /// sections and the parts of a long text (roadmap D137).
-const List<(IconData, String, String)> receivedMarks = [
+List<(IconData, String, String)> get receivedMarks => [
   (
     Icons.add_reaction_outlined,
-    'Your reaction',
-    'Press and hold a text to react with an emoji, or to copy it. They '
-        'see it once it arrives. Pick another to change it.',
+    tr.receivedYourReaction,
+    tr.receivedYourReactionHelp,
   ),
-  (
-    Icons.gpp_maybe,
-    'First message',
-    'Anyone with your card could have sent a first message, so this one '
-        'is not proven to be theirs.',
-  ),
-  (
-    Icons.markunread_mailbox,
-    'From your mailbox',
-    'It waited at your home node and came when you fetched your mail.',
-  ),
-  (
-    Icons.more_horiz,
-    'Parts',
-    'A long text comes in parts, in any order. Italics stand for a part '
-        'not yet here.',
-  ),
-  (
-    Icons.schedule,
-    'The time',
-    'When it came. When it was written is under This message.',
-  ),
+  (Icons.gpp_maybe, tr.receivedFirst, tr.receivedFirstHelp),
+  (Icons.markunread_mailbox, tr.receivedMailbox, tr.receivedMailboxHelp),
+  (Icons.more_horiz, tr.receivedParts, tr.receivedPartsHelp),
+  (Icons.schedule, tr.receivedTime, tr.receivedTimeHelp),
 ];
 
 /// A message's details that its bubble does not show, as label and
@@ -261,7 +216,7 @@ Future<void> explainMessage(
             if (details.isNotEmpty) ...[
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-                child: Text('This message', style: text.titleMedium),
+                child: Text(tr.commonThisMessage, style: text.titleMedium),
               ),
               for (final (label, value) in details)
                 Padding(
@@ -310,8 +265,9 @@ String partsLabel(Session s, List<Outgoing> outs) {
       )
       .firstOrNull;
   return [
-    '${taken.length} of ${outs.length} sent',
-    if (problem != null) 'part ${problem.part}: ${stateLabel(s, problem)}',
+    tr.sentPartsSent(taken.length, outs.length),
+    if (problem != null)
+      tr.sentPartProblem(problem.part, stateLabel(s, problem)),
   ].join(', ');
 }
 
@@ -385,7 +341,7 @@ class BondKeptLine extends StatelessWidget {
 /// What the person reads when pairing with a node the phone uses as a
 /// guest failed for `e`: why, and that the phone goes on as before.
 String notPairedLine(Object e) =>
-    '${e is NotPaired ? '$e' : 'Pairing failed: $e'}. Still a guest here.';
+    e is NotPaired ? tr.commonNotPaired('$e') : tr.commonPairingFailed('$e');
 
 /// While no home is set and the phone uses a public node as a guest that
 /// can be one ([AppModel.offerHome]): makes it the home in one tap,
@@ -408,14 +364,14 @@ class GiftLines extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('${c.name} gave you a home at ${nodeLabel(g.home.id)}'),
+                  Text(tr.commonGift(c.name, nodeLabel(g.home.id))),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
-                      HelpButton('A home given', _giftHelp),
+                      HelpButton(tr.commonGiftTitle, tr.commonGiftHelp),
                       TextButton(
                         onPressed: () => app.mailbox.declineGift(c),
-                        child: const Text('Not now'),
+                        child: Text(tr.notNow),
                       ),
                       TextButton(
                         onPressed: () async {
@@ -423,10 +379,12 @@ class GiftLines extends StatelessWidget {
                             final r = await app.mailbox.useGift(c);
                             if (context.mounted) say(context, r);
                           } catch (e) {
-                            if (context.mounted) say(context, 'Failed: $e');
+                            if (context.mounted) {
+                              say(context, tr.commonFailed('$e'));
+                            }
                           }
                         },
-                        child: const Text('Use it'),
+                        child: Text(tr.commonUseGift),
                       ),
                     ],
                   ),
@@ -436,12 +394,6 @@ class GiftLines extends StatelessWidget {
           ),
     ],
   );
-
-  static const _giftHelp =
-      'The owner of a home node added you there. Used, it is your home: it '
-      'keeps texts to you while you are away, and your card carries its '
-      'address, so your contacts get your new card.\n\n'
-      'A home you had before sends you its mail, then forgets you.';
 }
 
 class HomeOfferLine extends StatelessWidget {
@@ -457,17 +409,13 @@ class HomeOfferLine extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'No home node yet. Make this one your home? It keeps texts '
-              'to you while you are away. You pair first, with the code on '
-              'its screen.',
-            ),
+            Text(tr.commonHomeOffer),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 TextButton(
                   onPressed: app.mailbox.notHome,
-                  child: const Text('Not now'),
+                  child: Text(tr.notNow),
                 ),
                 TextButton(
                   onPressed: app.links.connecting
@@ -480,7 +428,7 @@ class HomeOfferLine extends StatelessWidget {
                             if (context.mounted) say(context, notPairedLine(e));
                           }
                         },
-                  child: const Text('Set home'),
+                  child: Text(tr.commonSetHome),
                 ),
               ],
             ),
@@ -499,7 +447,7 @@ class BluetoothSettingsButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => TextButton(
     onPressed: () => openBluetoothSettings(context, app),
-    child: const Text('Bluetooth settings'),
+    child: Text(tr.commonBluetoothSettings),
   );
 }
 
@@ -507,7 +455,7 @@ Future<void> openBluetoothSettings(BuildContext context, AppModel app) async {
   try {
     await app.notifier.openBluetoothSettings();
   } catch (e) {
-    if (context.mounted) say(context, 'Opening Bluetooth settings failed: $e');
+    if (context.mounted) say(context, tr.commonBluetoothSettingsFailed('$e'));
   }
 }
 
@@ -521,14 +469,14 @@ Future<void> askToForget(BuildContext context, AppModel app, String text) =>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialog),
-            child: const Text('Not now'),
+            child: Text(tr.notNow),
           ),
           FilledButton(
             onPressed: () {
               Navigator.pop(dialog);
               openBluetoothSettings(context, app);
             },
-            child: const Text('Bluetooth settings'),
+            child: Text(tr.commonBluetoothSettings),
           ),
         ],
       ),
@@ -605,25 +553,23 @@ class _FetchButtonState extends State<FetchButton> {
     if (app.me.home == null) return const SizedBox.shrink();
     final s = app.session;
     if (app.me.fetchQueued) {
-      return const IconButton(
-        tooltip: 'Fetch waits for a node',
-        icon: Icon(Icons.schedule_send),
+      return IconButton(
+        tooltip: tr.commonFetchQueued,
+        icon: const Icon(Icons.schedule_send),
         onPressed: null,
       );
     }
     final waiting = s.fetchWaiting;
     if (waiting != null) {
       return IconButton(
-        tooltip:
-            'Waiting for your home node to answer, '
-            '${clock(s.fetchWaitLeftS(waiting))} at most',
+        tooltip: tr.commonFetchWaiting(clock(s.fetchWaitLeftS(waiting))),
         icon: const Icon(Icons.hourglass_top),
         onPressed: null,
       );
     }
     final more = app.me.remaining;
     return IconButton(
-      tooltip: 'Fetch my mail',
+      tooltip: tr.commonFetch,
       icon: Badge(
         label: Text('$more'),
         isLabelVisible: more > 0,
@@ -634,7 +580,7 @@ class _FetchButtonState extends State<FetchButton> {
           final r = await app.mailbox.fetchNow();
           if (context.mounted) say(context, r);
         } catch (e) {
-          if (context.mounted) say(context, 'Fetching failed: $e');
+          if (context.mounted) say(context, tr.commonFetchFailed('$e'));
         }
       },
     );
@@ -656,21 +602,17 @@ class SendCardLine extends StatelessWidget {
       contentPadding: padding,
       leading: const Icon(Icons.badge_outlined),
       title: Text(app.cardChange),
-      subtitle: Text(
-        n == 1
-            ? 'Your contact has the old one.'
-            : 'Your $n contacts have the old one.',
-      ),
+      subtitle: Text(tr.commonCardOld(n)),
       trailing: FilledButton(
         onPressed: () async {
           try {
             await app.messenger.sendCardToAll();
-            if (context.mounted) say(context, 'Your card is queued');
+            if (context.mounted) say(context, tr.commonCardQueued);
           } catch (e) {
-            if (context.mounted) say(context, 'Sending the card failed: $e');
+            if (context.mounted) say(context, tr.commonCardFailed('$e'));
           }
         },
-        child: const Text('Send my card'),
+        child: Text(tr.commonSendCard),
       ),
     );
   }
@@ -678,7 +620,7 @@ class SendCardLine extends StatelessWidget {
 
 /// Asks for the person's name and sets it, as Settings and My card do.
 Future<void> askMyName(BuildContext context, AppModel app) async {
-  final n = await askText(context, 'My name', app.me.name);
+  final n = await askText(context, tr.commonMyName, app.me.name);
   if (n != null) await app.setName(n);
 }
 
@@ -711,11 +653,11 @@ Future<String?> askText(
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            child: Text(tr.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, c.text.trim()),
-            child: const Text('Save'),
+            child: Text(tr.save),
           ),
         ],
       );
@@ -757,11 +699,8 @@ String connectionHelp(AppModel app) {
   final lost = [for (final n in app.session.nodes.lost) shownName(n)];
   final lostLine = switch (lost) {
     [] => '',
-    [final n] =>
-      '\n\n$n does not know this phone: pair again with it in Settings.',
-    _ =>
-      '\n\n${lost.join(', ')} do not know this phone: pair again with them '
-          'in Settings.',
+    [final n] => '\n\n${tr.connectionLostOne(n)}',
+    _ => '\n\n${tr.connectionLostMany(lost.join(', '))}',
   };
   final unserved = [
     for (final r in app.session.nodes.records)
@@ -769,61 +708,36 @@ String connectionHelp(AppModel app) {
   ];
   final unservedLine = switch (unserved) {
     [] => '',
-    [final n] =>
-      '\n\n$n cannot be used yet: it or this app needs an update. Tap it in '
-          'Settings to try again.',
-    _ =>
-      '\n\n${unserved.join(', ')} cannot be used yet: they or this app '
-          'need an update. Tap one in Settings to try again.',
+    [final n] => '\n\n${tr.connectionUnservedOne(n)}',
+    _ => '\n\n${tr.connectionUnservedMany(unserved.join(', '))}',
   };
   final others = '$lostLine$unservedLine';
   final install = app.installs.installHelp;
   if (install != null) return install;
   if (s.connected && !s.guest) {
-    if (app.mailbox.atHome) {
-      return 'Your home. The phone stays linked while it is in reach, so '
-          'texts come at once, also with the screen off. It always goes to '
-          'your home first.';
-    }
+    if (app.mailbox.atHome) return tr.connectionAtHome;
     final home = app.links.homeName == null
-        ? 'With no home, your card names this node while you use it.'
-        : 'Texts to you wait at your home; Fetch my mail brings them here.'
-              '${app.links.movesHome ? ' When your home is in reach, the phone moves to it within a minute.' : ''}';
-    return 'A node you are paired with. The phone stays linked while it is '
-        'in reach. $home';
+        ? tr.connectionPairedNoHome
+        : app.links.movesHome
+        ? '${tr.connectionPairedHome} ${tr.connectionMovesHome}'
+        : tr.connectionPairedHome;
+    return '${tr.connectionPaired} $home';
   }
-  if (app.links.tappedGuest) {
-    return 'Someone else\'s public node, which you chose. It serves one '
-        'guest at a time and ends a guest\'s link after 30 seconds; then the '
-        'phone chooses a node itself.$others';
-  }
+  if (app.links.tappedGuest) return '${tr.connectionTappedGuest}$others';
   if (app.nodeLine != null) {
     final why = app.links.ownWeak
-        ? 'Your paired nodes are heard too weakly here, so the phone uses '
-              'this public node until it hears one well.'
+        ? tr.connectionGuestWeak
         : app.links.ownAway
-        ? 'None of your paired nodes has been in reach for 30 seconds, so '
-              'the phone uses this public node until it hears one.'
-        : 'No node of yours is near, so the phone uses this public node, '
-              'someone else\'s.';
-    return '$why As a guest it visits about once a minute, and at once when '
-        'you send. Replies to texts sent from here come here.$others';
+        ? tr.connectionGuestAway
+        : tr.connectionGuestNoneNear;
+    return '$why ${tr.connectionGuestVisits}$others';
   }
   if (lookingLine(app) != null) {
-    if (!app.links.bluetoothOn) {
-      return 'Bluetooth is off. Texts wait on the phone until it is on and a '
-          'node is in reach.$others';
-    }
-    if (app.links.searchFor == null) {
-      return 'No node of yours to use, so the phone looks every 15 seconds '
-          'for a public node to use as a guest.$others';
-    }
-    return 'The phone looks every 15 seconds for your paired nodes, your '
-        'home first. After 30 seconds without one, it uses a public node '
-        'as a guest meanwhile.$others';
+    if (!app.links.bluetoothOn) return '${tr.connectionBluetoothOff}$others';
+    if (app.links.searchFor == null) return '${tr.connectionLookPublic}$others';
+    return '${tr.connectionLookPaired}$others';
   }
-  return 'The phone is not looking: you stopped it, or it may not use '
-      'Bluetooth yet. Tap a node in Settings to connect.$others';
+  return '${tr.connectionNotLooking}$others';
 }
 
 /// An info button that opens `body` under `title`, for whoever asks.
@@ -834,7 +748,7 @@ class HelpButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => IconButton(
-    tooltip: 'About $title',
+    tooltip: tr.commonAbout(title),
     icon: const Icon(Icons.info_outline),
     onPressed: () => showHelp(context, title, body),
   );
@@ -868,7 +782,7 @@ class ConnectionHelpButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => IconButton(
-    tooltip: 'Why this node',
+    tooltip: tr.commonWhyThisNode,
     icon: const Icon(Icons.info_outline),
     onPressed: () =>
         showHelp(context, connectionLine(app), connectionHelp(app)),
@@ -881,18 +795,15 @@ Future<bool> whyBluetooth(BuildContext context) async =>
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Bluetooth'),
-        content: const Text(
-          'bark texts through a node near you, over Bluetooth. Android asks '
-          'next.',
-        ),
+        content: Text(tr.commonWhyBluetooth),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Not now'),
+            child: Text(tr.notNow),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Continue'),
+            child: Text(tr.commonContinue),
           ),
         ],
       ),
@@ -915,7 +826,7 @@ Future<bool> confirm(
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text(tr.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
@@ -930,17 +841,17 @@ Future<bool> confirm(
 /// or how many other nodes it hears (spec "Phone link", Status).
 String health(Session s) {
   final left = s.bootLeftS;
-  if (left > 0) return 'Starting up, ${clock(left)}';
+  if (left > 0) return tr.statusStarting(clock(left));
   final n = s.status?.heard ?? 0;
-  if (n == 0) return 'Hears no other node yet: texts wait here';
-  return n == 1 ? 'Hears 1 node' : 'Hears $n nodes';
+  if (n == 0) return tr.statusHearsNone;
+  return tr.statusHears(n);
 }
 
 /// A found node's signal in a word: strong, fair or weak.
 String signalWord(int? rssi) => rssi == null
-    ? 'signal unknown'
+    ? tr.signalUnknown
     : rssi >= strongDbm
-    ? 'strong signal'
+    ? tr.signalStrong
     : rssi < weakDbm
-    ? 'weak signal'
-    : 'fair signal';
+    ? tr.signalWeak
+    : tr.signalFair;

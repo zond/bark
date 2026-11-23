@@ -65,5 +65,294 @@
 
   "archivedNothing": "Nothing archived. Swipe a conversation or contact aside to archive it.",
   "archivedConversations": "Conversations",
-  "archivedUnarchive": "Unarchive"
+  "archivedUnarchive": "Unarchive",
+
+  "cancel": "Cancel",
+  "save": "Save",
+  "notNow": "Not now",
+
+  "timeJustNow": "just now",
+  "timeMinutesAgo": "{minutes} min ago",
+  "@timeMinutesAgo": {
+    "placeholders": {"minutes": {"type": "int"}}
+  },
+  "timeHoursAgo": "{hours} h ago",
+  "@timeHoursAgo": {
+    "placeholders": {"hours": {"type": "int"}}
+  },
+  "timeDaysAgo": "{days, plural, one{{days} day ago} other{{days} days ago}}",
+  "@timeDaysAgo": {
+    "description": "How long ago, in lower case, as it follows other words.",
+    "placeholders": {"days": {"type": "int"}}
+  },
+  "timeNever": "never",
+  "@timeNever": {
+    "description": "When a person was last seen: never. Lower case, as it follows other words."
+  },
+  "timeToday": "today",
+  "timeYesterday": "yesterday",
+
+  "sentQueued": "waiting for a node",
+  "@sentQueued": {
+    "description": "A sent text's state. Lower case, as it follows other words; the app makes its first letter a capital where it stands alone."
+  },
+  "sentWriting": "being handed to the node",
+  "@sentWriting": {
+    "description": "This and the states after it are lower case, as sentQueued is."
+  },
+  "sentTaken": "sent into the network",
+  "sentBusyNow": "the network is busy, sending again now",
+  "sentBusyIn": "the network is busy, sending again in {wait}",
+  "@sentBusyIn": {
+    "placeholders": {"wait": {"type": "String", "example": "0:42"}}
+  },
+  "sentRefused": "refused by the node",
+  "sentPartsSent": "{taken} of {total} sent",
+  "@sentPartsSent": {
+    "description": "How many of a long text's parts the node has taken.",
+    "placeholders": {"taken": {"type": "int"}, "total": {"type": "int"}}
+  },
+  "sentPartProblem": "part {part}: {state}",
+  "@sentPartProblem": {
+    "description": "The state of one part of a long text, such as 'refused by the node'.",
+    "placeholders": {"part": {"type": "int"}, "state": {"type": "String"}}
+  },
+  "sentQueuedHelp": "On this phone, until a node is linked and ready for it.",
+  "sentWritingHelp": "The phone is giving it to the node.",
+  "sentTakenHelp": "The node has it and passes it on. The network gives no further news: it does not say when it arrives.",
+  "sentBusy": "The network is busy",
+  "sentBusyHelp": "The network gave it back for now. The app sends it again by itself once the wait is over.",
+  "sentRefusedHelp": "The node will not take it as it is, a fault of the app or the node. Cancel removes it; Debug shows the reason.",
+  "@sentRefusedHelp": {
+    "description": "Cancel is the button under the text; Debug is the screen of the app's log."
+  },
+  "sentReaction": "Their reaction",
+  "sentReactionHelp": "The emoji on the text's corner, if they picked one.",
+
+  "receivedYourReaction": "Your reaction",
+  "receivedYourReactionHelp": "Press and hold a text to react with an emoji, or to copy it. They see it once it arrives. Pick another to change it.",
+  "receivedFirst": "First message",
+  "receivedFirstHelp": "Anyone with your card could have sent a first message, so this one is not proven to be theirs.",
+  "receivedMailbox": "From your mailbox",
+  "receivedMailboxHelp": "It waited at your home node and came when you fetched your mail.",
+  "receivedParts": "Parts",
+  "receivedPartsHelp": "A long text comes in parts, in any order. Italics stand for a part not yet here.",
+  "receivedTime": "The time",
+  "receivedTimeHelp": "When it came. When it was written is under This message.",
+  "@receivedTimeHelp": {
+    "description": "This message is the heading of the text's details on the same sheet (commonThisMessage)."
+  },
+
+  "commonThisMessage": "This message",
+  "commonNotPaired": "{reason}. Still a guest here.",
+  "@commonNotPaired": {
+    "description": "Pairing with a node failed; the reason is a sentence without its full stop.",
+    "placeholders": {"reason": {"type": "String"}}
+  },
+  "commonPairingFailed": "Pairing failed: {error}. Still a guest here.",
+  "@commonPairingFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "commonGift": "{name} gave you a home at {node}",
+  "@commonGift": {
+    "description": "A contact made the person a home at their node.",
+    "placeholders": {"name": {"type": "String"}, "node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "commonGiftTitle": "A home given",
+  "commonGiftHelp": "The owner of a home node added you there. Used, it is your home: it keeps texts to you while you are away, and your card carries its address, so your contacts get your new card.\n\nA home you had before sends you its mail, then forgets you.",
+  "commonUseGift": "Use it",
+  "@commonUseGift": {
+    "description": "The button that takes a home another person gave."
+  },
+  "commonFailed": "Failed: {error}",
+  "@commonFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "commonHomeOffer": "No home node yet. Make this one your home? It keeps texts to you while you are away. You pair first, with the code on its screen.",
+  "commonSetHome": "Set home",
+  "commonBluetoothSettings": "Bluetooth settings",
+  "commonBluetoothSettingsFailed": "Opening Bluetooth settings failed: {error}",
+  "@commonBluetoothSettingsFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "commonFetchQueued": "Fetch waits for a node",
+  "commonFetchWaiting": "Waiting for your home node to answer, {wait} at most",
+  "@commonFetchWaiting": {
+    "placeholders": {"wait": {"type": "String", "example": "0:42"}}
+  },
+  "commonFetch": "Fetch my mail",
+  "commonFetchFailed": "Fetching failed: {error}",
+  "@commonFetchFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "commonCardNoHome": "Your card changed: no home",
+  "commonCardNewHome": "Your card changed: new home address",
+  "commonCardOld": "{count, plural, =1{Your contact has the old one.} other{Your {count} contacts have the old one.}}",
+  "@commonCardOld": {
+    "description": "Under 'Your card changed': who still has the old card.",
+    "placeholders": {"count": {"type": "int"}}
+  },
+  "commonCardQueued": "Your card is queued",
+  "commonCardFailed": "Sending the card failed: {error}",
+  "@commonCardFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "commonSendCard": "Send my card",
+  "commonMyName": "My name",
+  "commonAbout": "About {title}",
+  "@commonAbout": {
+    "description": "The tooltip of a button that opens help on a thing.",
+    "placeholders": {"title": {"type": "String"}}
+  },
+  "commonWhyThisNode": "Why this node",
+  "commonWhyBluetooth": "bark texts through a node near you, over Bluetooth. Android asks next.",
+  "@commonWhyBluetooth": {
+    "description": "Shown before Android asks to allow Bluetooth. bark is the app's name, always in lower case."
+  },
+  "commonContinue": "Continue",
+
+  "statusPublicNode": "a public node",
+  "@statusPublicNode": {
+    "description": "What the phone looks for, put into statusLooking and statusBluetoothOff as {node}."
+  },
+  "statusLooking": "Not connected. Looking for {node}; texts wait on the phone",
+  "@statusLooking": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "statusBluetoothOff": "Not connected. Bluetooth is off: turn it on to reach {node}",
+  "@statusBluetoothOff": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "statusNotLooking": "Not connected. Texts wait on the phone",
+  "statusGuestFor30s": "Connected to {node} as a guest for 30 s{install}",
+  "@statusGuestFor30s": {
+    "description": "{install} is what the node's install adds: empty, or a clause that begins with a comma, such as ', installing version 5'.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "install": {"type": "String"}}
+  },
+  "statusGuest": "Connected to {node} as a guest{install}",
+  "@statusGuest": {
+    "description": "{install} as in statusGuestFor30s.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "install": {"type": "String"}}
+  },
+  "statusAtHome": "Connected to your home, {node}{install}",
+  "@statusAtHome": {
+    "description": "{install} as in statusGuestFor30s.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "install": {"type": "String"}}
+  },
+  "statusPaired": "Connected to {node}, paired{install}",
+  "@statusPaired": {
+    "description": "{install} as in statusGuestFor30s.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "install": {"type": "String"}}
+  },
+  "statusHomeAt": "Home at {node}",
+  "@statusHomeAt": {
+    "description": "A sentence after the line that says which node the phone is on.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "statusStarting": "Starting up, {wait}",
+  "@statusStarting": {
+    "description": "The node has just started; how long until it is ready.",
+    "placeholders": {"wait": {"type": "String", "example": "0:42"}}
+  },
+  "statusHearsNone": "Hears no other node yet: texts wait here",
+  "statusHears": "{count, plural, =1{Hears 1 node} other{Hears {count} nodes}}",
+  "@statusHears": {
+    "description": "How many other nodes the connected node hears.",
+    "placeholders": {"count": {"type": "int"}}
+  },
+
+  "signalUnknown": "signal unknown",
+  "@signalUnknown": {
+    "description": "A found node's signal. Lower case, as it follows other words."
+  },
+  "signalStrong": "strong signal",
+  "signalFair": "fair signal",
+  "signalWeak": "weak signal",
+
+  "connectionLostOne": "{node} does not know this phone: pair again with it in Settings.",
+  "@connectionLostOne": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "connectionLostMany": "{nodes} do not know this phone: pair again with them in Settings.",
+  "@connectionLostMany": {
+    "placeholders": {"nodes": {"type": "String", "example": "ID FA4E00000001, ID 0CE400000004"}}
+  },
+  "connectionUnservedOne": "{node} cannot be used yet: it or this app needs an update. Tap it in Settings to try again.",
+  "@connectionUnservedOne": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "connectionUnservedMany": "{nodes} cannot be used yet: they or this app need an update. Tap one in Settings to try again.",
+  "@connectionUnservedMany": {
+    "placeholders": {"nodes": {"type": "String", "example": "ID FA4E00000001, ID 0CE400000004"}}
+  },
+  "connectionAtHome": "Your home. The phone stays linked while it is in reach, so texts come at once, also with the screen off. It always goes to your home first.",
+  "connectionPaired": "A node you are paired with. The phone stays linked while it is in reach.",
+  "connectionPairedNoHome": "With no home, your card names this node while you use it.",
+  "connectionPairedHome": "Texts to you wait at your home; Fetch my mail brings them here.",
+  "@connectionPairedHome": {
+    "description": "Fetch my mail is the button commonFetch."
+  },
+  "connectionMovesHome": "When your home is in reach, the phone moves to it within a minute.",
+  "connectionTappedGuest": "Someone else's public node, which you chose. It serves one guest at a time and ends a guest's link after 30 seconds; then the phone chooses a node itself.",
+  "connectionGuestWeak": "Your paired nodes are heard too weakly here, so the phone uses this public node until it hears one well.",
+  "connectionGuestAway": "None of your paired nodes has been in reach for 30 seconds, so the phone uses this public node until it hears one.",
+  "connectionGuestNoneNear": "No node of yours is near, so the phone uses this public node, someone else's.",
+  "connectionGuestVisits": "As a guest it visits about once a minute, and at once when you send. Replies to texts sent from here come here.",
+  "connectionBluetoothOff": "Bluetooth is off. Texts wait on the phone until it is on and a node is in reach.",
+  "connectionLookPublic": "No node of yours to use, so the phone looks every 15 seconds for a public node to use as a guest.",
+  "connectionLookPaired": "The phone looks every 15 seconds for your paired nodes, your home first. After 30 seconds without one, it uses a public node as a guest meanwhile.",
+  "connectionNotLooking": "The phone is not looking: you stopped it, or it may not use Bluetooth yet. Tap a node in Settings to connect.",
+
+  "notifyTextsArrive": "Texts arrive while the screen is off",
+  "@notifyTextsArrive": {
+    "description": "The body of the notification that keeps the app running while it is on a node."
+  },
+  "notifyChecksMinute": "Checks for texts about once a minute",
+  "notifyOutInReach": "Texts waiting go out once it is in reach",
+  "@notifyOutInReach": {
+    "description": "Under the title that says which node the phone looks for: it is that node."
+  },
+  "notifyOutBluetooth": "Texts waiting go out once Bluetooth is on",
+  "notifyUnnamed": "Unnamed",
+  "@notifyUnnamed": {
+    "description": "A notification's title for a text from a contact with no name."
+  },
+  "notifyChannel": "Texts",
+  "@notifyChannel": {
+    "description": "The name of the kind of notification, in the phone's settings."
+  },
+  "notifyChannelAbout": "A text from a contact",
+  "notifyYou": "You",
+  "@notifyYou": {
+    "description": "The person, in a notification of a conversation."
+  },
+
+  "threadRemovedContact": "Removed contact",
+  "threadPartMissing": "part {part} of {total} not yet here",
+  "@threadPartMissing": {
+    "description": "Stands in a received text where one of its parts has not come.",
+    "placeholders": {"part": {"type": "int"}, "total": {"type": "int"}}
+  },
+
+  "factRole": "A relay has outside power, such as USB, and listens all the time, passing on texts for the nodes around it: the more relays, the farther texts reach. A sleepy node is on battery: to last, it sleeps and wakes only in short windows, and sends and receives through one relay near it, its anchor. A fixed relay that loses its power keeps relaying on battery until the battery runs low, and then turns sleepy. Holding the node's button switches its role until its power next changes.",
+  "@factRole": {
+    "description": "The help under the row Role of a node's sheet on the map; the other fact messages are the help of the rows they name."
+  },
+  "factMoving": "The node tells this itself from its GPS: after a little over a minute of positions away from where it stood, it counts as carried, and after four hours in one place it stays put again. A carried node's place follows its GPS, and it keeps no new mail for others, as it may soon be gone. Setting its place in the app's Settings makes it stay put at once.",
+  "factAnchor": "A sleepy node sends and receives through one relay near it, its anchor. The anchor keeps the sleepy node's mail and hands it over in the short window after each time it wakes, and the sleepy node's address is its anchor's place. A sleepy node takes the first relay it hears as its anchor; with none yet it holds and passes on texts itself, at a higher cost to the channel.",
+  "factPlace": "Texts find a node by its place: an address is a position and the node's ID, and each relay passes a text on toward that position. The place comes from the node's GPS, unless a person set it in the app's Settings, which wins, as for a relay indoors with no view of the sky. A node with no place yet sends no heartbeat, so no text can find it until it has one.",
+  "factPower": "USB means outside power, on which a node can relay all the time. On battery the figure is read from the cell's voltage, so it is rough; on this node's own sheet it is the raw reading in millivolts. At about a fifth left the battery counts as low, and a relay on it turns sleepy to save the rest.",
+  "factLink": "How well this node hears the other one: how far its signal is above the radio noise here. Below about 4 dB a full text is often lost when the signal fades, so the link is fragile and used only when no other is left; from about 7 dB it is good; between, fair. It is measured one way: the other node may hear this one better or worse.",
+  "factLastHeard": "Every node sends a short heartbeat now and then, saying who and where it is. A relay sends one every 5 to 15 seconds, each on the next of 13 channels, so this node hears it about once every one to three minutes; a sleepy node wakes to send one every two and a half to five minutes. A relay not heard for six and a half minutes, or a sleepy node for ten, leaves the list.",
+  "factDistance": "The straight line from this node's place to the other's, worked out by the app from the two positions, so it is shown only when both have a place. How far radio reaches depends on height and on what stands between: relays on rooftops hear each other at about 3 km.",
+  "factKnown": "What the node says of its own neighbours, in three counts. Heard: the nodes whose heartbeats it hears. Strong: of those, the ones heard well enough that a full text gets through a fade, so they likely hear it too. Exchanged: of those, the ones that have taken a text from it, which proves they hear it.",
+  "factGpsSignal": "How strongly the node's GPS hears the satellites, in dB-Hz, as its last reading had it. Under {floor} the node takes no position from it; an open sky gives about 40. Move a node to where it reads higher, or set its place by hand.",
+  "@factGpsSignal": {
+    "placeholders": {"floor": {"type": "int", "description": "The weakest signal, in dB-Hz, the node takes a position from."}}
+  },
+  "factVersion": "The version of the firmware the node runs. A new version spreads by itself: a node given it, from a phone or over USB, passes it to the relays around it a piece at a time, leaving the channels to texts. A node takes only a newer version signed by the project, and while it gathers one this row says which and how many of its blocks it holds.",
+  "factExchanged": "This node has handed it a text and it took it. That proves the link works both ways: it hears this node, as well as being heard.",
+  "factDemoted": "It did not answer this node's last three tries to pass it a text, so it may no longer hear this node. Until it answers again, or for six and a half minutes, it is tried only after every other neighbour with a good enough link.",
+  "factAvoided": "It turned a text down, asking for a wait, or did not answer one. Nothing is sent to it for a while; texts go round it meanwhile, and wait for it only where there is no other way.",
+  "factPaired": "This phone is paired with this node: the node sends your texts into the network, and keeps the ones for you until the app reads them. Only the paired phone sees the node's neighbours on this map."
 }

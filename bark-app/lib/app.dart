@@ -17,6 +17,7 @@ import 'app_update.dart';
 import 'contacts.dart';
 import 'identity_file.dart';
 import 'installs.dart';
+import 'l10n.dart';
 import 'links.dart';
 import 'link.dart';
 import 'mailbox.dart';
@@ -223,9 +224,7 @@ class AppModel {
     if (on != null) {
       return (
         title: on,
-        body: session.connected
-            ? 'Texts arrive while the screen is off'
-            : 'Checks for texts about once a minute',
+        body: session.connected ? tr.notifyTextsArrive : tr.notifyChecksMinute,
       );
     }
     if (!links.searchOn || !links.bluetoothAllowed) return null;
@@ -234,26 +233,23 @@ class AppModel {
 
   static Held _looking(String node, {required bool bluetooth}) => (
     title: searchLine(node, bluetooth: bluetooth),
-    body: bluetooth
-        ? 'Texts waiting go out once it is in reach'
-        : 'Texts waiting go out once Bluetooth is on',
+    body: bluetooth ? tr.notifyOutInReach : tr.notifyOutBluetooth,
   );
 
   /// The line while the phone is on no node and looks for `node`, by
   /// Bluetooth or not.
-  static String searchLine(String node, {required bool bluetooth}) => bluetooth
-      ? 'Not connected. Looking for $node; texts wait on the phone'
-      : 'Not connected. Bluetooth is off: turn it on to reach $node';
+  static String searchLine(String node, {required bool bluetooth}) =>
+      bluetooth ? tr.statusLooking(node) : tr.statusBluetoothOff(node);
 
   /// The line while the phone is on no node and does not look: the person
   /// stopped the search, or it waits for Bluetooth to be allowed.
-  static const notLookingLine = 'Not connected. Texts wait on the phone';
+  static String get notLookingLine => tr.statusNotLooking;
 
   /// The node the search looks for, as a person reads it: the first of
   /// the paired nodes ([firstPaired]), else a public node.
   String get sought {
     final f = links.searchFor;
-    return f == null ? 'a public node' : shownName(f);
+    return f == null ? tr.statusPublicNode : shownName(f);
   }
 
   void _unnotified(Object e) => session.note('Notifying failed: $e');
@@ -270,9 +266,8 @@ class AppModel {
   bool get cardUnsent => me.cardUnsent && contacts.list.isNotEmpty;
 
   /// Why the card changed, for the line that offers to send it.
-  String get cardChange => me.home == null
-      ? 'Your card changed: no home'
-      : 'Your card changed: new home address';
+  String get cardChange =>
+      me.home == null ? tr.commonCardNoHome : tr.commonCardNewHome;
 
   /// Asks, once, to notify; `why` shows the person why first and says
   /// whether to go on.
@@ -303,19 +298,18 @@ class AppModel {
     final n = session.connected ? session.node : null;
     final g = n != null && session.guest ? nodeName(n.id) : links.guestNode;
     final h = links.homeName;
-    final home = h == null ? '' : '. Home at ${shownName(h)}';
+    // The home is a sentence of its own after the line.
+    final home = h == null ? '' : '. ${tr.statusHomeAt(shownName(h))}';
     final installs = this.installs.note;
     if (g != null && links.tappedGuest) {
-      return 'Connected to ${shownName(g)} as a guest for 30 s$installs$home';
+      return '${tr.statusGuestFor30s(shownName(g), installs)}$home';
     }
     if (g != null && (n == null || session.guest)) {
-      return 'Connected to ${shownName(g)} as a guest$installs$home';
+      return '${tr.statusGuest(shownName(g), installs)}$home';
     }
     if (n == null) return null;
-    if (mailbox.atHome) {
-      return 'Connected to your home, ${nodeLabel(n.id)}$installs';
-    }
-    return 'Connected to ${nodeLabel(n.id)}, paired$installs$home';
+    if (mailbox.atHome) return tr.statusAtHome(nodeLabel(n.id), installs);
+    return '${tr.statusPaired(nodeLabel(n.id), installs)}$home';
   }
 
   void dispose() {

@@ -2,6 +2,7 @@
 // the conversation list and the threads.
 
 import 'contacts.dart';
+import 'l10n.dart';
 import 'session.dart';
 
 /// One text in a thread, sent or received, of one part or several.
@@ -43,7 +44,7 @@ class Entry {
       final before = out.isEmpty || out.last.text.endsWith('\n') ? '' : '\n';
       final after = i == ins.length - 1 ? '' : '\n';
       out.add((
-        text: '${before}part ${i + 1} of ${ins.length} not yet here$after',
+        text: '$before${tr.threadPartMissing(i + 1, ins.length)}$after',
         missing: true,
       ));
     }
@@ -61,7 +62,7 @@ class Conversation {
 
   Conversation(this.key, this.contact, this.entries);
 
-  String get title => contact?.name ?? 'Removed contact';
+  String get title => contact?.name ?? tr.threadRemovedContact;
 
   Entry? get last => entries.lastOrNull;
 }

@@ -13,6 +13,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'alerts.dart';
+import 'l10n.dart';
 
 class PhoneNotifier implements Notifier {
   final _plugin = AndroidFlutterLocalNotificationsPlugin();
@@ -133,8 +134,8 @@ class PhoneNotifier implements Notifier {
       payload: key,
       notificationDetails: AndroidNotificationDetails(
         'texts',
-        'Texts',
-        channelDescription: 'A text from a contact',
+        tr.notifyChannel,
+        channelDescription: tr.notifyChannelAbout,
         importance: Importance.high,
         priority: Priority.high,
         category: AndroidNotificationCategory.message,
@@ -144,7 +145,7 @@ class PhoneNotifier implements Notifier {
         when: last.at.millisecondsSinceEpoch,
         onlyAlertOnce: quiet,
         styleInformation: MessagingStyleInformation(
-          const Person(name: 'You'),
+          Person(name: tr.notifyYou),
           messages: [
             for (final t in texts)
               Message(t.text, t.at, Person(name: name, key: key)),

@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'contacts.dart';
 import 'conversations.dart';
+import 'l10n.dart';
 import 'session.dart';
 
 /// The phone's side of notifying, so that the decision in [Alerts] can be
@@ -190,7 +191,7 @@ class Alerts {
     final quiet = r.of > 1 && !_told.add('$from/${r.first}');
     await notifier.texts(
       from,
-      contacts.byKey(from)?.name ?? 'Unnamed',
+      contacts.byKey(from)?.name ?? tr.notifyUnnamed,
       List.unmodifiable([
         for (final u in unread)
           (text: Entry.received(u).text, at: Entry.received(u).at),
