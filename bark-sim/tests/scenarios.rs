@@ -1203,6 +1203,40 @@ fn a_forged_section(seed: u64) {
     );
 }
 
+/// One release, given to the relay nearest the middle, which restarts
+/// at 1 500 s and keeps it, as its flash does: every node comes to hold it
+/// (spec "Updates over the mesh").
+#[test]
+fn a_release_reaches_every_node() {
+    a_release(1);
+}
+
+/// As above at seed 10, where a relay's one holder in reach stood back
+/// for a nearer one that did not hear it.
+#[test]
+fn a_release_reaches_every_node_at_seed_10() {
+    a_release(10);
+}
+
+fn a_release(seed: u64) {
+    let mut sc = scenario("mesh-spread.toml");
+    sc.seed = seed;
+    sc.duration_s = 12.0 * 3600.0;
+    sc.update = Some(bark_sim::scenario::UpdateSpec {
+        image_bytes: 40_000,
+        ..Default::default()
+    });
+    let mut sim = Sim::new(&sc).expect("builds");
+    sim.run();
+    let u = sim.update().expect("an update");
+    let lacking: Vec<usize> = (0..u.holds_at.len())
+        .filter(|&i| u.holds_at[i].is_none())
+        .collect();
+    let last = u.holds_at.iter().flatten().max().map(|t| t.since(u.at));
+    println!("the last node held it {last:?} after it was given; without it: {lacking:?}");
+    assert!(lacking.is_empty(), "nodes without the release: {lacking:?}");
+}
+
 /// Two releases in a row, the second given while nodes still gather the
 /// first: every node comes to hold the second
 /// (spec "Updates over the mesh").
