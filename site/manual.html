@@ -234,17 +234,22 @@ a node. A <strong>Get started</strong> card then lists three steps:</p>
 them down and keep them safe: if you lose the phone, they are the only
 way back (<a href="#backup-and-moving-to-a-new-phone">Backup</a>).</p>
 <h2 id="connecting-to-a-node">Connecting to a node</h2>
-<p>Open <strong>Settings</strong>, <strong>Node</strong>, and tap <strong>Scan</strong>. Nodes in Bluetooth
-range, a room or two, are listed with their signal.</p>
+<p>The app looks for a node by itself, over Bluetooth, which reaches a
+room or two.</p>
 <ul>
-<li><strong>Your own node: pair with it.</strong> Tap <strong>Pair</strong>. The node's screen
-shows a six-digit code; type it in the app. From then on the app
-connects to it by itself whenever it is near. A node takes up to
-eight paired phones, and a phone can be paired with several nodes.</li>
-<li><strong>Someone else's public node: use it as a guest.</strong> Tap it. No code is
-needed. The app connects for a moment whenever it has something to
+<li><strong>A public node: nothing to do.</strong> With no node of your own in
+reach, the app finds a public node nearby and uses it as a guest. No
+code is needed. It connects for a moment whenever it has something to
 send or collect, so that other guests get their turn.</li>
+<li><strong>Your own node: pair with it, once.</strong> Open <strong>Settings</strong>, <strong>Node</strong>,
+tap <strong>Scan</strong>, and tap <strong>Pair</strong> beside your node. Its screen shows a
+six-digit code; type it in the app. From then on the app connects to
+it whenever it is near, and prefers it to any public node. A node
+takes up to eight paired phones, and a phone can be paired with
+several nodes.</li>
 </ul>
+<p>The same list shows every node in reach with its signal, if you want
+to choose one yourself: tap a public node to use it as a guest.</p>
 <figure class="anim">
 <canvas id="a-guests" role="img" aria-label="A node with one paired phone that stays connected and four guest phones that connect one at a time."></canvas>
 <figcaption>A paired phone stays connected. Guests connect for a moment each, in turn.</figcaption>
