@@ -1,0 +1,47 @@
+# Sleepy nodes alone (spec "Sleepy nodes alone"): sixty sleepy nodes
+# outdoors over a square kilometre and no relay, at the spec "Capacity and
+# sizing" rate, as a street of pocket nodes in a power cut that has
+# outlasted every relay's battery. Each hears no relay in its first
+# rotation and turns anchorless: they route among themselves, every frame
+# with the long preamble. First measured in docs/anchorless-2026-10-18.md.
+#
+# The settle time is a rotation of the anchorless beat, 13 minutes, and
+# room: until a node has heard its neighbours, the one nearest a
+# destination may take a message for its own (spec "Owner").
+name = "sleepy-only"
+seed = 1
+duration_s = 4500.0
+settle_s = 900.0
+
+[origin]
+lat = 50.45
+lon = 30.52
+
+[links]
+model = "log_distance"
+exponent = 3.6
+indoor_loss_db = 14.4
+rooftop_bonus_db = 21.4
+shadowing_sigma_db = 6.0
+
+[links.fading]
+sigma_db = 4.0
+correlation_time_s = 60.0
+step_s = 10.0
+
+[[nodes]]
+place = "density"
+role = "leaf"
+width_m = 1000.0
+height_m = 1000.0
+per_km2 = 60.0
+
+[[traffic]]
+kind = "poisson"
+per_leaf_per_hour = 0.9583333
+payload_min = 100
+payload_max = 100
+destination = { kind = "uniform" }
+
+[metrics]
+cadence_s = 1.0

@@ -480,6 +480,29 @@ fn corridor_carries_crossing_flows() {
     }
 }
 
+/// Sleepy nodes alone (`scenarios/sleepy-only.toml`): sixty sleepy nodes
+/// and no relay. Every node turns anchorless and they route among
+/// themselves; seeds 1 to 3 deliver at least 0.9 of the settled phase,
+/// the bound leaving room for a message still on its way at the end.
+#[test]
+fn sleepy_nodes_with_no_relay_deliver_among_themselves() {
+    let sc = scenario("sleepy-only.toml");
+    for seed in 1..=3 {
+        let mut sc = sc.clone();
+        sc.seed = seed;
+        let mut sim = Sim::new(&sc).expect("builds");
+        sim.run();
+        let s = sim.summary();
+        assert_eq!(s.relays, 0);
+        let settled = &s.app.phases[1];
+        assert_eq!(settled.phase, "settled");
+        assert!(settled.originated >= 40, "seed {seed}: {}", s.table());
+        assert!(settled.delivery_ratio >= 0.9, "seed {seed}: {}", s.table());
+        assert_eq!((s.app.duplicates, s.app.misdelivered), (0, 0));
+        accounted(&sim, &format!("sleepy-only seed {seed}"));
+    }
+}
+
 /// The ring (`scenarios/ring.toml`): eight relays, each leaf sending to
 /// the leaf three relays on, every 2 s. The relays run at their duty cap
 /// with messages waiting for each other round the ring, and none is

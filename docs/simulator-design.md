@@ -171,6 +171,7 @@ S3 are the twins of bring-up steps 4, 5 and 3 (roadmap, Phase 2).
 | `district-x64.toml` | `district.toml` at 64 times the rate for an hour and a half | the baseline of the install run below; `update-under-load-2026-11-10.md` |
 | `district-x64-install.toml` | `district-x64.toml` with every node rebooting into a new image, each staged at a time drawn within the hour after the settle time | that nodes install under load and lose nothing; `update-under-load-2026-11-10.md` |
 | `dark-groups.toml` | four square kilometres at S4's densities, a relay at the centre and a building of 400 people beside it; a run adds the group that goes dark | the delivery queue while a group is dark; `unproven-2026-10-18.md` |
+| `sleepy-only.toml` | sixty sleepy nodes outdoors over a square kilometre, no relay | that sleepy nodes with no relay in reach route among themselves (spec "Sleepy nodes alone"); `anchorless-2026-10-18.md` |
 
 The meshes' links follow S2's model with shadowing drawn from the run's
 seed, so each seed is a different mesh: some have holes, and some leave
