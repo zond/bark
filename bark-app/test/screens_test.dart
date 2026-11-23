@@ -1685,6 +1685,30 @@ void main() {
     app.disposeWithNode();
   });
 
+  testWidgets('the menu\'s Manual opens the manual\'s page in the browser', (
+    t,
+  ) async {
+    final notifier = FakeNotifier();
+    final app = AppModel(
+      sodium: sodium,
+      me: Me(MemoryStore(), sodium, DateTime.now),
+      session: Session(store: MemoryStore(), now: DateTime.now),
+      contacts: Contacts(MemoryStore()),
+      now: DateTime.now,
+      notifier: notifier,
+    );
+    await t.runAsync(app.load);
+    await t.pumpWidget(BarkApp(app));
+    await t.pumpAndSettle();
+    await t.tap(find.byType(PopupMenuButton<Widget Function()>));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Manual'));
+    await t.pumpAndSettle();
+    expect(notifier.log, contains('page $manualPage'));
+    expect(find.byType(ConversationsScreen), findsOneWidget);
+    app.disposeWithNode();
+  });
+
   testWidgets('a node that refuses the phone\'s old bond: one line on the '
       'first screen and in Settings, with the way to Bluetooth settings', (
     t,

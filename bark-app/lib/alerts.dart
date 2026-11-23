@@ -59,6 +59,9 @@ abstract interface class Notifier {
   /// node.
   Future<void> openBluetoothSettings();
 
+  /// Opens `url` in the phone's browser.
+  Future<void> openPage(String url);
+
   /// Opens the system's share sheet with `text` and the PNG image `png`.
   Future<void> share(String text, Uint8List png);
 
@@ -111,6 +114,8 @@ class NoNotifier implements Notifier {
   Future<void> installApk(String path) async {}
   @override
   Future<void> openBluetoothSettings() async {}
+  @override
+  Future<void> openPage(String url) async {}
   @override
   Future<void> share(String text, Uint8List png) async {}
   @override

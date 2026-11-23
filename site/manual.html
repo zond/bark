@@ -22,6 +22,9 @@
   .table { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; font-size: .95rem; }
   th, td { text-align: left; vertical-align: top; padding: .4rem .6rem .4rem 0; border-bottom: 1px solid var(--rule); }
+  .anim { margin: 1.5rem 0; }
+  .anim canvas { display: block; width: 100%; aspect-ratio: 2 / 1; }
+  .anim figcaption { color: var(--muted); font-size: .9rem; margin-top: .5rem; }
   footer {
     max-width: 40rem; margin: 0 auto; padding: 1rem 1rem 2rem;
     border-top: 1px solid var(--rule); color: var(--muted); font-size: .9rem;
@@ -111,6 +114,10 @@ exact, set the place from the app instead: <strong>Settings</strong>, <strong>Th
 <p><strong>Give it power.</strong> On a charger the node is a relay and helps everyone
 around it. On battery it relays while it stands still, until the
 battery is low, and turns sleepy when carried.</p>
+<figure class="anim">
+<canvas id="a-sleepy" role="img" aria-label="Two relays and a sleepy node. A message waits at the sleepy node's relay until the sleepy node wakes."></canvas>
+<figcaption>Relays announce themselves often and pass messages on at once. A sleepy node wakes now and then; the relay it talks through keeps its messages until it does.</figcaption>
+</figure>
 <h2 id="the-nodes-screen-and-buttons">The node's screen and buttons</h2>
 <p>The node has two buttons on its side. A small label on the screen
 points at each.</p>
@@ -221,6 +228,10 @@ eight paired phones, and a phone can be paired with several nodes.</li>
 needed. The app connects for a moment whenever it has something to
 send or collect, so that other guests get their turn.</li>
 </ul>
+<figure class="anim">
+<canvas id="a-guests" role="img" aria-label="A node with one paired phone that stays connected and four guest phones that connect one at a time."></canvas>
+<figcaption>A paired phone stays connected. Guests connect for a moment each, in turn.</figcaption>
+</figure>
 <p>A line at the top of the first screen always says where you stand, for
 example "Connected to your home", "Connected to ID … as a guest" or
 "Not connected. Texts wait on the phone". Tap the small info button
@@ -271,12 +282,20 @@ emoji. The sender sees it on their message.</p>
 home, if they have one. But each message also carries, encrypted, the
 address of the node its sender wrote from, so a quick reply goes
 straight to where they are.</p>
+<figure class="anim">
+<canvas id="a-route" role="img" aria-label="A message hops from node to node toward a place, turns back at a dead end and goes round another way."></canvas>
+<figcaption>Each node hands the message to the neighbour nearest the place it is for. At a dead end it goes back and tries another way. Every hop is confirmed.</figcaption>
+</figure>
 <h2 id="your-home-node">Your home node</h2>
 <p>Without a home, messages for you go to the node you last used and wait
 there. That works for someone who always uses the same node. If you
 move around, set a home.</p>
 <p><strong>A home must stay in one place, on power, and know its place.</strong> A node
 in your window on a charger is the usual choice.</p>
+<figure class="anim">
+<canvas id="a-home" role="img" aria-label="Messages from a friend wait at a home node. A request from a phone far away travels to the home, and the messages travel back to the phone."></canvas>
+<figcaption>Messages wait at your home. When you fetch, the request travels to your home and the messages come back to the node you are on.</figcaption>
+</figure>
 <ul>
 <li><strong>Set it:</strong> connect to the node, then <strong>Settings</strong>, <strong>Home node</strong>,
 <strong>Set home</strong>. If you were using it as a guest, you pair first. Your
@@ -335,6 +354,10 @@ project signed it, and restarts into it. Nothing needs to be done. It
 takes a few hours for a relay and most of a day for a sleepy node.
 Pairings, homes and stored mail are kept. A node on a low battery waits
 until it has power.</p>
+<figure class="anim">
+<canvas id="a-update" role="img" aria-label="A phone gives one node a new version, and it spreads from node to node until all have it."></canvas>
+<figcaption>One node gets a new version from a phone. Each neighbour collects it in pieces, checks it, and restarts into it, and so it spreads.</figcaption>
+</figure>
 <p><strong>A node, from the phone.</strong> To start a new version off, or to hurry:
 <strong>Settings</strong>, <strong>Updates</strong>, <strong>Send to the node</strong>, then <strong>Reboot into
 version …</strong>. The transfer takes under a minute and the restart about
@@ -454,6 +477,160 @@ is in <a href="https://github.com/zond/bark/blob/main/docs/protocol.md"><code>do
 <a href="https://github.com/zond/bark/blob/main/docs/roadmap.md"><code>docs/roadmap.md</code></a>.</li>
 </ul>
 <p>How to build all of it: <a href="https://github.com/zond/bark/blob/main/DEVELOPING.md"><code>DEVELOPING.md</code></a>.</p>
+<script>
+// The manual's small animations, in the front page's manner: grey nodes,
+// a red message, and its hop confirmed by a red line back. Each runs
+// only while it is on screen, and is a still picture for a reader who
+// asked for less motion.
+(() => {
+const RED = '#c62828', GREY = '#777', PALE = '#c4c4c4', LINK = '#e2e2e2';
+const HOP = .6, ACK = .3, STEP = HOP + ACK;
+const calm = matchMedia('(prefers-reduced-motion: reduce)');
+// A picture 400 by 200 that repeats every `period` seconds; `stillAt` is
+// the moment shown without motion.
+function scene(id, period, stillAt, draw) {
+  const c = document.getElementById(id), g = c.getContext('2d');
+  let seen = false, running = false;
+  const size = () => {
+    const r = devicePixelRatio || 1, w = c.clientWidth;
+    c.width = w * r; c.height = w / 2 * r; g.setTransform(r * w / 400, 0, 0, r * w / 400, 0, 0);
+  };
+  const paint = t => { g.clearRect(0, 0, 400, 200); draw(g, t); };
+  const frame = ms => {
+    if (!seen || calm.matches) { running = false; return; }
+    paint(ms / 1000 % period); requestAnimationFrame(frame);
+  };
+  const start = () => {
+    size(); paint(stillAt);
+    if (seen && !calm.matches && !running) { running = true; requestAnimationFrame(frame); }
+  };
+  new IntersectionObserver(e => { seen = e[0].isIntersecting; start(); }).observe(c);
+  addEventListener('resize', start); calm.addEventListener('change', start);
+  start();
+}
+const line = (g, a, b) => { g.beginPath(); g.moveTo(...a); g.lineTo(...b); g.stroke(); };
+const links = (g, pairs, dashed) => {
+  g.lineWidth = 1; g.strokeStyle = LINK; g.setLineDash(dashed ? [3, 3] : []);
+  pairs.forEach(([a, b]) => line(g, a, b)); g.setLineDash([]);
+};
+const dot = (g, p, r, colour) => { g.fillStyle = colour; g.beginPath(); g.arc(...p, r, 0, 7); g.fill(); };
+const relay = (g, p, glow) => dot(g, p, glow ? 7 : 5, glow ? RED : GREY);
+const sleepy = (g, p, glow) => dot(g, p, glow ? 7 : 4, glow ? RED : PALE);
+const phone = (g, p, colour = GREY) => {
+  g.fillStyle = '#fff'; g.fillRect(p[0] - 4, p[1] - 7, 8, 14);
+  g.lineWidth = 1.5; g.strokeStyle = colour; g.strokeRect(p[0] - 4, p[1] - 7, 8, 14);
+};
+// A node's announcement: a ring that widens and fades, every `every`
+// seconds from `at`.
+const ring = (g, p, t, every, at, strength = 1) => {
+  const age = ((t - at) % every + every) % every;
+  if (age < 1) {
+    g.lineWidth = 1; g.strokeStyle = `rgba(136,136,136,${strength * (1 - age)})`;
+    g.beginPath(); g.arc(...p, 6 + 30 * age, 0, 7); g.stroke();
+  }
+};
+// A message that leaves at `t0` along `pts`, each hop confirmed; a
+// request is drawn hollow. Returns when it has arrived.
+function travel(g, t, t0, pts, hollow) {
+  const n = pts.length - 1, f = t - t0;
+  if (f >= 0 && f < n * STEP) {
+    const i = Math.floor(f / STEP), q = f - i * STEP, u = pts[i], v = pts[i + 1];
+    g.strokeStyle = g.fillStyle = RED;
+    if (q < HOP) {
+      const k = q / HOP;
+      g.beginPath(); g.arc(u[0] + (v[0] - u[0]) * k, u[1] + (v[1] - u[1]) * k, 4, 0, 7);
+      if (hollow) { g.lineWidth = 1.5; g.stroke(); } else g.fill();
+    } else { g.globalAlpha = 1 - (q - HOP) / ACK; g.lineWidth = 2; line(g, v, u); g.globalAlpha = 1; }
+  }
+  return t0 + n * STEP;
+}
+// `n` messages kept at a node.
+const held = (g, p, n) => { g.fillStyle = '#888'; for (let i = 0; i < n; i++) g.fillRect(p[0] + 9 + 7 * i, p[1] + 4, 5, 5); };
+const label = (g, p, text) => {
+  g.fillStyle = '#666'; g.font = '12px system-ui, sans-serif'; g.textAlign = 'center'; g.fillText(text, ...p);
+};
+
+// A relay passes a message on at once; a sleepy node's relay keeps it
+// until the sleepy node's next beat.
+scene('a-sleepy', 12, 5, (g, t) => {
+  const A = [70, 120], B = [230, 120], S = [330, 60];
+  links(g, [[A, B]]); links(g, [[B, S]], true);
+  ring(g, A, t, 2, .3); ring(g, B, t, 2, 1.2); ring(g, S, t, 12, 8, .6);
+  const at = travel(g, t, 1, [A, B]);
+  if (t >= at && t < 8.3) held(g, B, 1);
+  const got = travel(g, t, 8.3, [B, S]);
+  relay(g, A); relay(g, B); sleepy(g, S, t >= got && t < got + 1.5);
+  label(g, [A[0], A[1] + 24], 'relay'); label(g, [B[0], B[1] + 24], 'relay');
+  label(g, [S[0], S[1] - 14], 'sleepy node');
+});
+
+// One guest's link at a time; the paired phone's stays.
+scene('a-guests', 8, 0.6, (g, t) => {
+  const N = [200, 105], own = [110, 55], G = [[295, 50], [320, 140], [200, 185], [85, 150]];
+  const turn = Math.floor(t / 2), k = turn % 4, q = t - turn * 2, on = q < 1.5;
+  g.lineWidth = 1.5; g.strokeStyle = GREY; line(g, own, N);
+  if (on) { line(g, G[k], N); travel(g, t, turn * 2 + .3, k % 2 ? [N, G[k]] : [G[k], N]); }
+  relay(g, N); phone(g, own);
+  G.forEach((p, i) => phone(g, p, on && i == k ? GREY : PALE));
+  label(g, [own[0], own[1] - 14], 'paired'); label(g, [N[0], N[1] + 26], 'public node');
+  label(g, [G[0][0], G[0][1] - 14], 'guests');
+});
+
+// Toward the place: each hop to the neighbour nearest it, back from a
+// dead end, round the other way.
+scene('a-route', 10, 2.6, (g, t) => {
+  const S = [40, 100], a = [120, 55], b = [205, 75], c = [115, 150], d = [210, 165], e = [300, 150], D = [360, 90];
+  links(g, [[S, a], [S, c], [a, b], [c, d], [d, e], [e, D]]);
+  g.strokeStyle = PALE; g.lineWidth = 1; g.beginPath(); g.arc(...D, 12, 0, 7); g.stroke();
+  const end = travel(g, t, .5, [S, a, b, a, S, c, d, e, D]);
+  [S, a, b, c, d, e].forEach(p => relay(g, p)); relay(g, D, t >= end && t < end + 1.5);
+  label(g, [D[0] - 4, D[1] - 20], 'the place'); label(g, [b[0], b[1] - 12], 'dead end');
+});
+
+// Mail waits at the home; a fetch goes there and the mail comes back to
+// where the person is.
+scene('a-home', 16, 5, (g, t) => {
+  const H = [60, 105], F = [140, 170], r1 = [150, 70], r2 = [240, 115], r3 = [330, 85], Y = [372, 40];
+  links(g, [[H, r1], [r1, r2], [r2, r3], [F, H]]); links(g, [[r3, Y]], true);
+  const m1 = travel(g, t, 1, [F, H]), m2 = travel(g, t, 3, [F, H]);
+  const asked = travel(g, t, 6, [Y, r3, r2, r1, H], true);
+  const back = [H, r1, r2, r3, Y];
+  const b1 = travel(g, t, asked + .3, back), b2 = travel(g, t, asked + .9, back);
+  held(g, H, (t >= m1) + (t >= m2) - (t >= asked + .3) - (t >= asked + .9));
+  [H, F, r1, r2, r3].forEach(p => relay(g, p));
+  g.strokeStyle = GREY; g.lineWidth = 1.5;
+  g.beginPath(); g.moveTo(H[0] - 11, H[1] - 7); g.lineTo(H[0], H[1] - 17); g.lineTo(H[0] + 11, H[1] - 7); g.stroke();
+  phone(g, Y, t >= b1 && t < b2 + 1.5 ? RED : GREY);
+  label(g, [H[0], H[1] - 24], 'your home'); label(g, [Y[0] - 22, Y[1] + 4], 'you');
+  label(g, [F[0] + 34, F[1] + 4], 'a friend');
+});
+
+// A new version from a phone to one node, then from each node to the
+// next, in pieces.
+scene('a-update', 14, 5, (g, t) => {
+  const P = [[60, 105], [135, 55], [135, 155], [215, 105], [295, 55], [295, 155], [370, 105]];
+  const from = [null, 0, 0, 1, 3, 3, 4], ph = [40, 50], TAKES = 2.2;
+  const begin = [.5], done = [1.5];
+  for (let i = 1; i < P.length; i++) { begin[i] = done[from[i]]; done[i] = begin[i] + TAKES; }
+  links(g, [[0, 1], [0, 2], [1, 3], [2, 3], [3, 4], [3, 5], [4, 6], [5, 6]].map(([a, b]) => [P[a], P[b]]));
+  links(g, [[ph, P[0]]], true);
+  P.forEach((p, i) => {
+    if (t < begin[i] || t >= done[i]) return;
+    const src = i ? P[from[i]] : ph, part = (t - begin[i]) / (done[i] - begin[i]);
+    // The pieces on their way, and how much of the version is here.
+    for (let k = 0; k < 3; k++) {
+      const q = (part * 4 + k / 3) % 1;
+      dot(g, [src[0] + (p[0] - src[0]) * q, src[1] + (p[1] - src[1]) * q], 2, RED);
+    }
+    g.strokeStyle = RED; g.lineWidth = 2; g.beginPath();
+    g.arc(...p, 9, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * part); g.stroke();
+  });
+  P.forEach((p, i) => dot(g, p, 5, t >= done[i] ? RED : GREY));
+  phone(g, ph);
+  label(g, [ph[0], ph[1] - 14], 'new version');
+});
+})();
+</script>
 </main>
 <footer>
   <a href="./">The front page</a> ·

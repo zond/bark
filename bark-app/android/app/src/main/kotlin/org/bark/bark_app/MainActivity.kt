@@ -90,6 +90,18 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, WEB).setMethodCallHandler { call, result ->
+            when (call.method) {
+                // A page in the phone's browser: the manual.
+                "open" -> try {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(call.arguments as String)))
+                    result.success(null)
+                } catch (e: ActivityNotFoundException) {
+                    result.error("no-browser", e.message, null)
+                }
+                else -> result.notImplemented()
+            }
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SHARE).setMethodCallHandler { call, result ->
             when (call.method) {
                 "share" -> {
@@ -188,6 +200,7 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, POWER).setMethodCallHandler(null)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, INSTALLER).setMethodCallHandler(null)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BLUETOOTH).setMethodCallHandler(null)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, WEB).setMethodCallHandler(null)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SHARE).setMethodCallHandler(null)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, FILES).setMethodCallHandler(null)
     }
@@ -202,6 +215,7 @@ class MainActivity : FlutterActivity() {
         const val SHARE = "org.bark.bark_app/share"
         const val BLUETOOTH = "org.bark.bark_app/bluetooth"
         const val FILES = "org.bark.bark_app/files"
+        const val WEB = "org.bark.bark_app/web"
 
         // The save dialog's answer; no plugin the app uses takes this code.
         const val SAVE_REQUEST = 0x6261

@@ -34,6 +34,9 @@ class PhoneNotifier implements Notifier {
   /// The phone's Bluetooth settings (MainActivity.kt).
   static const _bluetooth = MethodChannel('org.bark.bark_app/bluetooth');
 
+  /// A page in the phone's browser (MainActivity.kt).
+  static const _web = MethodChannel('org.bark.bark_app/web');
+
   /// Android's dialog to save a file, which the file picker used here
   /// does not offer there (MainActivity.kt).
   static const _files = MethodChannel('org.bark.bark_app/files');
@@ -167,6 +170,9 @@ class PhoneNotifier implements Notifier {
   @override
   Future<void> openBluetoothSettings() =>
       _bluetooth.invokeMethod<void>('settings');
+
+  @override
+  Future<void> openPage(String url) => _web.invokeMethod<void>('open', url);
 
   @override
   Future<void> share(String text, Uint8List png) =>

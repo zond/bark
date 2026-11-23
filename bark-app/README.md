@@ -297,6 +297,9 @@ is a prototype for the bench, not the app people will carry.
   - **Battery**: whether Android may close the link with the screen
     off, with **Let bark run**, which opens Android's dialog to exempt
     the app from battery optimisation (next section).
+- **Manual**, from the menu, opens the manual, a page of the project's
+  site (`site/manual.html`), in the phone's browser; it needs the
+  internet.
 - **Nearby nodes**, from the menu: a map. The connected node and every neighbour it
   knows on an OpenStreetMap street map, a line from the node to each
   coloured by the link's quality: green good, amber fair, red fragile,

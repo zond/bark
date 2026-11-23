@@ -18,6 +18,9 @@ import 'settings_screen.dart';
 import 'thread_screen.dart';
 import 'update_screen.dart';
 
+/// The manual, a page of the project's site (`site/manual.html`).
+const manualPage = 'https://zond.github.io/bark/manual.html';
+
 class ConversationsScreen extends StatefulWidget {
   final AppModel app;
   const ConversationsScreen(this.app, {super.key});
@@ -36,6 +39,14 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) app.links.askForBluetooth(() => whyBluetooth(context));
     });
+  }
+
+  Future<void> _manual(BuildContext context) async {
+    try {
+      await app.notifier.openPage(manualPage);
+    } catch (e) {
+      if (context.mounted) say(context, 'No browser to open the manual');
+    }
   }
 
   void _open(BuildContext context, Widget screen) =>
@@ -81,6 +92,11 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
               PopupMenuItem(
                 value: () => SettingsScreen(app),
                 child: const Text('Settings'),
+              ),
+              // No screen of the app's: it opens in the browser.
+              PopupMenuItem(
+                onTap: () => _manual(context),
+                child: const Text('Manual'),
               ),
             ],
           ),
