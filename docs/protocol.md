@@ -1914,17 +1914,25 @@ reads it when it next links, unless the node has rebooted since, which
 forgets it. A message given back to a guest whose link has ended is
 dropped, as is one the node kept across a reboot into a new image
 ([updates over the mesh](#updates-over-the-mesh)), whose sender it does
-not keep.
+not keep. So a message given back and not read, replaced by a later one,
+forgotten at a reboot, or a guest's that came back after its link, stays
+with its app as taken.
 
 The app finds the message by its ID among those it sent, computing each
 one's as the node does, and tells the person why:
 
-- busy and no neighbour: it offers the message again by itself once ready
-  is set;
-- no way: it offers it again only on the person's word, and sealed anew,
-  a new message with another ID: the relays that searched the first keep
-  their records of it ([message records](#message-records)) and would
-  take it for one they have had (roadmap D126, D244).
+- busy and no neighbour: it offers the message again by itself, asking
+  for the turn as for any message (Turns, above): after busy once the
+  wait is over, after no neighbour once Status says ready or counts a
+  neighbour heard;
+- no way: it offers it again only on the person's word, and as a message
+  with another ID: the relays that searched the first keep their records
+  of it ([message records](#message-records)) and would take it for one
+  they have had. A text keeps its `sent` where its bytes differ anyway,
+  going to another address or from another node, and its receiver drops
+  it if the first did arrive ([the payload](#the-payload)); otherwise it
+  goes as a new text with a new `sent`, which a receiver that had the
+  first shows twice (roadmap D126, D244).
 
 The person may give up a message given back for any reason.
 
