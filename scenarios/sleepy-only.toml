@@ -1,6 +1,6 @@
 # Sleepy nodes alone (spec "Sleepy nodes alone"): sixty sleepy nodes
-# outdoors over a square kilometre and no relay, at the spec "Capacity and
-# sizing" rate, as a street of pocket nodes in a power cut that has
+# outdoors over a square kilometre and no relay, at the rate of spec
+# "Capacity and sizing", as a street of pocket nodes in a power cut that has
 # outlasted every relay's battery. Each hears no relay in its first
 # rotation and turns anchorless: they route among themselves, every frame
 # with the long preamble. First measured in docs/anchorless-2026-10-18.md.
