@@ -275,6 +275,14 @@ pub enum ScriptAction {
     /// As `restart`, with the node's stored state erased: a fresh board
     /// in its place.
     Wipe,
+    /// Plug the node in: on external power from now, as `[power]` and
+    /// `[battery]` switch it.
+    Plug,
+    /// Unplug it: on battery from now.
+    Unplug,
+    /// A person holds the node's button: its role flips
+    /// (`AppCommand::ForceRole`).
+    Hold,
 }
 
 /// A scripted event.

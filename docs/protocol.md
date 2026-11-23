@@ -76,6 +76,16 @@ sleepy, leaving as at its low battery ([sleepy nodes](#sleepy-nodes)); a
 sleepy node turns relay at once; each hold flips again. The forced role
 overrides the grace, the carried flag and the battery's high level until
 external power next changes; then the rules above decide again, at once.
+
+A sleepy node the button turns relay then sends a burst
+([heartbeat](#heartbeat)): the person asks whether anyone is in reach,
+and as a sleepy node it heard its anchor alone. Every relay in reach
+answers it, so it knows them within 16.1 s: the burst's last slot is at
+most 13 burst gaps after the turn, and an answer comes within its
+lateness, its airtime and a burst gap. One still in its first rotation is
+then a relay in its first rotation, which ends a rotation after its boot,
+and this is its one burst. A node turned relay by its power does not
+burst (roadmap D246).
 A forced relay on battery turns sleepy at its low battery level, which
 ends the force; on battery at that level a flip to relay is not taken. A
 reboot forgets the force. A node built only to be sleepy takes none. The
@@ -89,7 +99,7 @@ Terms. Each names a state, not a kind of node.
 | **sleepy node** | a node that is sleepy |
 | **fixed** | not carried |
 | **anchor** | the fixed relay a sleepy node chooses ([relay choice](#relay-choice)); its position is the sleepy node's address, its home channel the sleepy node's |
-| **anchorless** | a sleepy node that hears no fixed relay ([sleepy nodes alone](#sleepy-nodes-alone)); a heartbeat flag, which a relay also sets while its table is new ([heartbeat](#heartbeat)) |
+| **anchorless** | a sleepy node that hears no fixed relay ([sleepy nodes alone](#sleepy-nodes-alone)); a heartbeat flag, which a relay also sets on its burst's heartbeats ([heartbeat](#heartbeat)) |
 | **beat** | a sleepy node's heartbeat ([beats](#beats)) |
 | **window** | the seconds after a beat, or after a message a sleepy node takes, in which it listens ([delivery](#delivery)) |
 | **holder** | a relay that holds a message for a sleepy node and hears its beat; most often its anchor |
@@ -380,7 +390,7 @@ with an update's section 26 bytes, 22.08 ms
 |---|---|
 | interval | fixed per node, from the last byte b of its ID: T = 5 s + 10 s × b / 256, mean 10 s (roadmap D47, D230) |
 | first heartbeat | at a random time within T after boot |
-| **burst** | the first 13 slots, a burst gap of 1.1 s apart, each with the anchorless flag; every slot after, T after the one before |
+| **burst** | the first 13 slots after boot, and after the button turns a sleepy node relay ([nodes](#nodes)), a burst gap of 1.1 s apart, each with the anchorless flag; every slot after, T after the one before |
 | channel | `k ← (k + 1) mod 13` every slot, from a random start, whether the heartbeat went or not |
 | **rotation** | 13 heartbeats: ≈130 s, at most 13 × 15 s = 195 s |
 | lateness | none early; at most 872.8 ms after its slot: a full frame with the long preamble, 372.8 ms, the ACK timeout, 100 ms, and two backoffs of 200 ms. A check held for a reception in progress waits at most that frame |
@@ -423,12 +433,23 @@ neighbour times a relay's slots only by heartbeats without the anchorless
 flag. Burst gap: a backoff of 200 ms, the lateness 872.8 ms and the
 airtime 14.4 ms, 1087.2 ms.
 
+After the button turns a sleepy node relay, the burst's first slot is a
+burst gap after the turn, on a random channel as at boot. The node's
+heartbeat at the change (below) is under way by then, since nothing holds
+the radio longer than the lateness, and goes first. Only the burst's
+slots carry the anchorless flag: an answer with it would be answered in
+turn. A node that begins its flush to turn sleepy
+([sleepy nodes](#sleepy-nodes)) ends its burst.
+
 **Outside the slots.** A relay past its own first rotation, neither
 carried nor flushing to turn sleepy ([sleepy nodes](#sleepy-nodes)),
 answers a heartbeat with the anchorless flag with one of its own on the
 channel that heartbeat names, at a random time within 0–200 ms of it:
 
-- a relay's, of its burst: once, ordinary preamble;
+- a relay's, of its burst: once, ordinary preamble, if the bucket keeps
+  the reply reserve after it ([duty cycle cap](#duty-cycle-cap)); else
+  not at all, and the asker hears the relay at its next slot on its
+  channel instead;
 - a sleepy node's: as [sleepy nodes alone](#sleepy-nodes-alone) says,
   long preamble.
 
@@ -1688,7 +1709,9 @@ the time ([relay choice](#relay-choice), roadmap D62).
 
 At the first relay it hears the node anchors as any sleepy node does and
 leaves anchorless mode. Its neighbours then keep it as a last resort
-([beats](#beats)).
+([beats](#beats)). Turned relay by the button, it bursts with the
+ordinary preamble, as a relay ([nodes](#nodes)); its neighbours in
+anchorless mode hear it in its answers to their beats.
 
 ## Phone link
 

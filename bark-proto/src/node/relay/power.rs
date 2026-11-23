@@ -78,6 +78,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let was = self.sleepy();
             // Nobody depends on a node that boots, so its mode follows
             // each report.
+            if turns {
+                self.radio.beacon.burst(0);
+            }
             self.mode = match (turns, was) {
                 (true, true) => self.mode,
                 (true, false) => Mode::Sleepy(Sleep::new(false)),
@@ -120,11 +123,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             match self.mode {
                 Mode::Relay(Power::Leaving(_)) | Mode::Sleepy(_) => {}
                 // Nobody depends on a node that boots (`power`).
-                Mode::Relay(_) if booting => self.mode = Mode::Sleepy(Sleep::new(false)),
-                Mode::Relay(_) => {
-                    self.forwarding.feed_due = true;
-                    self.mode = Mode::Relay(Power::Leaving(now));
+                Mode::Relay(_) if booting => {
+                    self.radio.beacon.burst(0);
+                    self.mode = Mode::Sleepy(Sleep::new(false));
                 }
+                Mode::Relay(_) => self.leave(now),
             }
         } else {
             if !Self::can_relay() || (!external && self.battery.low()) {
@@ -135,8 +138,25 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             } else {
                 Power::Battery(now)
             };
+            // The person asks who is in reach: the burst answers
+            // (roadmap D246).
             match self.mode {
-                Mode::Sleepy(_) if !booting => self.turn_relay(power, now, emit),
+                Mode::Sleepy(_) if !booting => {
+                    let under_way = self.beat_under_way();
+                    self.turn_relay(power, now, emit);
+                    self.burst_after_force(now, under_way);
+                }
+                Mode::Sleepy(_) => {
+                    // A relay in its first rotation, which is a relay's.
+                    self.mode = Mode::Relay(power);
+                    let ends = self.boot_end(self.boot.from());
+                    self.boot.ends_at(ends);
+                    self.burst_after_force(now, None);
+                    emit(Action::App(AppEvent::Boot {
+                        relays: self.relays_known(now),
+                        ends: Some(ends),
+                    }));
+                }
                 _ => self.mode = Mode::Relay(power),
             }
         }
@@ -244,17 +264,23 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     false
                 };
                 if leaves {
-                    self.forwarding.feed_due = true;
-                    // The flush lasts a delivery TTL at most: held up longer
-                    // by the duty cap or a busy channel, a node with a low
-                    // battery would listen until it is flat.
-                    self.mode = Mode::Relay(Power::Leaving(now));
+                    self.leave(now);
                 }
             }
         }
         if self.leaving() && (self.flushed() || self.flush_ends().is_some_and(|t| now >= t)) {
             self.turn_sleepy(now, emit);
         }
+    }
+
+    /// The flush before the turn to sleepy begins, and the burst ends. It
+    /// lasts a delivery TTL at most: held up longer by the duty cap or a
+    /// busy channel, a node with a low battery would listen until it is
+    /// flat.
+    fn leave(&mut self, now: Instant) {
+        self.forwarding.feed_due = true;
+        self.radio.beacon.burst(0);
+        self.mode = Mode::Relay(Power::Leaving(now));
     }
 
     /// Whether each message of the delivery queue has had its flush, but

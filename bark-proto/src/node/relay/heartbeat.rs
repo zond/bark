@@ -2,12 +2,14 @@
 //! a heartbeat heard does to the tables and to a sleepy node's anchor.
 
 use super::anchor::drift;
+use super::boot::random_channel;
 use super::{Job, Node, Stage};
 use crate::event::{Action, AppEvent, Frame, Trace};
 use crate::ids::NodeId;
 use crate::node::{burst_gap, heartbeat_interval, heartbeat_lag, mac};
-use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
+use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
+use crate::tables::budget::REPLY_RESERVE;
 use crate::tables::heard::beat_period;
 use crate::tables::neighbours::{Neighbour, Neighbours, NEIGHBOURS};
 use crate::time::{Duration, Instant};
@@ -33,7 +35,9 @@ pub(super) struct Beacon {
     reach_left: u16,
     /// A heartbeat owed for a change (`changed`): the home channel then.
     change: Option<Channel>,
-    /// The first rotation's slots still to go a [`burst_gap`] apart.
+    /// The burst's slots still to go a [`burst_gap`] apart: at boot, or
+    /// after the button turned a sleepy node relay. None while the node is
+    /// sleepy or leaving.
     burst: u8,
 }
 
@@ -134,6 +138,49 @@ fn channel_bit(c: Channel) -> u16 {
 }
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
+    /// Whether the node has slots of its burst to go (spec "Heartbeat").
+    pub(super) fn bursting(&self) -> bool {
+        self.radio.beacon.burst > 0
+    }
+
+    /// The burst, its first slot at `first` (spec "Heartbeat").
+    pub(super) fn burst_from(&mut self, first: Instant) {
+        self.radio.beacon.beat(first, 0);
+        self.radio.beacon.burst = CHANNELS;
+    }
+
+    /// The channel of a sleepy node's beat under way, which would go out
+    /// as a burst's heartbeat once the node is a relay.
+    pub(super) fn beat_under_way(&self) -> Option<Channel> {
+        match self.radio.beacon.current {
+            Some((_, Beat::Slot)) if self.anchored_sleepy() => Some(self.home),
+            Some((c, Beat::Slot)) => Some(c),
+            _ => None,
+        }
+    }
+
+    /// The button turned the node relay: after the heartbeat at the
+    /// change, the burst a relay sends at boot, so that the relays in
+    /// reach answer (spec "Heartbeat", "Nodes"). `under_way` is a beat it
+    /// had begun, which goes as a heartbeat at the change instead.
+    pub(super) fn burst_after_force(&mut self, now: Instant, under_way: Option<Channel>) {
+        // The heartbeat at the change is under way before the first slot
+        // is due: nothing holds the radio past a heartbeat's lateness, and
+        // a heartbeat under way goes before the next.
+        self.burst_from(now + burst_gap(&self.config));
+        let rotation = random_channel(&mut self.rng);
+        let b = &mut self.radio.beacon;
+        b.rotation = rotation;
+        b.reach_all = None;
+        b.reach_left = 0;
+        if let Some(c) = under_way {
+            b.current = Some((c, Beat::Change));
+            if c == self.home {
+                b.change = None;
+            }
+        }
+    }
+
     /// Whether the node heartbeats now. A sleepy node waits for an anchor
     /// or the end of its first rotation, since every answer to it would
     /// carry the long preamble (spec "Channel at boot").
@@ -235,7 +282,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // neighbour table is new, ask to be answered (spec "Heartbeat").
         let anchorless = match self.sleep() {
             Some(s) => s.anchor.is_none(),
-            None => self.radio.beacon.burst > 0,
+            // An answer or a change is in no burst, and an answer with
+            // the flag would be answered in turn.
+            None => self.bursting() && beat == Beat::Slot,
         };
         let asker = match beat {
             Beat::Answer(id) => self.neighbours.get(id),
@@ -315,6 +364,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         let f = self.heartbeat_frame_at(now);
         let airtime = mac::airtime(&f);
+        let to_relay = match self.radio.beacon.current {
+            Some((_, Beat::Answer(id))) => self.neighbours.get(id).is_some_and(|n| n.relay()),
+            _ => false,
+        };
+        if to_relay
+            && !self
+                .radio
+                .budget()
+                .would_allow_keeping(airtime, REPLY_RESERVE, now)
+        {
+            // An answer to a burst takes on no work: given up, it costs
+            // the asker no more than waiting for a slot (spec "Heartbeat").
+            self.heartbeat_done(now, false);
+            return false;
+        }
         if !self.radio.budget().would_allow(airtime, now) {
             let until = self
                 .radio
@@ -366,9 +430,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match self.radio.beacon.current {
             Some((_, Beat::Change)) => emit(Action::Trace(Trace::Changed)),
             Some((_, Beat::Answer(_))) => emit(Action::Trace(Trace::Answer)),
-            Some((_, Beat::Slot)) if self.radio.beacon.burst > 0 => {
-                emit(Action::Trace(Trace::Burst))
-            }
+            Some((_, Beat::Slot)) if self.bursting() => emit(Action::Trace(Trace::Burst)),
             _ => {}
         }
         if usize::from(f.len) > HEARTBEAT_LEN {

@@ -4913,3 +4913,163 @@ fn the_default_wrong_hop_cap() {
 }
 
 mod queue;
+
+/// The heartbeats in `sent`: when, and whether each has the anchorless
+/// flag.
+fn heartbeats_in(sent: &[(Instant, Frame)]) -> Vec<(Instant, bool)> {
+    sent.iter()
+        .filter_map(|(t, f)| match Packet::decode(&f.bytes[..f.len as usize]) {
+            Ok(Packet::Heartbeat(hb)) => Some((*t, hb.anchorless)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A node booted on battery and alone, anchorless by now, which the
+/// button turns relay; the actions it asked for.
+fn forced_alone(seed: u64, now: &mut Instant) -> (Relay, Vec<Action>) {
+    let mut r = Relay::new(Config::default(), seed);
+    let pending = on_battery(&mut r);
+    drive_from(
+        &mut r,
+        now,
+        Instant::ZERO + Duration::from_secs(1000),
+        pending,
+    );
+    *now = Instant::ZERO + Duration::from_secs(1000);
+    assert!(r.anchorless());
+    let mut pending = Vec::new();
+    let force = Event::App(AppCommand::ForceRole);
+    r.handle(force, *now, &mut |a| pending.push(a));
+    assert!(!r.sleepy() && r.bursting());
+    (r, pending)
+}
+
+/// The heartbeat at the change goes before the burst's first slot even
+/// when the bucket holds both back past that slot (spec "Heartbeat").
+#[test]
+fn the_change_goes_before_the_burst() {
+    let mut now = Instant::ZERO;
+    let mut r = Relay::new(Config::default(), 7);
+    let pending = on_battery(&mut r);
+    drive_from(
+        &mut r,
+        &mut now,
+        Instant::ZERO + Duration::from_secs(1000),
+        pending,
+    );
+    now = Instant::ZERO + Duration::from_secs(1000);
+    // Spent 150 ms past empty: nothing goes for 1.5 s, past the first
+    // slot.
+    let spend = r.radio.budget().available(now) + Duration::from_millis(150);
+    r.radio.budget_mut().record(spend, now);
+    let mut pending = Vec::new();
+    r.handle(Event::App(AppCommand::ForceRole), now, &mut |a| {
+        pending.push(a)
+    });
+    let until = now + Duration::from_secs(60);
+    let sent = drive_from(&mut r, &mut now, until, pending);
+    let hbs = heartbeats_in(&sent);
+    let gap = crate::node::burst_gap(&r.config);
+    assert!(
+        hbs[0].0 > Instant::ZERO + Duration::from_secs(1000) + gap,
+        "{hbs:?}"
+    );
+    assert!(!hbs[0].1, "the change first: {hbs:?}");
+    assert_eq!(
+        hbs.iter().filter(|h| h.1).count(),
+        crate::radio::CHANNELS as usize
+    );
+}
+
+/// A node that begins its flush to turn sleepy ends its burst then, not
+/// at the turn: a flush held by the bucket sends no heartbeat of the burst
+/// (spec "Heartbeat", "Sleepy nodes").
+#[test]
+fn a_flush_ends_the_burst_at_its_start() {
+    use crate::ids::MsgId;
+    use crate::tables::delivery::Queued;
+    let mut now = Instant::ZERO;
+    let (mut r, pending) = forced_alone(9, &mut now);
+    let gap = crate::node::burst_gap(&r.config);
+    let until = now + gap.mul(3);
+    drive_from(&mut r, &mut now, until, pending);
+    // A sleepy node it holds a message for, heard.
+    let node = NodeId([7; 6]);
+    let me = r.config.position;
+    let hb = Heartbeat {
+        sleepy: true,
+        anchorless: false,
+        carried: false,
+        home: r.home,
+        format: crate::wire::FORMAT,
+        map_point: false,
+        leaving: false,
+        id: node,
+        short: me.short(),
+    };
+    hear(&mut r, &mut now, &Packet::Heartbeat(hb));
+    let id = MsgId::of(me, node, b"held");
+    let mut record = crate::tables::records::Record::new(id, None, (0, 0), now);
+    record.set_arrived();
+    let at = r.record_place().unwrap();
+    r.records.put(at, record);
+    r.delivery
+        .push(Queued::new(id, me, node, b"held", now).unwrap());
+    // Room for heartbeats, not for the flush and the reply reserve.
+    let spend = r.radio.budget().available(now) - Duration::from_millis(300);
+    r.radio.budget_mut().record(spend, now);
+    let mut pending = Vec::new();
+    r.handle(Event::App(AppCommand::ForceRole), now, &mut |a| {
+        pending.push(a)
+    });
+    assert!(r.leaving());
+    let left = now;
+    let sent = drive_from(&mut r, &mut now, left + Duration::from_secs(5), pending);
+    assert!(r.leaving(), "the flush is held");
+    let hbs = heartbeats_in(&sent);
+    assert!(!hbs.is_empty() && hbs.iter().all(|h| !h.1), "{hbs:?}");
+}
+
+/// An answer to a relay's burst is given up, not held, when the bucket
+/// would not keep the reply reserve after it (spec "Heartbeat").
+#[test]
+fn an_answer_to_a_burst_keeps_the_reply_reserve() {
+    use crate::tables::budget::REPLY_RESERVE;
+    for low in [false, true] {
+        let mut r = Relay::new(Config::default(), 11);
+        let mut now = Instant::ZERO;
+        drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(400));
+        now = Instant::ZERO + Duration::from_secs(400);
+        assert!(!r.booting());
+        if low {
+            let spend = r.radio.budget().available(now) - REPLY_RESERVE;
+            r.radio.budget_mut().record(spend, now);
+        }
+        let me = r.config.position;
+        let hb = Heartbeat {
+            sleepy: false,
+            anchorless: true,
+            carried: false,
+            home: r.home,
+            format: crate::wire::FORMAT,
+            map_point: false,
+            leaving: false,
+            id: name(5),
+            short: me.short(),
+        };
+        let f = mac::frame(&Packet::Heartbeat(hb), r.home, MIN_PREAMBLE_SYMBOLS);
+        let event = Event::Received {
+            channel: r.home,
+            rssi_dbm: -80,
+            snr_db: 10,
+            bytes: &f.bytes[..f.len as usize],
+        };
+        let mut pending = Vec::new();
+        r.handle(event, now, &mut |a| pending.push(a));
+        let until = now + Duration::from_secs(60);
+        let traces = drive_traces(&mut r, &mut now, until, pending);
+        let answers = traces.iter().filter(|t| **t == Trace::Answer).count();
+        assert_eq!(answers, usize::from(!low), "low {low}");
+    }
+}

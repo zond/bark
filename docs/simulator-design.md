@@ -221,6 +221,10 @@ A scripted `wipe` does the same with the stored state erased, as a fresh
 board in its place. The summary counts the writes of stored state per
 node and day.
 
+**Power and button.** A scripted `plug` or `unplug` gives a node
+external power or takes it, as `[power]` and `[battery]` do, and a
+scripted `hold` holds its button, which flips its role (spec "Nodes").
+
 **Install.** A node whose image, gathered over the mesh, is whole
 stages it and reboots into it as the firmware does
 (spec "Updates over the mesh", the install; `bark-sim/src/install.rs`). With `[update]` the

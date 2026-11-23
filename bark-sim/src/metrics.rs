@@ -890,9 +890,10 @@ pub struct AppMetrics {
 }
 
 /// Airtime, µs, over the whole run and in its first [`BOOT_MINUTE`]: of
-/// the heartbeats of nodes' first rotations, which go a burst gap apart
-/// (`Trace::Burst`), of relays' answers to nodes that know no relay
-/// (`Trace::Answer`), and of everything.
+/// the heartbeats of bursts, at boot or after the button turned a sleepy
+/// node relay, which go a burst gap apart (`Trace::Burst`), of relays'
+/// answers to them and to nodes that know no relay (`Trace::Answer`), and
+/// of everything.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct BootAirtime {
     pub burst_us: [u64; 2],

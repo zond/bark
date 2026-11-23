@@ -73,12 +73,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // intervals have a small common multiple.
         let interval = heartbeat_interval(self.id, &self.config);
         let at = now + self.rng.duration(Duration::ZERO, interval);
-        self.radio.beacon.next_at(at);
-        // A sleepy node does not burst: it beats once it has an anchor or its first
-        // rotation has ended.
-        self.radio
-            .beacon
-            .burst(if self.sleepy() { 0 } else { CHANNELS });
+        if self.sleepy() {
+            // It does not burst: it beats once it has an anchor or its
+            // first rotation has ended.
+            self.radio.beacon.next_at(at);
+            self.radio.beacon.burst(0);
+        } else {
+            self.burst_from(at);
+        }
         // A sleepy node searches once it is anchorless (`relay/gps.rs`).
         if !self.sleepy() && !self.gps_tracks() {
             self.gps.due(self.sleepy());
