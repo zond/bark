@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../app.dart';
 import '../conversations.dart';
+import '../l10n.dart';
 import 'common.dart';
 import 'conversations_screen.dart';
 import 'thread_screen.dart';
@@ -31,21 +32,18 @@ class ArchivedScreen extends StatelessWidget {
       child: Text(t, style: heading),
     );
     return Scaffold(
-      appBar: AppBar(title: const Text('Archived')),
+      appBar: AppBar(title: Text(tr.archived)),
       body: ListView(
         children: [
           if (threads.isEmpty && contacts.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'Nothing archived. Swipe a conversation or contact aside to '
-                'archive it.',
-              ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(tr.archivedNothing),
             ),
-          if (threads.isNotEmpty) title('Conversations'),
+          if (threads.isNotEmpty) title(tr.archivedConversations),
           for (final c in threads)
             ConversationRow(app, c, trailing: _unarchive(c.key)),
-          if (contacts.isNotEmpty) title('Contacts'),
+          if (contacts.isNotEmpty) title(tr.contacts),
           for (final c in contacts)
             ListTile(
               leading: const CircleAvatar(child: Icon(Icons.person)),
@@ -61,7 +59,7 @@ class ArchivedScreen extends StatelessWidget {
   });
 
   Widget _unarchive(String key) => IconButton(
-    tooltip: 'Unarchive',
+    tooltip: tr.archivedUnarchive,
     icon: const Icon(Icons.unarchive),
     onPressed: () => app.contacts.unarchive(key),
   );
@@ -116,7 +114,7 @@ void archivedSay(
     // would cover the next screen's field.
     persist: false,
     action: SnackBarAction(
-      label: 'Undo',
+      label: tr.undo,
       onPressed: () => app.contacts.unarchive(key),
     ),
   ),

@@ -8,6 +8,7 @@ import '../app.dart';
 import '../app_update.dart';
 import 'archived_screen.dart';
 import '../conversations.dart';
+import '../l10n.dart';
 import '../link.dart';
 import '../session.dart' show OutState;
 import 'card_screen.dart';
@@ -45,7 +46,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     try {
       await app.notifier.openPage(manualPage);
     } catch (e) {
-      if (context.mounted) say(context, 'No browser to open the manual');
+      if (context.mounted) say(context, tr.conversationsNoBrowser);
     }
   }
 
@@ -67,14 +68,14 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         actions: [
           FetchButton(app),
           IconButton(
-            tooltip: 'Contacts',
+            tooltip: tr.contacts,
             // A head, as a contact is a person; account_circle would read
             // as the person's own account, which is My card.
-            icon: const Icon(Icons.person, semanticLabel: 'Contacts'),
+            icon: Icon(Icons.person, semanticLabel: tr.contacts),
             onPressed: () => _open(context, ContactsScreen(app)),
           ),
           IconButton(
-            tooltip: 'My card',
+            tooltip: tr.myCard,
             icon: const Icon(Icons.qr_code),
             onPressed: () => _open(context, CardScreen(app)),
           ),
@@ -83,20 +84,20 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
             itemBuilder: (_) => [
               PopupMenuItem(
                 value: () => ArchivedScreen(app),
-                child: const Text('Archived'),
+                child: Text(tr.archived),
               ),
               PopupMenuItem(
                 value: () => MapScreen(app),
-                child: const Text('Nearby nodes'),
+                child: Text(tr.nearbyNodes),
               ),
               PopupMenuItem(
                 value: () => SettingsScreen(app),
-                child: const Text('Settings'),
+                child: Text(tr.settings),
               ),
               // No screen of the app's: it opens in the browser.
               PopupMenuItem(
                 onTap: () => _manual(context),
-                child: const Text('Manual'),
+                child: Text(tr.manual),
               ),
             ],
           ),
@@ -115,11 +116,8 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
             Card(
               child: ListTile(
                 leading: const Icon(Icons.key),
-                title: const Text('Write down your 12 backup words'),
-                subtitle: const Text(
-                  'If you lose this phone, they are the only way back to your '
-                  'contacts.',
-                ),
+                title: Text(tr.conversationsBackupTitle),
+                subtitle: Text(tr.conversationsBackupWhy),
                 onTap: () =>
                     _open(context, SettingsScreen(app, toBackup: true)),
               ),
@@ -127,22 +125,20 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
           _connection(context),
           SendCardLine(app),
           if (all.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'No conversations yet. Add a contact, or show your card.',
-              ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(tr.conversationsNone),
             ),
           for (final c in list) _row(context, c),
           if (archived > 0)
             ArchivedLine(
-              '$archived archived',
+              tr.conversationsArchived(archived),
               onTap: () => _open(context, ArchivedScreen(app)),
             ),
         ],
       ),
       floatingActionButton: FloatingActionButton(
-        tooltip: 'New conversation',
+        tooltip: tr.conversationsNew,
         onPressed: () => _open(context, ContactsScreen(app)),
         child: const Icon(Icons.edit),
       ),
@@ -158,7 +154,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
           dense: true,
           leading: Icon(
             done ? Icons.check_circle : Icons.radio_button_unchecked,
-            semanticLabel: done ? 'Done' : 'To do',
+            semanticLabel: done ? tr.startDone : tr.startToDo,
           ),
           title: Text(title),
           subtitle: done ? null : Text(how),
@@ -169,23 +165,23 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const ListTile(title: Text('Get started')),
+            ListTile(title: Text(tr.startTitle)),
             step(
               g.name,
-              'Your name',
-              'So people know who you are.',
+              tr.startName,
+              tr.startNameHow,
               () => askMyName(context, app),
             ),
             step(
               g.node,
-              'A node',
-              'Found by itself when one is near.',
+              tr.startNode,
+              tr.startNodeHow,
               () => _open(context, SettingsScreen(app)),
             ),
             step(
               g.contact,
-              'Your first contact',
-              'Scan their card, or show them yours.',
+              tr.startContact,
+              tr.startContactHow,
               () => _open(context, ContactsScreen(app)),
             ),
           ],
@@ -208,10 +204,8 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       if (updated != null && app.updater.hearsNoOne && node != null)
         _bar(
           context,
-          title: '${nodeName(node.id)} hears no one since its update',
-          subtitle:
-              'Its new firmware may have broken its radio. Tap for the '
-              'way back.',
+          title: tr.barHearsNoOne(nodeName(node.id)),
+          subtitle: tr.barHearsNoOneWhy,
           onTap: () => _open(context, UpdateScreen(app)),
           dismiss: app.updater.dismissHearsNoOne,
           warning: true,
@@ -219,15 +213,15 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       if (a != null)
         _bar(
           context,
-          title: 'App version ${a.app} is out',
+          title: tr.barAppOut(a.app),
           subtitle: switch (app.appUpdate.state(a.app)) {
-            AppGet.idle => 'Tap to install.',
+            AppGet.idle => tr.barTapToInstall,
             AppGet.downloading => switch (app.appUpdate.percent) {
-              null => 'Downloading…',
-              final p => 'Downloading… $p%',
+              null => tr.barDownloading,
+              final p => tr.barDownloadingPercent(p),
             },
-            AppGet.ready => 'Downloaded. Tap to install.',
-            AppGet.failed => 'Download failed. Tap to try again.',
+            AppGet.ready => tr.barDownloaded,
+            AppGet.failed => tr.barDownloadFailed,
           },
           onTap: app.appUpdate.state(a.app) == AppGet.downloading
               ? null
@@ -237,8 +231,8 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       if (i != null && node != null)
         _bar(
           context,
-          title: 'Node firmware ${i.firmware} is out',
-          subtitle: 'Tap to update the node.',
+          title: tr.barFirmwareOut(i.firmware),
+          subtitle: tr.barTapToUpdate,
           onTap: () => _open(context, UpdateScreen(app, release: i)),
           dismiss: () => r.dismissImage(node, i.firmware),
         ),
@@ -262,7 +256,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       subtitle: Text(subtitle),
       onTap: onTap,
       trailing: IconButton(
-        tooltip: 'Not for this version',
+        tooltip: tr.barNotThisVersion,
         icon: const Icon(Icons.close),
         onPressed: dismiss,
       ),
@@ -295,7 +289,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         ScaffoldMessenger.of(context),
         app,
         c.key,
-        '${c.title}: conversation archived',
+        tr.conversationsWasArchived(c.title),
       );
     },
     child: ConversationRow(app, c),
@@ -321,7 +315,10 @@ class ConversationRow extends StatelessWidget {
         when: last.mine && last.outs.any((o) => o.state == OutState.givenBack),
         (_) => Text(
           last.mine
-              ? 'You: ${last.text}, ${textLabel(app.session, last.outs)}'
+              ? tr.conversationsYou(
+                  last.text,
+                  textLabel(app.session, last.outs),
+                )
               : last.text,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,

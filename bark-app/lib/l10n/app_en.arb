@@ -1,0 +1,69 @@
+{
+  "@@locale": "en",
+
+  "contacts": "Contacts",
+  "myCard": "My card",
+  "archived": "Archived",
+  "nearbyNodes": "Nearby nodes",
+  "settings": "Settings",
+  "manual": "Manual",
+  "undo": "Undo",
+
+  "conversationsNoBrowser": "No browser to open the manual",
+  "conversationsBackupTitle": "Write down your 12 backup words",
+  "conversationsBackupWhy": "If you lose this phone, they are the only way back to your contacts.",
+  "conversationsNone": "No conversations yet. Add a contact, or show your card.",
+  "conversationsArchived": "{count} archived",
+  "@conversationsArchived": {
+    "description": "The line under the conversations that leads to the archived ones.",
+    "placeholders": {"count": {"type": "int"}}
+  },
+  "conversationsNew": "New conversation",
+  "conversationsWasArchived": "{name}: conversation archived",
+  "@conversationsWasArchived": {
+    "placeholders": {"name": {"type": "String"}}
+  },
+  "conversationsYou": "You: {text}, {state}",
+  "@conversationsYou": {
+    "description": "A conversation's last text when the person sent it, with what became of it.",
+    "placeholders": {"text": {"type": "String"}, "state": {"type": "String"}}
+  },
+
+  "startTitle": "Get started",
+  "startDone": "Done",
+  "startToDo": "To do",
+  "startName": "Your name",
+  "startNameHow": "So people know who you are.",
+  "startNode": "A node",
+  "startNodeHow": "Found by itself when one is near.",
+  "startContact": "Your first contact",
+  "startContactHow": "Scan their card, or show them yours.",
+
+  "barHearsNoOne": "{node} hears no one since its update",
+  "@barHearsNoOne": {
+    "placeholders": {"node": {"type": "String"}}
+  },
+  "barHearsNoOneWhy": "Its new firmware may have broken its radio. Tap for the way back.",
+  "barAppOut": "App version {version} is out",
+  "@barAppOut": {
+    "placeholders": {"version": {"type": "int"}}
+  },
+  "barTapToInstall": "Tap to install.",
+  "barDownloading": "Downloading…",
+  "barDownloadingPercent": "Downloading… {percent}%",
+  "@barDownloadingPercent": {
+    "placeholders": {"percent": {"type": "int"}}
+  },
+  "barDownloaded": "Downloaded. Tap to install.",
+  "barDownloadFailed": "Download failed. Tap to try again.",
+  "barFirmwareOut": "Node firmware {version} is out",
+  "@barFirmwareOut": {
+    "placeholders": {"version": {"type": "int"}}
+  },
+  "barTapToUpdate": "Tap to update the node.",
+  "barNotThisVersion": "Not for this version",
+
+  "archivedNothing": "Nothing archived. Swipe a conversation or contact aside to archive it.",
+  "archivedConversations": "Conversations",
+  "archivedUnarchive": "Unarchive"
+}

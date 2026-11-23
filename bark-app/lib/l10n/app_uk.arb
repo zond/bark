@@ -1,0 +1,46 @@
+{
+  "@@locale": "uk",
+
+  "contacts": "Контакти",
+  "myCard": "Моя картка",
+  "archived": "Архів",
+  "nearbyNodes": "Вузли поблизу",
+  "settings": "Налаштування",
+  "manual": "Посібник",
+  "undo": "Скасувати",
+
+  "conversationsNoBrowser": "Немає браузера, щоб відкрити посібник",
+  "conversationsBackupTitle": "Запишіть свої 12 резервних слів",
+  "conversationsBackupWhy": "Якщо ви втратите цей телефон, вони єдиний шлях назад до ваших контактів.",
+  "conversationsNone": "Розмов ще немає. Додайте контакт або покажіть свою картку.",
+  "conversationsArchived": "{count} в архіві",
+  "conversationsNew": "Нова розмова",
+  "conversationsWasArchived": "{name}: розмову заархівовано",
+  "conversationsYou": "Ви: {text}, {state}",
+
+  "startTitle": "Початок",
+  "startDone": "Зроблено",
+  "startToDo": "Зробити",
+  "startName": "Ваше ім'я",
+  "startNameHow": "Щоб люди знали, хто ви.",
+  "startNode": "Вузол",
+  "startNodeHow": "Знаходиться сам, коли він поруч.",
+  "startContact": "Ваш перший контакт",
+  "startContactHow": "Відскануйте їхню картку або покажіть їм свою.",
+
+  "barHearsNoOne": "{node} нікого не чує після оновлення",
+  "barHearsNoOneWhy": "Нова прошивка могла зламати його радіо. Натисніть, щоб повернутися.",
+  "barAppOut": "Вийшла версія застосунку {version}",
+  "barTapToInstall": "Натисніть, щоб встановити.",
+  "barDownloading": "Завантаження…",
+  "barDownloadingPercent": "Завантаження… {percent}%",
+  "barDownloaded": "Завантажено. Натисніть, щоб встановити.",
+  "barDownloadFailed": "Не вдалося завантажити. Натисніть, щоб спробувати знову.",
+  "barFirmwareOut": "Вийшла прошивка вузла {version}",
+  "barTapToUpdate": "Натисніть, щоб оновити вузол.",
+  "barNotThisVersion": "Не для цієї версії",
+
+  "archivedNothing": "В архіві нічого немає. Проведіть розмову чи контакт убік, щоб заархівувати.",
+  "archivedConversations": "Розмови",
+  "archivedUnarchive": "Повернути з архіву"
+}

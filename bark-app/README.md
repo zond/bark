@@ -38,6 +38,36 @@ is a prototype for the bench, not the app people will carry.
   made one. A phone with a bond to a node is **paired** with it; that
   makes it no owner.
 
+## Languages
+
+The app speaks English, Swedish and Ukrainian: the first of the phone's
+languages it has, else English.
+
+- **Where the words are.** `lib/l10n/app_en.arb` holds every message a
+  person reads, and `app_sv.arb` and `app_uk.arb` the same messages by
+  the same names. `flutter pub get` makes `AppLocalizations` of them
+  (`l10n.yaml`); the made files are kept in the repository.
+  `test/l10n_test.dart` fails a translation that lacks a message or takes
+  other values than the English.
+- **How code reads them.** `tr`, in `lib/l10n.dart`, is the words in the
+  language now spoken: `Text(tr.settings)`. The screens and the parts
+  with no screen, a notification or a status line, read the same object.
+  It is English until `main` tells it the phone's languages, so tests
+  read English. A change of the phone's language while the app runs
+  builds the screens again from the first.
+- **A message is whole.** One sentence is one message with its values put
+  in, `tr.barAppOut(version)`: never a sentence joined from translated
+  parts, as languages order words differently. A count takes a plural
+  message; Ukrainian has four forms.
+- **Names.** A message's name begins with the screen or part it belongs
+  to (`conversationsNone`, `barAppOut`); a word many screens share has
+  none (`settings`, `undo`). The English file says, under `@name`, what a
+  value is and, where a translator could not tell, where the message
+  shows.
+- **What stays English.** The debug screen's log, which is what a fault
+  report carries; the words on the node's screen, which the app quotes
+  as they are shown; and the twelve backup words.
+
 ## Screens
 
 - **Conversations**, the first screen. At the first start the app asks

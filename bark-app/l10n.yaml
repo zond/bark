@@ -1,0 +1,8 @@
+# The app's words in each language (README.md, "Languages"): one file a
+# language in lib/l10n/, the English one the template the others follow.
+arb-dir: lib/l10n
+template-arb-file: app_en.arb
+output-localization-file: app_localizations.dart
+output-class: AppLocalizations
+nullable-getter: false
+format: true

@@ -1,0 +1,46 @@
+{
+  "@@locale": "sv",
+
+  "contacts": "Kontakter",
+  "myCard": "Mitt kort",
+  "archived": "Arkiverat",
+  "nearbyNodes": "Noder i närheten",
+  "settings": "Inställningar",
+  "manual": "Handbok",
+  "undo": "Ångra",
+
+  "conversationsNoBrowser": "Ingen webbläsare att öppna handboken i",
+  "conversationsBackupTitle": "Skriv ner dina 12 reservord",
+  "conversationsBackupWhy": "Tappar du telefonen är de enda vägen tillbaka till dina kontakter.",
+  "conversationsNone": "Inga samtal än. Lägg till en kontakt, eller visa ditt kort.",
+  "conversationsArchived": "{count, plural, one{{count} arkiverad} other{{count} arkiverade}}",
+  "conversationsNew": "Nytt samtal",
+  "conversationsWasArchived": "{name}: samtalet arkiverat",
+  "conversationsYou": "Du: {text}, {state}",
+
+  "startTitle": "Kom igång",
+  "startDone": "Klart",
+  "startToDo": "Att göra",
+  "startName": "Ditt namn",
+  "startNameHow": "Så att folk vet vem du är.",
+  "startNode": "En nod",
+  "startNodeHow": "Hittas av sig själv när en är nära.",
+  "startContact": "Din första kontakt",
+  "startContactHow": "Skanna deras kort, eller visa dem ditt.",
+
+  "barHearsNoOne": "{node} hör ingen sedan uppdateringen",
+  "barHearsNoOneWhy": "Den nya programvaran kan ha förstört radion. Tryck för vägen tillbaka.",
+  "barAppOut": "Appversion {version} är ute",
+  "barTapToInstall": "Tryck för att installera.",
+  "barDownloading": "Laddar ner…",
+  "barDownloadingPercent": "Laddar ner… {percent} %",
+  "barDownloaded": "Nedladdad. Tryck för att installera.",
+  "barDownloadFailed": "Nedladdningen misslyckades. Tryck för att försöka igen.",
+  "barFirmwareOut": "Nodprogramvara {version} är ute",
+  "barTapToUpdate": "Tryck för att uppdatera noden.",
+  "barNotThisVersion": "Inte för den här versionen",
+
+  "archivedNothing": "Inget arkiverat. Svep ett samtal eller en kontakt åt sidan för att arkivera.",
+  "archivedConversations": "Samtal",
+  "archivedUnarchive": "Ta ur arkivet"
+}
