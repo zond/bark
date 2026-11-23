@@ -2592,9 +2592,9 @@ never served.
 
 **What a node tells.** A heartbeat may carry a **section** after its first
 13 bytes ([packet formats](#packet-formats)), 7.68 ms more: the version
-the node runs, 0 if it knows none; the newest image it holds or gathers,
-by its version, the signer's key, its blocks and the pieces of its last,
-or none; how many of its blocks the node holds from the first; how many
+the node runs, 0 if it knows none; an image it holds or gathers, the
+newest but as below, by its version, the signer's key, its blocks and the
+pieces of its last, or none; how many of its blocks the node holds from the first; how many
 pieces it holds of the block after those, as it stands when sent. A node
 that knows neither the version it runs nor an image tells no section.
 
@@ -2615,12 +2615,13 @@ While a relay gathers, every heartbeat it sends on the home channel of its
 it last took a piece from; before its first piece, the best holder it
 hears. A piece does not name its sender: the node takes for it a relay it
 hears that holds that block, one at home on its own channel, else the one
-that holds the most blocks from the first, then the lowest ID. While a
-relay gathers an image not yet proven and holds another whole, its
-sections name the one it holds, which it streams, but those on its
-helper's home channel name the one it gathers. A sleepy
+that holds the most blocks from the first, then the lowest ID. A sleepy
 node's beats carry the section for one beat after a change, in every beat
 while it gathers, and in one an hour.
+
+While a relay gathers an image not yet proven and holds another whole,
+its sections name the one it holds, which it streams, but those on its
+helper's home channel name the one it gathers (roadmap D248).
 
 A node keeps each neighbour's last section in its neighbour table
 ([neighbour table](#neighbour-table)), and the images the sections name,
@@ -2639,7 +2640,7 @@ naming none.
 
    | | |
    |---|---|
-   | **fed** | a proven gather, by every piece it takes; one not yet proven only by a block of it that passes its check, as nothing else in it is checked yet |
+   | **fed** | a proven gather, by every piece it takes; one not yet proven only by a block of it that passes its check, as nothing else in it is checked yet (roadmap D249) |
    | a gather fed within **3 990.9 s** (3 600 s + 2 × 195 s + 872.8 ms; `bark-proto`, `update.rs`, `fed_within`) | no offer replaces it |
    | a gather not fed for that long | an unproven one gives way to an older image, and is then held off (below); a proven one to a newer image |
    | an unproven gather | gives way to a newer image at once |
@@ -2708,7 +2709,8 @@ carry its section, and it takes the pieces it hears in its windows
 While one of its sleepy nodes lacks a block the anchor holds, the anchor's
 slot heartbeat on its home channel ([relay choice](#relay-choice)) carries
 its section every rotation, naming the image it streams them, the one it
-holds whole in place of a gather not yet proven, and a **run** of pieces
+holds whole in place of a gather not yet proven even when its helper is
+at home there, and a **run** of pieces
 follows it at once (roadmap D213):
 
 - the run is the pieces of its stream on that channel that the pace gives
@@ -2784,8 +2786,15 @@ radio range can forge any frame, within its duty cycle:
   ([relay choice](#relay-choice));
 - claim the position of a destination and own it ([owner](#owner));
 - name in its section an image nobody holds, which its hearers gather
-  until a real offer may replace it or they give it up
-  ([updates over the mesh](#updates-over-the-mesh)).
+  until a real offer may replace it or they give it up, and send junk
+  pieces of it, which feed that gather no more than a block that passes
+  ([updates over the mesh](#updates-over-the-mesh));
+- send junk pieces of an image a node gathers proven: pieces are not
+  checked one by one, so one among those a block decodes from spoils it,
+  and the node takes the block's pieces again; about a frame each time
+  the block is gathered keeps it from ever completing, and keeps the
+  gather fed, so that a newer image does not take its place. Nothing
+  bounds it ([updates over the mesh](#updates-over-the-mesh)).
 
 The app's end-to-end encryption keeps payloads private and authentic
 ([the payload](#the-payload)); it does nothing for routing. A listener

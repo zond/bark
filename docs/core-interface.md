@@ -309,7 +309,9 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
 - `AppCommand::Holds(image)`: the image the node holds whole and has checked, the one
   it runs or one staged after its signature passed, with its name, version, block
   count, the pieces of its last block and its key; at boot and after each change. The
-  core tells it in its heartbeats' section and serves it.
+  core tells it in its heartbeats' section and serves it, while it gathers a newer image
+  not yet proven too, but on its helper's home channel, where it tells the gather (spec
+  "Updates over the mesh").
 - `Action::Offered(image)`: a relay that holds blocks 0 and 1 of an image named it,
   above the version the node runs, the image it holds and the one it has proven; once for
   each image, and not while the core holds the version off. The driver answers

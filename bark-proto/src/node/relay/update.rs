@@ -1695,6 +1695,98 @@ mod tests {
         assert_eq!(given_up, Some(9));
     }
 
+    /// A forger that names a high version, with a table it made whole,
+    /// and streams junk pieces of it, against a relay that holds a release
+    /// whole: the relay goes on naming and streaming the release but to
+    /// the forger; the forged gather is fed once, by its table, and an
+    /// older real release offered once that is [`fed_within`] old takes
+    /// its place and holds it off while fed; a newer real one takes it at
+    /// once (spec "Updates over the mesh").
+    #[test]
+    fn a_junk_forger_neither_hides_a_release_nor_holds_a_relay() {
+        use crate::position::Position;
+        use crate::wire::Heartbeat;
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            ..Config::default()
+        };
+        let fed = fed_within(&config);
+        let image = |version| Image {
+            version,
+            blocks: 3,
+            last: 7,
+            key: 1,
+        };
+        let t0 = Instant::ZERO + Duration::from_secs(10);
+        let table = t0 + Duration::from_secs(60);
+        // The forger, heard at `t` with its section.
+        let forger = |r: &mut crate::Relay, t: Instant| {
+            let me = r.config.position;
+            let at = Position {
+                lat: me.lat + 5_000,
+                ..me
+            };
+            let hb = Heartbeat {
+                sleepy: false,
+                anchorless: false,
+                carried: false,
+                home: Channel::new(5).unwrap(),
+                format: crate::wire::FORMAT,
+                map_point: false,
+                leaving: false,
+                id: NodeId::from_u64(7),
+                short: at.short(),
+            };
+            let plane = r.plane;
+            r.neighbours.heard(&hb, at, -80, &plane, t);
+            let claim = Section {
+                runs: 1,
+                image: Some(image(9)),
+                complete: 2,
+                have: 0,
+            };
+            r.neighbours.section_heard(hb.id, claim, t);
+        };
+        let relay = || {
+            let mut r = crate::Relay::new(config, 1);
+            r.holds_image(image(2), t0);
+            forger(&mut r, t0);
+            assert!(offers(&mut r, 9, t0), "the forged section");
+            r.gather(image(9), 0, t0);
+            r.spread.block_done(0, true, table);
+            let mut t = table;
+            let mut index = 0;
+            while t < table + fed {
+                feed(&mut r, 9, index, t);
+                index += 1;
+                t += Duration::from_secs(600);
+            }
+            r
+        };
+        let mut r = relay();
+        let named = |r: &crate::Relay, c: u8, t| {
+            r.heartbeat_section(t, Channel::new(c).unwrap())
+                .and_then(|s| s.image.map(|i| (i.version, s.complete)))
+        };
+        let late = table + fed - Duration::from_secs(1);
+        forger(&mut r, late);
+        assert_eq!(named(&r, 7, late), Some((2, 3)), "it names the release");
+        assert_eq!(named(&r, 5, late), Some((9, 1)), "but to the forger");
+        assert_eq!(r.spread.streams(), Some(image(2)), "and streams it");
+        // The junk fed nothing: a real older release, once the table is
+        // fed_within old, and the forged image is held off while it is fed.
+        assert!(!offers(&mut r, 3, late));
+        assert!(offers(&mut r, 3, table + fed), "an older real release");
+        r.gather(image(3), 0, table + fed);
+        r.spread
+            .block_done(0, true, table + fed + Duration::from_secs(60));
+        assert!(!offers(&mut r, 9, table + fed + Duration::from_secs(120)));
+        // A newer real release takes the forged gather's place at once.
+        let mut r = relay();
+        assert!(offers(&mut r, 10, table + Duration::from_secs(60)));
+    }
+
     /// A fed older gather holds the newer it left off, for as long as it
     /// is fed, up to [`unproven_within`]: a section that names a newer
     /// version nobody holds cannot take a node from an image it is being
