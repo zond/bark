@@ -38,7 +38,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get conversationsBackupWhy =>
-      'Якщо ви втратите цей телефон, вони єдиний шлях назад до ваших контактів.';
+      'Якщо ви втратите цей телефон, лише вони допоможуть повернути ваші контакти.';
 
   @override
   String get conversationsNone =>
@@ -81,13 +81,14 @@ class AppLocalizationsUk extends AppLocalizations {
   String get startNode => 'Вузол';
 
   @override
-  String get startNodeHow => 'Знаходиться сам, коли він поруч.';
+  String get startNodeHow =>
+      'Застосунок сам знайде вузол, коли той буде поруч.';
 
   @override
   String get startContact => 'Ваш перший контакт';
 
   @override
-  String get startContactHow => 'Відскануйте їхню картку або покажіть їм свою.';
+  String get startContactHow => 'Відскануйте картку людини або покажіть свою.';
 
   @override
   String barHearsNoOne(String node) {
@@ -96,7 +97,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get barHearsNoOneWhy =>
-      'Нова прошивка могла зламати його радіо. Натисніть, щоб повернутися.';
+      'Нова прошивка могла вивести з ладу радіо. Натисніть, щоб повернути попередню.';
 
   @override
   String barAppOut(int version) {
@@ -134,7 +135,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get archivedNothing =>
-      'В архіві нічого немає. Проведіть розмову чи контакт убік, щоб заархівувати.';
+      'В архіві нічого немає. Проведіть пальцем по розмові чи контакту вбік, щоб заархівувати.';
 
   @override
   String get archivedConversations => 'Розмови';
@@ -225,7 +226,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get sentQueuedHelp =>
-      'На цьому телефоні, доки не підключиться вузол, готовий його прийняти.';
+      'Чекає в телефоні, доки підключиться вузол, готовий його прийняти.';
 
   @override
   String get sentWritingHelp => 'Телефон передає його вузлу.';
@@ -239,7 +240,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get sentBusyHelp =>
-      'Мережа поки що повернула його. Застосунок сам надішле його знову, коли очікування мине.';
+      'Мережа тимчасово повернула його. Застосунок сам надішле його знову, коли мине час очікування.';
 
   @override
   String get sentNoNeighbourHelp =>
@@ -247,32 +248,32 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get sentNoWayHelp =>
-      'Мережа не знайшла шляху до їхньої адреси: їхній вузол може бути вимкнений чи деінде, або адреса застаріла. «Надіслати знову» пробує ще раз, як нове повідомлення; «Скасувати» прибирає його.';
+      'Мережа не знайшла шляху до адреси: можливо, вузол вимкнено чи перенесено, або адреса застаріла. «Надіслати знову» пробує ще раз, як нове повідомлення; «Скасувати» видаляє його.';
 
   @override
   String get sentRefusedHelp =>
-      'Вузол не прийме його в такому вигляді: це помилка застосунку чи вузла. «Скасувати» прибирає його; «Налагодження» показує причину.';
+      'Вузол не приймає повідомлення в такому вигляді: це помилка застосунку чи вузла. «Скасувати» видаляє його; «Налагодження» показує причину.';
 
   @override
-  String get sentReaction => 'Їхня реакція';
+  String get sentReaction => 'Реакція одержувача';
 
   @override
   String get sentReactionHelp =>
-      'Емодзі в куті повідомлення, якщо вони його вибрали.';
+      'Емодзі в кутку повідомлення, якщо одержувач його вибрав.';
 
   @override
   String get receivedYourReaction => 'Ваша реакція';
 
   @override
   String get receivedYourReactionHelp =>
-      'Натисніть і утримуйте повідомлення, щоб відреагувати емодзі або скопіювати його. Вони побачать реакцію, щойно вона дійде. Виберіть іншу, щоб змінити.';
+      'Натисніть і утримуйте повідомлення, щоб відреагувати емодзі або скопіювати його. Відправник побачить реакцію, щойно вона дійде. Щоб змінити, виберіть іншу.';
 
   @override
   String get receivedFirst => 'Перше повідомлення';
 
   @override
   String get receivedFirstHelp =>
-      'Перше повідомлення міг надіслати будь-хто з вашою карткою, тож не доведено, що це від них.';
+      'Перше повідомлення міг надіслати будь-хто з вашою карткою, тож немає певності, від кого воно.';
 
   @override
   String get receivedMailbox => 'З вашої поштової скриньки';
@@ -293,7 +294,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get receivedTimeHelp =>
-      'Коли воно прийшло. Коли його написали, сказано в розділі «Це повідомлення».';
+      'Коли воно надійшло. Коли його написано, видно в розділі «Це повідомлення».';
 
   @override
   String get commonThisMessage => 'Це повідомлення';
@@ -318,7 +319,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get commonGiftHelp =>
-      'Власник домашнього вузла додав вас туди. Якщо ви ним скористаєтеся, це буде ваш дім: він зберігає повідомлення для вас, поки вас немає, а ваша картка містить його адресу, тож ваші контакти отримають вашу нову картку.\n\nДім, який був у вас раніше, надішле вам вашу пошту, а потім забуде вас.';
+      'Власник домашнього вузла додав вас туди. Якщо ви ним скористаєтеся, це буде ваш дім: він зберігатиме повідомлення для вас, поки вас немає, а на вашій картці буде його адреса, тож ваші контакти отримають нову картку.\n\nДім, який був у вас раніше, надішле вам пошту, а потім забуде вас.';
 
   @override
   String get commonUseGift => 'Прийняти';
@@ -330,7 +331,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get commonHomeOffer =>
-      'Домашнього вузла ще немає. Зробити цей вузол вашим домом? Він зберігає повідомлення для вас, поки вас немає. Спершу створіть пару за кодом на його екрані.';
+      'У вас ще немає домашнього вузла. Зробити цей вузол вашим домом? Він зберігатиме повідомлення для вас, поки вас немає. Спершу створіть пару за кодом на екрані вузла.';
 
   @override
   String get setHome => 'Зробити домом';
@@ -380,7 +381,7 @@ class AppLocalizationsUk extends AppLocalizations {
   }
 
   @override
-  String get commonCardQueued => 'Вашу картку поставлено в чергу';
+  String get commonCardQueued => 'Ваша картка чекає на надсилання';
 
   @override
   String commonCardFailed(String error) {
@@ -578,7 +579,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get connectionGuestNoneNear =>
-      'Жодного вашого вузла поруч немає, тож телефон користується цим публічним вузлом, чужим.';
+      'Жодного вашого вузла поруч немає, тож телефон користується цим публічним вузлом, який належить комусь іншому.';
 
   @override
   String get connectionGuestVisits =>
@@ -610,11 +611,11 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get notifyOutInReach =>
-      'Повідомлення з черги підуть, щойно він буде поруч';
+      'Повідомлення з черги буде надіслано, щойно вузол буде поруч';
 
   @override
   String get notifyOutBluetooth =>
-      'Повідомлення з черги підуть, щойно ввімкнеться Bluetooth';
+      'Повідомлення з черги буде надіслано, щойно ввімкнеться Bluetooth';
 
   @override
   String get notifyUnnamed => 'Без імені';
@@ -657,13 +658,13 @@ class AppLocalizationsUk extends AppLocalizations {
   String get threadSealed => 'Зашифровано';
 
   @override
-  String get threadSealedForThem => 'лише для них';
+  String get threadSealedForThem => 'лише для одержувача';
 
   @override
   String get threadSealedIntroOut => 'як перше повідомлення, з вашою карткою';
 
   @override
-  String get threadSealedForYou => 'від них, лише для вас';
+  String get threadSealedForYou => 'від відправника, лише для вас';
 
   @override
   String get threadSealedIntroIn => 'для вас, як перше повідомлення';
@@ -697,7 +698,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String threadLastSeenThere(String ago) {
-    return 'Востаннє їх бачили там $ago';
+    return 'Востаннє бачили там $ago';
   }
 
   @override
@@ -706,14 +707,13 @@ class AppLocalizationsUk extends AppLocalizations {
   }
 
   @override
-  String get threadThereHow => 'Швидко, якщо вони ще там';
+  String get threadThereHow => 'Швидко, якщо людина ще там';
 
   @override
-  String get threadTheirHome => 'Їхній домашній вузол';
+  String get threadTheirHome => 'Домашній вузол контакту';
 
   @override
-  String get threadHomeHow =>
-      'Чекає в їхньому домі, доки вони його не заберуть';
+  String get threadHomeHow => 'Чекає в домі, доки людина його не забере';
 
   @override
   String threadNotSent(String error) {
@@ -721,7 +721,7 @@ class AppLocalizationsUk extends AppLocalizations {
   }
 
   @override
-  String get threadNotWritten => 'Повідомлень від них ще не було';
+  String get threadNotWritten => 'Повідомлень ще не було';
 
   @override
   String threadLastWrote(String ago) {
@@ -730,7 +730,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String threadLastWroteHome(String ago) {
-    return 'Останнє повідомлення $ago, з їхнього дому';
+    return 'Останнє повідомлення $ago, з дому';
   }
 
   @override
@@ -762,7 +762,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get threadRemoveHow =>
-      'Повідомлення лишаться. Щоб написати знову, додайте їхню картку.';
+      'Повідомлення лишаться. Щоб написати знову, додайте картку ще раз.';
 
   @override
   String get remove => 'Видалити';
@@ -772,7 +772,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get threadNotVerified =>
-      'Ще не перевірено: їхня перша відповідь доведе, що це вони.';
+      'Ще не перевірено: перша відповідь підтвердить, що це та людина.';
 
   @override
   String get threadIsArchived => 'Цю розмову заархівовано.';
@@ -822,7 +822,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String threadTheyReacted(String emoji) {
-    return 'Їхня реакція: $emoji';
+    return 'Реакція одержувача: $emoji';
   }
 
   @override
@@ -834,10 +834,10 @@ class AppLocalizationsUk extends AppLocalizations {
   String get threadCopy => 'Копіювати текст';
 
   @override
-  String get threadToWhere => 'Туди, де вони були';
+  String get threadToWhere => 'Туди, де людина була';
 
   @override
-  String get threadToHome => 'До їхнього дому';
+  String get threadToHome => 'До дому контакту';
 
   @override
   String get threadSendAgain => 'Надіслати знову';
@@ -1010,11 +1010,11 @@ class AppLocalizationsUk extends AppLocalizations {
   String get card => 'Картка';
 
   @override
-  String get scanTheirCard => 'Сканувати їхню картку';
+  String get scanTheirCard => 'Сканувати картку';
 
   @override
   String get contactsNone =>
-      'Контактів ще немає. Натисніть «Додати контакт» і відскануйте їхню картку.';
+      'Контактів ще немає. Натисніть «Додати контакт» і відскануйте картку людини.';
 
   @override
   String contactsArchived(int count) {
@@ -1161,15 +1161,15 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get factRole =>
-      'Ретранслятор має зовнішнє живлення, наприклад USB, і слухає весь час, передаючи повідомлення для вузлів довкола: що більше ретрансляторів, то далі сягають повідомлення. Сонний вузол працює від батареї: щоб її вистачило, він спить і прокидається лише на короткі вікна, а надсилає й отримує через один ретранслятор поблизу, свій якір. Нерухомий ретранслятор, що втратив живлення, далі ретранслює від батареї, доки вона не почне сідати, а тоді стає сонним. Якщо утримувати кнопку вузла, він змінює роль до наступної зміни живлення.';
+      'Ретранслятор має зовнішнє живлення, наприклад USB, і слухає весь час, передаючи повідомлення для вузлів довкола: що більше ретрансляторів, то далі сягають повідомлення. Сонний вузол працює від батареї: щоб її вистачило, він спить і прокидається лише ненадовго, а надсилає й отримує через один ретранслятор поблизу, свій якір. Ретранслятор, який стоїть на місці й утратив живлення, далі працює від батареї, доки вона не почне сідати, а тоді стає сонним. Якщо утримувати кнопку вузла, він змінює роль до наступної зміни живлення.';
 
   @override
   String get factMoving =>
-      'Вузол визначає це сам за своїм GPS: якщо понад хвилину його позиції віддалені від місця, де він стояв, вважається, що його носять, а після чотирьох годин на одному місці він знову нерухомий. Місце вузла, який носять, береться з його GPS, і він не зберігає нової пошти для інших, бо може скоро зникнути. Якщо задати його місце в Налаштуваннях застосунку, він одразу стане нерухомим.';
+      'Вузол визначає це сам за допомогою GPS: якщо понад хвилину його позиції віддалені від місця, де він стояв, вважається, що його носять, а після чотирьох годин на одному місці він знову вважається нерухомим. Місце вузла, який носять, береться з його GPS, і він не зберігає нової пошти для інших, бо може скоро зникнути. Якщо задати його місце в Налаштуваннях застосунку, він одразу вважатиметься нерухомим.';
 
   @override
   String get factAnchor =>
-      'Сонний вузол надсилає й отримує через один ретранслятор поблизу, свій якір. Якір зберігає пошту сонного вузла й передає її в коротке вікно після кожного його пробудження, а адреса сонного вузла — це місце його якоря. Сонний вузол бере за якір перший ретранслятор, який почує; поки якоря немає, він сам зберігає й передає повідомлення, що більше навантажує канал.';
+      'Сонний вузол надсилає й отримує через один ретранслятор поблизу, свій якір. Якір зберігає пошту сонного вузла й передає її протягом короткого часу після кожного його пробудження, а адреса сонного вузла — це місце його якоря. Сонний вузол бере за якір перший ретранслятор, який почує; поки якоря немає, він сам зберігає й передає повідомлення, що більше навантажує канал.';
 
   @override
   String get factPlace =>
@@ -1177,11 +1177,11 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get factPower =>
-      'USB означає зовнішнє живлення, від якого вузол може ретранслювати весь час. Від батареї значення визначається за напругою елемента, тож воно приблизне; на панелі самого цього вузла це сире значення в мілівольтах. Коли лишається близько п\'ятої частини, заряд вважається низьким, і ретранслятор на ній стає сонним, щоб зберегти решту.';
+      'USB означає зовнішнє живлення, від якого вузол може працювати ретранслятором весь час. Від батареї значення визначається за напругою елемента, тож воно приблизне; на панелі самого цього вузла це необроблене значення в мілівольтах. Коли лишається близько п\'ятої частини, заряд вважається низьким, і ретранслятор на батареї стає сонним, щоб зберегти решту.';
 
   @override
   String get factLink =>
-      'Наскільки добре цей вузол чує інший: наскільки його сигнал вищий за радіошум тут. Нижче приблизно 4 дБ повне повідомлення часто губиться, коли сигнал згасає, тож зв\'язок крихкий і використовується, лише коли іншого не лишилося; від приблизно 7 дБ він добрий; між ними середній. Його виміряно в один бік: інший вузол може чути цей краще чи гірше.';
+      'Наскільки добре цей вузол чує інший: наскільки його сигнал вищий за радіошум тут. Нижче приблизно 4 дБ повне повідомлення часто губиться, коли сигнал слабшає, тож зв\'язок ненадійний і використовується, лише коли іншого не лишилося; від приблизно 7 дБ він добрий; між ними середній. Його виміряно в один бік: інший вузол може чути цей краще чи гірше.';
 
   @override
   String get factLastHeard =>
@@ -1302,7 +1302,7 @@ class AppLocalizationsUk extends AppLocalizations {
   String get factLinkFairName => 'зв\'язок, середній';
 
   @override
-  String get factLinkFragileName => 'зв\'язок, крихкий';
+  String get factLinkFragileName => 'зв\'язок, ненадійний';
 
   @override
   String get factLastHeardName => 'востаннє чути';
@@ -1330,7 +1330,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get factRoleSleepy =>
-      'сонний: прокидається на короткі вікна, зв\'язується через свій якір';
+      'сонний: прокидається ненадовго, підтримує зв\'язок через свій якір';
 
   @override
   String get factRoleRelay => 'ретранслятор: передає чужі повідомлення';
@@ -1339,7 +1339,7 @@ class AppLocalizationsUk extends AppLocalizations {
   String get factCarried => 'його носять';
 
   @override
-  String get factFixed => 'нерухомий';
+  String get factFixed => 'стоїть на місці';
 
   @override
   String get factAnchored => 'є';
@@ -1409,7 +1409,7 @@ class AppLocalizationsUk extends AppLocalizations {
   String get factLinkFair => 'середній';
 
   @override
-  String get factLinkFragile => 'крихкий';
+  String get factLinkFragile => 'ненадійний';
 
   @override
   String factLinkDetail(String rssi, String margin) {
@@ -1516,7 +1516,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get mapNoAnswerSleepy =>
-      'Він не відповів: він спить між своїми вікнами.';
+      'Він не відповів: між пробудженнями він спить.';
 
   @override
   String get mapNoAnswer => 'Він не відповів.';
@@ -1572,7 +1572,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String mapBandFragile(String fair) {
-    return 'крихкий < $fair дБ над радіошумом';
+    return 'ненадійний < $fair дБ над радіошумом';
   }
 
   @override
@@ -2760,7 +2760,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String updateHearsNoOneWarning(int version, String file) {
-    return 'Після оновлення до версії $version вузол не чує нікого іншого: нова прошивка могла зламати його радіо. Щоб повернутися, двічі натисніть на вузлі кнопку скидання й скопіюйте на нього через USB файл $file з того випуску; телефон не може надіслати старішу версію.';
+    return 'Після оновлення до версії $version вузол не чує нікого іншого: нова прошивка могла вивести з ладу радіо. Щоб повернутися, двічі натисніть на вузлі кнопку скидання й скопіюйте на нього через USB файл $file з того випуску; телефон не може надіслати старішу версію.';
   }
 
   @override
@@ -2951,7 +2951,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String releaseAppUpToDate(int version) {
-    return 'Застосунок актуальний ($version)';
+    return 'Застосунок останньої версії ($version)';
   }
 
   @override
@@ -2975,7 +2975,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String releaseFirmwareUpToDate(int version) {
-    return 'прошивка вузла $version актуальна';
+    return 'прошивка вузла $version остання';
   }
 
   @override
