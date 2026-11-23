@@ -2931,6 +2931,7 @@ those of the bring-up order, `roadmap.md` Phase 2.
 | O18 | The lowest mean C/N0 of a fix that is taken, 22 dB-Hz by reasoning and by fixes indoors ([position](#position), `docs/gps-bench-2026-11-20.md`); what the L76K reads under an open sky, and what a spoofer's satellites show, are not yet measured | a node under an open sky, roadmap D74, D234 |
 | O19 | A sleepy node carried farther than half a short position's period, 19.5 km north-south and less east-west, while it hears no relay: it rebuilds its next anchor's position a period off, and the neighbour check drops the fix that would correct it ([beats](#beats), [position](#position)) | later, roadmap D91 |
 | O24 | The cell's curve in the cold: a discharge bench run at 0 °C or below, and one at a relay's current, against the curve at room temperature ([sleepy nodes](#sleepy-nodes)); one cell, one run so far | bench, roadmap D210 |
+| O25 | A fetch's reply lost on its way stays marked sent at the home, so a person with no phone at the home never gets that item ([mailbox](#mailbox), The answer). A fetch that says which items its phone has would let the home clear a mark only for an item that arrived | later |
 
 ## Sources
 
