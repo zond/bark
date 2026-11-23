@@ -3779,6 +3779,12 @@ impl Sim {
             ScriptAction::Restart => self.restart(node),
             ScriptAction::Wipe => self.wipe(node),
             ScriptAction::Start => self.start(node, BootKind::Start),
+            ScriptAction::Plug => self.set_power(node, true),
+            ScriptAction::Unplug => self.set_power(node, false),
+            ScriptAction::Hold if self.nodes[node as usize].alive => {
+                self.deliver(node, Event::App(AppCommand::ForceRole));
+            }
+            ScriptAction::Hold => {}
             ScriptAction::Sniff => self.apply(node, Action::Sniff(self.end), true),
             ScriptAction::Listen => self.listen(node, channel.expect("validated")),
             ScriptAction::Lbt => self.apply(node, Action::Lbt(channel.expect("validated")), true),
