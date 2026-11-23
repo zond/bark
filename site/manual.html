@@ -125,7 +125,9 @@ opens the drive for new software instead.</li>
 the QR code and the node's state, which stays for 30 seconds.</li>
 <li><strong>The lower button, held 3 seconds,</strong> switches the node between relay
 and sleepy, whatever its power. It stays so until you plug the cable
-in or pull it out.</li>
+in or pull it out. A sleepy node woken this way asks around at once,
+and within about 15 seconds the <code>KNOWN</code> line counts the relays
+that answered; sleepy nodes show later.</li>
 </ul>
 <p><strong>The QR code</strong> leads to the project's page, where anyone can get the
 app. Under it is the node's ID. While a phone pairs, the pairing code
