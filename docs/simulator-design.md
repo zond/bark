@@ -279,7 +279,8 @@ A kept message given back goes to the front of what the node kept for
 busy and no neighbour, and for no way ends as its text or reply does. The
 summary counts every give-back by why, and the returns to a sleepy parent
 (spec "Return to parent"): taken in its window, dropped for want of a place
-in the delivery queue, and dropped with the node no longer heard.
+in the delivery queue, dropped with the node no longer heard, and
+dropped when the flush of a relay turning sleepy did not deliver them.
 
 **Accounting.** Every message the traffic model sends ends up in one of
 these:

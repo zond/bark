@@ -3704,6 +3704,17 @@ fn what_a_node_held_waits_for_room_when_it_turns_sleepy() {
 /// (spec "Return to parent"). `full`: R's delivery queue is full of fresh
 /// messages for another node. Returns what R sent and did.
 fn returning_to_sleepy(heard: bool, full: bool) -> (Relay, MsgId, NodeId, Vec<(Instant, Action)>) {
+    returning_to(heard, full, true, false)
+}
+
+/// [`returning_to_sleepy`], the message S's own or, `!own`, one S
+/// forwarded; `anchorless`, R is a sleepy node without an anchor.
+fn returning_to(
+    heard: bool,
+    full: bool,
+    own: bool,
+    anchorless: bool,
+) -> (Relay, MsgId, NodeId, Vec<(Instant, Action)>) {
     use crate::ids::MsgId;
     use crate::tables::delivery::{Queued, DELIVERY_QUEUE};
     use crate::tables::records::Record;
@@ -3723,6 +3734,10 @@ fn returning_to_sleepy(heard: bool, full: bool) -> (Relay, MsgId, NodeId, Vec<(I
     drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
     let me = r.config.position;
     let s = name(50);
+    if anchorless {
+        r.mode = Mode::Sleepy(Sleep::new(false));
+        assert!(r.anchorless());
+    }
     if heard {
         let beat = Heartbeat {
             sleepy: true,
@@ -3759,8 +3774,10 @@ fn returning_to_sleepy(heard: bool, full: bool) -> (Relay, MsgId, NodeId, Vec<(I
     };
     let id = data.msg_id();
     let at = r.record_place().unwrap();
-    r.records
-        .put(at, Record::new(id, Some((s, r.home)), (0, 0), now));
+    r.records.put(
+        at,
+        Record::new(id, Some((s, r.home)), (u32::from(!own), 0), now),
+    );
     r.queue
         .push(Outgoing::of(
             &data,
@@ -3835,6 +3852,99 @@ fn a_return_to_a_sleepy_parent_is_dropped_with_no_place_or_unheard() {
             a,
             Action::Transmit(_) | Action::App(crate::AppEvent::GivenBack { .. })
         ) && !matches!(a, Action::Transmit(f) if !matches!(Packet::decode(f.payload()), Ok(Packet::Data(_))))));
+    }
+}
+
+/// The DATA frames `seen` holds: receiver, destination and preamble.
+fn data_frames(seen: &[(Instant, Action)]) -> Vec<(NodeId, NodeId, u16)> {
+    seen.iter()
+        .filter_map(|(_, a)| match a {
+            Action::Transmit(f) => match Packet::decode(f.payload()) {
+                Ok(Packet::Data(d)) => Some((d.dst_hop, d.dst_id, f.preamble_symbols)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+/// A return to a parent R does not hold for goes as any return: to a
+/// sleepy node with an anchor that forwarded the message as a last resort
+/// and that R does not hear beat, and, from an anchorless R, with the long
+/// preamble to a parent its table lacks (spec "Return to parent").
+#[test]
+fn a_return_to_a_parent_not_held_for_goes_as_any_return() {
+    for (anchorless, preamble) in [(false, MIN_PREAMBLE_SYMBOLS), (true, LONG_PREAMBLE_SYMBOLS)] {
+        let (r, id, s, seen) = returning_to(false, false, false, anchorless);
+        let data = data_frames(&seen);
+        assert!(!data.is_empty(), "returned");
+        assert!(data.iter().all(|&d| d == (s, NOBODY, preamble)), "{data:?}");
+        assert!(!r.delivery.iter().any(|q| q.msg_id == id));
+    }
+    // Heard beat, a last resort that forwarded it is held for.
+    let (r, id, _, _) = returning_to(true, false, false, false);
+    assert!(r.delivery.iter().any(|q| q.msg_id == id && q.returns()));
+}
+
+/// A relay that turns sleepy sends the returns it holds in its flush, as
+/// any message it holds: one attempt with the long preamble. One taken has
+/// returned; one the flush did not deliver is dropped when the node turns
+/// sleepy, not handed on (spec "Return to parent", "Sleepy nodes").
+#[test]
+fn a_relay_that_turns_sleepy_flushes_the_returns_it_holds() {
+    use crate::event::DropReason;
+    for taken in [true, false] {
+        // Its window's attempts went unanswered: it waits for a beat.
+        let (mut r, id, s, _) = returning_to_sleepy(true, false);
+        assert!(r.delivery.iter().any(|q| q.msg_id == id && q.returns()));
+        let mut now = Instant::ZERO + Duration::from_secs(30);
+        r.mode = Mode::Relay(Power::Leaving(now));
+        r.forwarding.feed_due = true;
+        let mut seen = Vec::new();
+        let mut pending = Vec::new();
+        r.handle(Event::Wakeup, now, &mut |a| match a {
+            Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
+            a => seen.push((now, a)),
+        });
+        let at = now;
+        drive_all(&mut r, &mut now, at, pending, &mut |t, a| seen.push((t, a)));
+        let data = data_frames(&seen);
+        assert_eq!(
+            data,
+            [(s, NOBODY, LONG_PREAMBLE_SYMBOLS)],
+            "one attempt, long"
+        );
+        if taken {
+            for a in answered(&mut r, &mut now, id, s, false) {
+                seen.push((now, a));
+            }
+        } else {
+            let later = now + Duration::from_secs(5);
+            drive_all(&mut r, &mut now, later, Vec::new(), &mut |t, a| {
+                seen.push((t, a))
+            });
+            assert_eq!(data_frames(&seen).len(), 1, "no second attempt");
+        }
+        r.mode = Mode::Sleepy(Sleep::new(false));
+        r.hand_on(now, &mut |a| seen.push((now, a)));
+        let traces: Vec<Trace> = seen
+            .iter()
+            .filter_map(|(_, a)| match a {
+                Action::Trace(t) => Some(*t),
+                _ => None,
+            })
+            .collect();
+        let returned = traces.iter().any(
+            |t| matches!(t, Trace::ReturnedToParent { msg_id, sleepy: true, .. } if *msg_id == id),
+        );
+        let dropped = traces.contains(&Trace::Dropped {
+            msg_id: id,
+            reason: DropReason::ReturnNotFlushed,
+        });
+        assert_eq!((returned, dropped), (taken, !taken));
+        assert!(r.delivery.is_empty());
+        assert!(!r.queue.iter().any(|o| o.msg_id() == id));
+        assert!(!traces.contains(&Trace::HandedOn { msg_id: id }));
     }
 }
 

@@ -1411,7 +1411,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// A node that turned sleepy holds mail for nobody: its delivery queue
-    /// goes into its send queue as forwards from here (spec "Sleepy nodes").
+    /// goes into its send queue as forwards from here, but for the returns
+    /// it held for sleepy parents that the flush did not deliver, which it
+    /// drops (spec "Sleepy nodes", "Return to parent").
     /// Each starts a search here, with no parent and no application to go
     /// back to, so that a copy that comes back is searched on and not taken
     /// for delivered.
@@ -1421,6 +1423,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 return;
             };
             let (id, hops) = (q.msg_id, q.hops);
+            if q.returns() {
+                // The flush gave it its one chance; its parent's window is
+                // no longer this node's to serve (spec "Return to parent").
+                self.delivery.remove(id);
+                self.drop_msg(id, DropReason::ReturnNotFlushed, emit);
+                continue;
+            }
             if hops == MAX_HOPS {
                 self.delivery.remove(id);
                 self.drop_msg(id, DropReason::HopCap, emit);
@@ -1580,13 +1589,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     // --- The relay's own application (spec "Routing") ---
 
     /// Whether the application may send now: it holds no message of the
-    /// application's, it has a live neighbour, its send queue takes a full
-    /// frame, and the way on is not banned (spec "Receiving DATA").
+    /// application's, it has a live neighbour, in its first rotation a
+    /// relay, its send queue takes a full frame, and the way on is not
+    /// banned (spec "Receiving DATA", "Channel at boot").
     pub(super) fn accepts_send(&self, now: Instant) -> bool {
         self.own.id.is_none()
             && !self.draining()
             && now >= self.own.retry_at
             && self.neighbours.live(now).next().is_some()
+            && (!self.booting() || self.relays_known(now) > 0)
             && self
                 .no_room(
                     self.data_airtime(MAX_PAYLOAD, MAX_HOPS),
@@ -1598,8 +1609,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// When the application may send again, if only the bucket and bans
-    /// keep it waiting; anything else ends with an event, a neighbour heard
-    /// among them.
+    /// keep it waiting; anything else ends with an event, a neighbour or a
+    /// relay heard, or the first rotation's end, which is a wakeup of its
+    /// own.
     pub(super) fn send_ready_at(&self, now: Instant) -> Option<Instant> {
         if self.own.id.is_some() || self.draining() || self.regular() >= SEND_QUEUE {
             return None;
@@ -1954,7 +1966,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 ..out
             }),
             Way::WaitsUntil(t) => Routed::Wait(t),
-            Way::Parent((parent, _)) if self.sleepy_parent(&record, parent) => {
+            Way::Parent((parent, _)) if self.held_return(&record, parent) => {
                 self.return_held(&out, &record, parent, now, emit);
                 Routed::Done
             }
@@ -1993,22 +2005,36 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         (self.sleepy() && mail && alone).then(|| now + self.config.fade_retry)
     }
 
-    /// Whether the return of the message of `record` to `parent` goes to a
-    /// sleepy node: one that handed it over as its own, or that the
-    /// neighbour table, else the heard table, has as a sleepy node with an
-    /// anchor (spec "Return to parent").
-    fn sleepy_parent(&self, record: &Record, parent: NodeId) -> bool {
-        record.from_sleepy()
-            || self
-                .neighbours
+    /// Whether the return of the message of `record` to `parent` goes
+    /// through the delivery queue: this node holds for `parent`, or
+    /// `parent` handed it over as a sleepy node's own and is not known now
+    /// as anything but one with an anchor, so that, not heard, its return
+    /// is dropped
+    /// (spec "Return to parent").
+    fn held_return(&self, record: &Record, parent: NodeId) -> bool {
+        let sleepy = || {
+            self.neighbours
                 .get(parent)
-                .map_or_else(|| self.heard.get(parent).is_some(), Neighbour::last_resort)
+                .is_none_or(Neighbour::last_resort)
+        };
+        self.holds_for(parent) || (record.from_sleepy() && sleepy())
+    }
+
+    /// Whether this node is the holder of `id`, a sleepy node with an
+    /// anchor that it hears beat: a return to it goes in its window
+    /// (spec "Return to parent"). Not if the neighbour table has it now as
+    /// a node of another kind.
+    fn holds_for(&self, id: NodeId) -> bool {
+        !self.sleepy()
+            && self.heard.get(id).is_some()
+            && self.neighbours.get(id).is_none_or(Neighbour::last_resort)
     }
 
     /// The return of `out` to the sleepy node `parent` waits in the
     /// delivery queue as a message for that node does, to go in its window;
     /// with no place there, or the node no longer heard, it is dropped
-    /// (spec "Return to parent").
+    /// (spec "Return to parent"). A parent that handed the message over as
+    /// its own has an anchor, so one not heard is no longer heard.
     fn return_held(
         &mut self,
         out: &Outgoing,
@@ -2018,7 +2044,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         emit: &mut dyn FnMut(Action),
     ) {
         let (id, m) = (out.msg_id(), &out.message);
-        if self.sleepy() || self.heard.get(parent).is_none() {
+        if !self.holds_for(parent) {
             return self.drop_msg(id, DropReason::ReturnUnheard, emit);
         }
         let Some(mut q) = Queued::new(id, m.dst_pos(), m.dst_id(), m.payload(), now) else {
@@ -2075,10 +2101,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// The preamble of a DATA to `id`.
+    /// One not in the table, from an anchorless node, gets the long one:
+    /// its neighbours receive duty-cycled (spec "Return to parent").
     fn preamble_to(&self, id: NodeId) -> u16 {
         self.neighbours
             .get(id)
-            .map_or(MIN_PREAMBLE_SYMBOLS, preamble)
+            .map_or(self.forward_preamble(), preamble)
     }
 
     /// The airtime of a DATA with `payload` bytes as this node forwards it

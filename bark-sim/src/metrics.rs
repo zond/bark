@@ -661,6 +661,10 @@ drop_counts! {
     /// (spec "Return to parent"); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
     return_unheard: ReturnUnheard,
+    /// A return the flush of a relay turning sleepy did not deliver
+    /// (spec "Return to parent"); left out where none was.
+    #[serde(skip_serializing_if = "is_zero")]
+    return_not_flushed: ReturnNotFlushed,
     /// The delivery TTL ran out (spec "Delivery queue").
     queue_expired: QueueExpired,
     /// The delivery queue was full (spec "Delivery queue").

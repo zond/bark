@@ -148,12 +148,13 @@ out inside its payload. A message the node drops is reported only as `Trace::Dro
 (§3 rule 9).
 
 A node holds one message of its application's at a time, until its first hop takes it.
-It accepts a message while it has a live neighbour, holds none and does not drain (below),
+It accepts a message while it has a live neighbour, in its first rotation a relay among
+them (spec "Channel at boot"), holds none and does not drain (below),
 its send queue takes a full frame on top of what it holds (spec "Send queue"), and not
 every neighbour is banned, or for a sleepy node with a live anchor, the anchor (spec
 "Receiving DATA"). When only its bucket and bans keep it from accepting, its
-`next_wakeup()` includes the moment both allow it; a neighbour heard is an event, after
-which the driver asks again. A message the node holds waits for bans as spec "Bans" says;
+`next_wakeup()` includes the moment both allow it; a neighbour or a relay heard is an
+event, and the first rotation's end a wakeup, after which the driver asks again. A message the node holds waits for bans as spec "Bans" says;
 one for a sleepy node it holds for that finds the delivery queue full waits for a place
 (spec "Receiving DATA").
 
@@ -169,7 +170,10 @@ codes are those of the phone link's Given back (spec "Sending"):
 | `NoWay` | its search came back to the node with no candidate left (spec "Return to parent"), a sleepy node's in its window from its anchor | now |
 
 The driver hands the event to the sender the tag names, which may offer the message again
-or give it up. One whose hand-over goes unanswered waits in the node as
+or give it up. A message given back for no way goes again only as a new message with
+another ID: the core forgets the origin's record, but the relays that searched for it keep
+theirs, and the first hop takes the same message again for one it has had (spec "Sending",
+Given back). One whose hand-over goes unanswered waits in the node as
 spec "A sleepy node's own message" says.
 
 A `Send` while `accepts_send` is false, or with a longer payload, breaks the contract like

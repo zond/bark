@@ -51,9 +51,10 @@ pub struct AppSummary {
     /// Messages given back to their applications, by why (events).
     pub given_back: WhyCounts,
     /// Returns to a sleepy parent: taken from the delivery queue, dropped
-    /// for want of a place there, and dropped with the node no longer
-    /// heard (spec "Return to parent").
-    pub returns_to_sleepy: [u64; 3],
+    /// for want of a place there, dropped with the node no longer heard,
+    /// and dropped when the flush of a holder turning sleepy did not
+    /// deliver them (spec "Return to parent").
+    pub returns_to_sleepy: [u64; 4],
     /// Mailbox replies given back as no way, and dropped.
     pub replies_no_way: u64,
     /// Of those, the ones dropped by a node other than their origin: lost
@@ -488,6 +489,7 @@ impl Sim {
                     m.app.returns_to_sleepy,
                     m.app.drops.return_no_place,
                     m.app.drops.return_unheard,
+                    m.app.drops.return_not_flushed,
                 ],
                 replies_no_way: m.app.replies_no_way,
                 lost_in_network,
@@ -879,12 +881,13 @@ impl Summary {
                 g.busy, g.no_neighbour, g.no_way, a.lost_given_back.busy, a.lost_given_back.no_way
             );
         }
-        let [taken, no_place, unheard] = a.returns_to_sleepy;
-        if taken + no_place + unheard > 0 {
+        let [taken, no_place, unheard, not_flushed] = a.returns_to_sleepy;
+        if taken + no_place + unheard + not_flushed > 0 {
             let _ = writeln!(
                 s,
                 "returns to a sleepy parent: {taken} taken in its window, dropped {no_place} \
-                 for want of a place, {unheard} with the node no longer heard"
+                 for want of a place, {unheard} with the node no longer heard, {not_flushed} \
+                 not delivered in the flush of a holder turning sleepy"
             );
         }
         if a.replies_no_way > 0 {

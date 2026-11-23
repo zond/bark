@@ -206,7 +206,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .delivery
             .iter()
             .find(|q| {
-                let flush = far && !q.flushed && !q.returns();
+                // A return goes in a turn to sleepy's flush alone (spec
+                // "Return to parent").
+                let flush = far && !q.flushed && (!q.returns() || self.leaving());
                 (q.relay_home.is_some() || flush) && !q.waits() && !queued(q)
             })
             .copied()

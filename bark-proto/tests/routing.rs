@@ -1214,6 +1214,40 @@ fn search_without_owner_ends_at_the_origin() {
     }
 }
 
+/// Why a message given back for no way is offered again only as a new
+/// one, with another ID (spec "Sending", Given back): O's only neighbour P
+/// keeps its record of the first search, and the same message offered
+/// again comes to P as the packet it last had from O, a retransmission
+/// (spec "Receiving DATA" case 3). P acknowledges it and holds nothing, so
+/// nothing is searched and nothing comes back. A new message is searched,
+/// and comes back.
+#[test]
+fn a_message_given_back_for_no_way_is_searched_again_only_as_a_new_one() {
+    let (o, p) = (0, 1);
+    let mut h = build(
+        vec![
+            relay(0.0, 0.0, 181),
+            relay(400.0, 0.0, 182),
+            relay(5000.0, 0.0, 183),
+        ],
+        &[(o, p)],
+    );
+    let first = send(&mut h, o, 2, b"nowhere");
+    let back = |id| move |h: &Harness<Relay>| !given_back(h, o, id).is_empty();
+    assert!(h.run_until(h.now + secs(10), back(first)));
+    assert!(core(&h, p).knows(first), "P keeps its record");
+    assert!(h.run_until(h.now + secs(10), |h| h.accepts(o)));
+    let again = send(&mut h, o, 2, b"nowhere");
+    assert_eq!(again, first);
+    h.run_for(secs(10));
+    assert_eq!(given_back(&h, o, first).len(), 1, "not searched again");
+    assert!(core(&h, p).holding().next().is_none());
+    assert!(core(&h, o).holding().next().is_none());
+    let new = send(&mut h, o, 2, b"nowhere, sealed anew");
+    assert!(h.run_until(h.now + secs(10), back(new)));
+    assert_eq!(given_back(&h, o, new), [(Why::NoWay, 0)]);
+}
+
 /// D's first ACK is lost; A retransmits with the same count
 /// (spec "Hop count"). D takes it for a copy (spec "Receiving DATA" case
 /// 3), ACKs it and does not deliver it again.

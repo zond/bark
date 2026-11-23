@@ -390,7 +390,7 @@ fn a_sleepy_node_whose_anchor_has_no_way_gets_its_text_back() {
     assert_eq!(s.app.lost_dropped.total(), 0, "{}", s.table());
     assert!(s.app.given_back.no_way >= ended.len() as u64);
     assert!(s.app.returns_to_sleepy[0] >= ended.len() as u64);
-    assert_eq!(s.app.returns_to_sleepy[1..], [0, 0]);
+    assert_eq!(s.app.returns_to_sleepy[1..], [0, 0, 0]);
     accounted(&sim, "no way");
 }
 

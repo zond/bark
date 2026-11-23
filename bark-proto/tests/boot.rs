@@ -138,11 +138,13 @@ fn a_relay_bursts_and_is_answered() {
     assert_eq!(relays[..2], [0, 1]);
 }
 
-/// A relay's application may send only while it has a live neighbour
-/// (spec "Receiving DATA"): booting alone it takes no text; once it hears
-/// a relay it does, and the text is delivered within the burst.
+/// A relay's application may send only while it has a live neighbour,
+/// in its first rotation a relay
+/// (spec "Receiving DATA", "Channel at boot"): booting alone it takes no
+/// text; once it hears a relay it does, and the text is delivered within
+/// the burst.
 #[test]
-fn a_booting_relay_takes_a_text_once_it_hears_a_neighbour() {
+fn a_booting_relay_takes_a_text_once_it_hears_a_relay() {
     let (a, b) = (0, 1);
     let mut h = Harness::powered(vec![node(0.0, true, 3), node(300.0, true, 4)]);
     h.link(a, b);
@@ -161,6 +163,32 @@ fn a_booting_relay_takes_a_text_once_it_hears_a_neighbour() {
         .iter()
         .any(|(_, t)| matches!(t, Trace::Dropped { .. }));
     assert!(!dropped);
+}
+
+/// A sleepy node in its first rotation that hears only another sleepy
+/// node, one without an anchor, takes no message from its application:
+/// it knows no relay (spec "Channel at boot"). At the rotation's end it is
+/// anchorless and takes one, its neighbour live.
+#[test]
+fn a_booting_node_that_knows_no_relay_takes_no_text() {
+    let (a, b) = (0, 1);
+    let mut h = Harness::powered(vec![node(0.0, false, 5), node(50.0, false, 6)]);
+    h.link(a, b);
+    let planted = at(900);
+    h.start_at(b, planted);
+    h.run_until(planted, |_| false);
+    assert!(h.nodes[a].core.anchorless());
+    let heard = |h: &Harness<Relay>| h.nodes[b].core.neighbours().next().is_some();
+    assert!(h.run_until(planted + secs(120), heard), "B never heard A");
+    assert!(h.nodes[b].core.booting());
+    assert!(!h.accepts(b), "it knows no relay");
+    let ready = |h: &Harness<Relay>| h.accepts(b);
+    assert!(h.run_until(planted + secs(900), ready));
+    assert!(
+        !h.nodes[b].core.booting(),
+        "ready only at the rotation's end"
+    );
+    assert!(h.nodes[b].core.anchorless());
 }
 
 /// A sleepy node that hears no relay in its first rotation, two worst-case

@@ -224,6 +224,9 @@ pub enum DropReason {
     /// A return's sleepy parent is no longer heard
     /// (spec "Return to parent").
     ReturnUnheard,
+    /// A return held for a sleepy parent that the flush of a relay turning
+    /// sleepy did not deliver (spec "Return to parent", "Sleepy nodes").
+    ReturnNotFlushed,
     /// The node it is for did not take it within the delivery TTL (spec
     /// "Delivery queue").
     QueueExpired,
