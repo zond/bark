@@ -315,8 +315,8 @@ move around, set a home.</p>
 <p><strong>A home must stay in one place, on power, and know its place.</strong> A node
 in your window on a charger is the usual choice.</p>
 <figure class="anim">
-<canvas id="a-home" role="img" aria-label="A message from a friend waits at a home node. A request from a phone far away travels to the home, and the message travels back to the phone. The reply goes straight to the friend's node, not through the home."></canvas>
-<figcaption>Messages wait at your home. When you fetch, the request travels to your home and the messages come back to the node you are on. Your reply goes straight to the node your friend wrote from.</figcaption>
+<canvas id="a-home" role="img" aria-label="A message from a friend waits at a home node. A request from a phone far away travels to the home, and the message travels back to the phone. The reply goes straight to the friend's node, not through the home, and the friend's answer comes straight back. Then the phone leaves, and the next message waits at the home again."></canvas>
+<figcaption>Messages wait at your home. When you fetch, the request travels to your home and the messages come back to the node you are on. Your reply goes straight to the node your friend wrote from, and for the next minute so do their messages to you. After that they wait at your home again.</figcaption>
 </figure>
 <ul>
 <li><strong>Set it:</strong> connect to the node, then <strong>Settings</strong>, <strong>Home node</strong>,
@@ -611,23 +611,30 @@ scene('a-route', 10, 2.6, (g, t) => {
   label(g, [D[0] - 4, D[1] - 20], 'the place'); label(g, [b[0], b[1] - 12], 'dead end');
 });
 
-// Mail waits at the home; a fetch goes there and the mail comes back to
-// where the person is; the reply goes straight to the node the friend
-// wrote from, not by way of the home.
-scene('a-home', 17, 13.2, (g, t) => {
+// Mail waits at the home while its owner is away. They connect to a node
+// and fetch, and the mail comes to where they are; their reply goes
+// straight to the node the friend wrote from, and the friend's answer
+// straight back. Then they leave, and the next message waits at the
+// home again.
+scene('a-home', 21, 13.2, (g, t) => {
   const H = [60, 75], F = [105, 160], r1 = [150, 50], r2 = [240, 80], r3 = [330, 95], r4 = [225, 150], Y = [372, 45];
-  links(g, [[H, r1], [r1, r2], [r2, r3], [F, H], [F, r4], [r4, r3]]); links(g, [[r3, Y]], true);
+  const COMES = 2.5, GOES = 19.6, FADE = .6;
+  const here = Math.min(1, Math.max(0, (t - COMES) / FADE), Math.max(0, (GOES + FADE - t) / FADE));
+  links(g, [[H, r1], [r1, r2], [r2, r3], [F, H], [F, r4], [r4, r3]]);
+  g.globalAlpha = here; links(g, [[r3, Y]], true); g.globalAlpha = 1;
   const kept = travel(g, t, 1, [F, H]);
   const asked = travel(g, t, 3.5, [Y, r3, r2, r1, H], true);
   const got = travel(g, t, asked + .3, [H, r1, r2, r3, Y]);
-  const answered = travel(g, t, got + 1, [Y, r3, r4, F]);
+  const replied = travel(g, t, got + 1, [Y, r3, r4, F]);
+  const answered = travel(g, t, replied + 1, [F, r4, r3, Y]);
   held(g, H, (t >= kept) - (t >= asked + .3));
-  [H, r1, r2, r3, r4].forEach(p => relay(g, p)); relay(g, F, t >= answered && t < answered + 1.5);
+  [H, r1, r2, r3, r4].forEach(p => relay(g, p)); relay(g, F, t >= replied && t < replied + 1);
   g.strokeStyle = GREY; g.lineWidth = 1.5;
   g.beginPath(); g.moveTo(H[0] - 11, H[1] - 7); g.lineTo(H[0], H[1] - 17); g.lineTo(H[0] + 11, H[1] - 7); g.stroke();
-  phone(g, Y, t >= got && t < got + 1 ? RED : GREY);
-  label(g, [H[0], H[1] - 24], 'your home'); label(g, [Y[0] - 22, Y[1] + 4], 'you');
-  label(g, [F[0], F[1] + 22], 'a friend');
+  g.globalAlpha = here;
+  phone(g, Y, (t >= got && t < got + 1) || (t >= answered && t < answered + 1) ? RED : GREY);
+  label(g, [Y[0] - 22, Y[1] + 4], 'you'); g.globalAlpha = 1;
+  label(g, [H[0], H[1] - 24], 'your home'); label(g, [F[0], F[1] + 22], 'a friend');
 });
 
 // A new version from a phone to one node and on from node to node, in
