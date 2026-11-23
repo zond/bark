@@ -17,6 +17,7 @@ import 'package:sodium/sodium_sumo.dart';
 
 import 'app_layer.dart';
 import 'contacts.dart';
+import 'l10n.dart';
 import 'link.dart';
 import 'session.dart';
 
@@ -74,23 +75,25 @@ Future<Uint8List> argon2id(String password, Uint8List salt) =>
       }
     });
 
-/// Why a file was not read; nothing changed.
-sealed class FileRefused implements Exception {
+/// Why a file was not read, a sentence; nothing changed.
+sealed class FileRefused implements Exception, Spoken {
   const FileRefused();
+  @override
+  String toString() => words(english);
 }
 
 /// The file does not start as an identity file does.
 class NotAnIdentityFile extends FileRefused {
   const NotAnIdentityFile();
   @override
-  String toString() => 'This is not a bark identity file.';
+  String words(AppLocalizations w) => w.identityNotFile;
 }
 
 /// The file is of a layout this app does not read.
 class OtherLayout extends FileRefused {
   const OtherLayout();
   @override
-  String toString() => 'This file is from another version of the app.';
+  String words(AppLocalizations w) => w.identityOtherLayout;
 }
 
 /// The file does not open under the password: the cipher cannot tell a
@@ -98,7 +101,7 @@ class OtherLayout extends FileRefused {
 class WrongPassword extends FileRefused {
   const WrongPassword();
   @override
-  String toString() => 'Wrong password, or the file is damaged.';
+  String words(AppLocalizations w) => w.identityWrongPassword;
 }
 
 /// The person's home: its address and the mailbox key it holds, made of

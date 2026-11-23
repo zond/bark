@@ -7,6 +7,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../app.dart';
+import '../l10n.dart';
 import '../link.dart';
 import '../releases.dart';
 import '../updater.dart';
@@ -40,27 +41,27 @@ class _UpdateScreenState extends State<UpdateScreen> {
     // Not over an update under way, nor again for an image chosen.
     final idle = u.phase == Phase.idle || u.phase == Phase.failed;
     if (r != null && idle && u.image?.version != r.firmware) {
-      _get(() => downloadImage(r, app.releases.download));
+      _get(() => downloadImage(r, app.session.note, app.releases.download));
     } else if (widget.pick && idle) {
       _get(_pick);
     }
   }
 
-  Future<void> _get(Future<(FirmwareImage, String)> Function() f) async {
+  Future<void> _get(Future<(FirmwareImage, String?)> Function() f) async {
     setState(() => _getting = true);
     try {
       final (image, from) = await f();
       u.choose(image, from);
     } catch (e) {
-      if (mounted) say(context, 'No firmware: $e');
+      if (mounted) say(context, tr.updateNoFirmware(said(e)));
     } finally {
       if (mounted) setState(() => _getting = false);
     }
   }
 
-  Future<(FirmwareImage, String)> _pick() async {
+  Future<(FirmwareImage, String?)> _pick() async {
     final f = await openFile();
-    if (f == null) throw StateError('no file chosen');
+    if (f == null) throw const _NoFile();
     return (parseImage(await f.readAsBytes()), pickedName(f.name));
   }
 
@@ -74,7 +75,7 @@ class _UpdateScreenState extends State<UpdateScreen> {
     final updated = u.updated;
     final busy = u.underWay;
     return Scaffold(
-      appBar: AppBar(title: const Text('Update firmware')),
+      appBar: AppBar(title: Text(tr.updateTitle)),
       body: SafeArea(
         top: false,
         child: ListView(
@@ -84,9 +85,15 @@ class _UpdateScreenState extends State<UpdateScreen> {
               when: node != null && updated != null,
               (context) => Text(
                 node == null
-                    ? 'Not connected to a node.'
-                    : '${nodeLabel(node.id)} runs version ${node.image}'
-                          '${updated == null ? '' : _from(updated)}.',
+                    ? tr.updateNotConnected
+                    : updated == null
+                    ? tr.updateRuns(nodeLabel(node.id), node.image)
+                    : tr.updateRunsSince(
+                        nodeLabel(node.id),
+                        node.image,
+                        updated.from,
+                        ago(app.now().difference(updated.at)),
+                      ),
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
@@ -98,15 +105,19 @@ class _UpdateScreenState extends State<UpdateScreen> {
                   onPressed: _getting || busy || latest == null
                       ? null
                       : () => _get(
-                          () => downloadImage(latest, app.releases.download),
+                          () => downloadImage(
+                            latest,
+                            app.session.note,
+                            app.releases.download,
+                          ),
                         ),
-                  child: const Text('Latest release'),
+                  child: Text(tr.updateLatest),
                 ),
                 // Only for the bench, which comes here from Debug.
                 if (widget.pick)
                   OutlinedButton(
                     onPressed: _getting || busy ? null : () => _get(_pick),
-                    child: const Text('Pick a file'),
+                    child: Text(tr.updatePickFile),
                   ),
                 if (_getting)
                   const Padding(
@@ -123,7 +134,7 @@ class _UpdateScreenState extends State<UpdateScreen> {
                 color: Theme.of(context).colorScheme.errorContainer,
                 child: ListTile(
                   leading: const Icon(Icons.portable_wifi_off),
-                  title: const Text('The node hears no one'),
+                  title: Text(tr.updateHearsNoOne),
                   subtitle: Text(u.hearsNoOneWarning(updated)),
                 ),
               ),
@@ -139,29 +150,25 @@ class _UpdateScreenState extends State<UpdateScreen> {
     );
   });
 
-  String _from(Updated u) =>
-      ', updated from version ${u.from} ${ago(app.now().difference(u.at))}';
-
   List<Widget> _image(FirmwareImage image) {
     final newer = u.newer;
+    final source = u.from ?? tr.updatePickedFile;
     final fraction = image.length == 0 ? 0.0 : u.held / image.length;
     return [
       const SizedBox(height: 16),
       ListTile(
         contentPadding: EdgeInsets.zero,
-        title: Text('Version ${image.version}'),
+        title: Text(tr.version(image.version)),
         subtitle: Text(
-          '${u.from}, ${(image.length / 1024).toStringAsFixed(0)} KiB'
-          '${newer ? '' : ': not newer than the node\'s'}',
+          newer
+              ? tr.updateImage(source, _kib(image.length))
+              : tr.updateImageNotNewer(source, _kib(image.length)),
         ),
       ),
       if (u.phase != Phase.idle) ...[
         LinearProgressIndicator(value: fraction),
         const SizedBox(height: 4),
-        Text(
-          '${(u.held / 1024).toStringAsFixed(0)} of '
-          '${(image.length / 1024).toStringAsFixed(0)} KiB on the node',
-        ),
+        Text(tr.updateOnNode(_kib(u.held), _kib(image.length))),
       ],
       if (u.message != null)
         Padding(
@@ -173,6 +180,9 @@ class _UpdateScreenState extends State<UpdateScreen> {
     ];
   }
 
+  /// `bytes` in whole kibibytes, as the screen shows a size.
+  static int _kib(int bytes) => (bytes / 1024).round();
+
   List<Widget> _actions(bool newer) {
     final connected = app.session.connected;
     // What goes on with an image goes on with the node that holds it.
@@ -181,32 +191,28 @@ class _UpdateScreenState extends State<UpdateScreen> {
       Phase.idle || Phase.failed => [
         FilledButton(
           onPressed: connected && newer ? u.send : null,
-          child: const Text('Send to the node'),
+          child: Text(tr.sendToNode),
         ),
       ],
       Phase.sending || Phase.committing => [
-        Text(
-          u.phase == Phase.sending
-              ? 'Sending…'
-              : 'The node checks the firmware…',
-        ),
+        Text(u.phase == Phase.sending ? tr.updateSending : tr.updateChecking),
       ],
       Phase.paused => [
         OutlinedButton(
           onPressed: at ? u.send : null,
-          child: const Text('Go on'),
+          child: Text(tr.updateGoOn),
         ),
       ],
       Phase.staged => [
         FilledButton(
           onPressed: at ? u.commit : null,
-          child: const Text('Try again'),
+          child: Text(tr.updateTryAgain),
         ),
       ],
       Phase.committed => [
         FilledButton(
           onPressed: at ? u.reboot : null,
-          child: Text('Reboot into version ${u.image!.version}'),
+          child: Text(tr.updateReboot(u.image!.version)),
         ),
       ],
       Phase.rebooting => [
@@ -219,4 +225,13 @@ class _UpdateScreenState extends State<UpdateScreen> {
       Phase.done => [],
     };
   }
+}
+
+/// The person closed the file picker without a file.
+class _NoFile implements Exception, Spoken {
+  const _NoFile();
+  @override
+  String words(AppLocalizations w) => w.updateNoFile;
+  @override
+  String toString() => words(english);
 }

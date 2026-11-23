@@ -427,7 +427,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context,
       tr.settingsRestoreTitle,
       tr.settingsRestoreHow,
-      tr.settingsRestoreButton,
+      tr.restore,
     );
     if (!go || !mounted) return;
     final w = await askText(context, tr.settingsYourWords, '', secret: true);
@@ -438,7 +438,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
     await app.moving.restoreWords(seed);
-    if (mounted) say(context, tr.settingsRestored);
+    if (mounted) say(context, tr.restoredIdentity);
   }
 
   /// The node's place, from its GPS or set here.

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../app.dart';
 import '../identity_file.dart';
+import '../l10n.dart';
 import 'common.dart';
 import 'settings_parts.dart';
 
@@ -13,35 +14,23 @@ class IdentitySection extends StatelessWidget {
   final AppModel app;
   const IdentitySection(this.app, {super.key});
 
-  /// What the file is and what moving takes, for whoever asks.
-  static const help =
-      'The file holds your identity, name, home, contacts and the nodes you '
-      'paired with, and your messages if you tick the box. Your password '
-      'locks it: without it nobody can open the file, not even you.\n\n'
-      'On the new phone, tap Restore from a file, then pair with your nodes '
-      'again: a pairing stays on the phone it was made on. Your home keeps '
-      'your mail meanwhile, and you can fetch it from any other node.\n\n'
-      'Use one phone at a time: two phones with one identity would each '
-      'take mail the other never sees.\n\n'
-      'Your 12 words bring back your identity alone.';
-
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      const SettingsHeading('My identity', help: help),
-      const Text('Save it to a file to move to a new phone.'),
+      SettingsHeading(tr.myIdentity, help: tr.identityHelp),
+      Text(tr.identitySaveHow),
       const SizedBox(height: 8),
       Wrap(
         spacing: 8,
         children: [
           FilledButton(
             onPressed: () => _save(context),
-            child: const Text('Save to a file'),
+            child: Text(tr.identitySave),
           ),
           OutlinedButton(
             onPressed: () => _restore(context),
-            child: const Text('Restore from a file'),
+            child: Text(tr.identityRestore),
           ),
         ],
       ),
@@ -59,8 +48,8 @@ class IdentitySection extends StatelessWidget {
     final file = await showDialog<Uint8List>(
       context: context,
       builder: (_) => _PasswordDialog(
-        title: 'Save my identity',
-        action: 'Save',
+        title: tr.identitySaveTitle,
+        action: tr.save,
         twice: true,
         run: (password, messages) =>
             app.moving.identityFile(password, messages: messages),
@@ -69,25 +58,27 @@ class IdentitySection extends StatelessWidget {
     if (file == null || !context.mounted) return;
     try {
       final saved = await app.notifier.saveFile(_fileName(), file);
-      if (context.mounted) say(context, saved ? 'Saved' : 'Not saved');
+      if (context.mounted) {
+        say(context, saved ? tr.identitySaved : tr.identityNotSaved);
+      }
     } catch (e) {
-      if (context.mounted) say(context, 'Saving failed: $e');
+      if (context.mounted) say(context, tr.identitySaveFailed(said(e)));
     }
   }
 
   Future<void> _restore(BuildContext context) async {
     final go = await confirm(
       context,
-      'Restore from a file?',
-      'This replaces the identity, contacts and messages on this phone.',
-      'Choose file',
+      tr.identityRestoreTitle,
+      tr.identityRestoreHow,
+      tr.identityChooseFile,
     );
     if (!go || !context.mounted) return;
     final Uint8List? file;
     try {
       file = await app.notifier.openFile();
     } catch (e) {
-      if (context.mounted) say(context, 'Opening failed: $e');
+      if (context.mounted) say(context, tr.identityOpenFailed(said(e)));
       return;
     }
     if (file == null || !context.mounted) return;
@@ -95,8 +86,8 @@ class IdentitySection extends StatelessWidget {
     final done = await showDialog<bool>(
       context: context,
       builder: (_) => _PasswordDialog(
-        title: 'The file\'s password',
-        action: 'Restore',
+        title: tr.identityPasswordTitle,
+        action: tr.restore,
         twice: false,
         run: (password, _) async {
           await app.moving.restoreFile(f, password);
@@ -108,8 +99,8 @@ class IdentitySection extends StatelessWidget {
     say(
       context,
       app.session.nodes.lost.isEmpty
-          ? 'Identity restored'
-          : 'Identity restored. Pair again with your nodes.',
+          ? tr.restoredIdentity
+          : tr.identityRestoredPairAgain,
     );
   }
 }
@@ -160,9 +151,9 @@ class _PasswordDialogState<T> extends State<_PasswordDialog<T>> {
       final v = await widget.run(_password.text, _messages);
       if (mounted) Navigator.pop(context, v);
     } on FileRefused catch (e) {
-      if (mounted) setState(() => _refused = '$e Nothing changed.');
+      if (mounted) setState(() => _refused = tr.identityRefused(said(e)));
     } catch (e) {
-      if (mounted) setState(() => _refused = 'Failed: $e');
+      if (mounted) setState(() => _refused = tr.failed(said(e)));
     } finally {
       if (mounted) setState(() => _running = false);
     }
@@ -187,7 +178,7 @@ class _PasswordDialogState<T> extends State<_PasswordDialog<T>> {
             autocorrect: false,
             enableIMEPersonalizedLearning: false,
             enabled: !_running,
-            decoration: const InputDecoration(labelText: 'Password'),
+            decoration: InputDecoration(labelText: tr.identityPassword),
             onChanged: (_) => setState(() {}),
           ),
           if (widget.twice) ...[
@@ -200,9 +191,9 @@ class _PasswordDialogState<T> extends State<_PasswordDialog<T>> {
               enableIMEPersonalizedLearning: false,
               enabled: !_running,
               decoration: InputDecoration(
-                labelText: 'Password again',
+                labelText: tr.identityPasswordAgain,
                 errorText: _differ && _again.text.isNotEmpty
-                    ? 'Not the same'
+                    ? tr.identityNotSame
                     : null,
               ),
               onChanged: (_) => setState(() {}),
@@ -210,14 +201,14 @@ class _PasswordDialogState<T> extends State<_PasswordDialog<T>> {
             CheckboxListTile(
               contentPadding: EdgeInsets.zero,
               controlAffinity: ListTileControlAffinity.leading,
-              title: const Text('Add my messages'),
+              title: Text(tr.identityAddMessages),
               value: _messages,
               onChanged: _running
                   ? null
                   : (v) => setState(() => _messages = v ?? false),
             ),
             Text(
-              'Use it on one phone at a time.',
+              tr.identityOnePhone,
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
@@ -234,7 +225,7 @@ class _PasswordDialogState<T> extends State<_PasswordDialog<T>> {
       actions: [
         TextButton(
           onPressed: _running ? null : () => Navigator.pop(context),
-          child: const Text('Cancel'),
+          child: Text(tr.cancel),
         ),
         FilledButton(
           onPressed: _ready ? _go : null,

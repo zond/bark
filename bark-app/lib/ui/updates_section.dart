@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../app.dart';
 import '../app_update.dart';
+import '../l10n.dart';
 import '../releases.dart';
 import 'settings_parts.dart';
 import 'update_screen.dart';
@@ -61,28 +62,25 @@ class _UpdatesSectionState extends State<UpdatesSection> {
     final get = newerApp ? app.appUpdate.state(latest.app) : AppGet.idle;
     final percent = app.appUpdate.percent;
     final appLine = r.app == 0
-        ? 'A development build'
+        ? tr.updatesDevBuild
         : !newerApp
-        ? 'Version ${r.app}'
+        ? tr.version(r.app)
         : switch (get) {
-            AppGet.idle =>
-              'Version ${r.app}; ${latest.app} is out. Tap to install',
+            AppGet.idle => tr.updatesAppOut(r.app, latest.app),
             AppGet.downloading =>
-              'Version ${r.app}; downloading ${latest.app}…'
-                  '${percent == null ? '' : ' $percent%'}',
-            AppGet.ready =>
-              'Version ${r.app}; ${latest.app} is downloaded. Tap to install',
-            AppGet.failed =>
-              'Version ${r.app}; ${latest.app} did not download. '
-                  'Tap to try again',
+              percent == null
+                  ? tr.updatesAppDownloading(r.app, latest.app)
+                  : tr.updatesAppDownloadingPercent(r.app, latest.app, percent),
+            AppGet.ready => tr.updatesAppReady(r.app, latest.app),
+            AppGet.failed => tr.updatesAppFailed(r.app, latest.app),
           };
     return [
-      SettingsHeading('Updates'),
+      SettingsHeading(tr.updatesHeading),
       Row(
         children: [
           OutlinedButton(
             onPressed: r.checking || r.fetch == null ? null : _check,
-            child: const Text('Check for updates'),
+            child: Text(tr.updatesCheck),
           ),
           const SizedBox(width: 16),
           if (r.checking)
@@ -96,17 +94,15 @@ class _UpdatesSectionState extends State<UpdatesSection> {
         Padding(
           padding: const EdgeInsets.only(top: 8),
           child: Text(
-            reached
-                ? updatesLine(r, n, guest: s.guest)
-                : 'Could not reach the release list',
+            reached ? updatesLine(r, n, guest: s.guest) : tr.updatesUnreached,
           ),
         ),
       ListTile(
         contentPadding: EdgeInsets.zero,
-        title: const Text('App'),
+        title: Text(tr.updatesApp),
+        // A sentence of its own after the app's line.
         subtitle: Text(
-          appLine +
-              (s.nodeNewer ? '. Update it for the node\'s new features' : ''),
+          s.nodeNewer ? '$appLine. ${tr.updatesNodeNewer}' : appLine,
         ),
         onTap: newerApp && get != AppGet.downloading
             ? () => app.appUpdate.get(latest)
@@ -114,15 +110,15 @@ class _UpdatesSectionState extends State<UpdatesSection> {
       ),
       ListTile(
         contentPadding: EdgeInsets.zero,
-        title: const Text('Node firmware'),
+        title: Text(tr.updatesNodeFirmware),
         subtitle: Text(
           n == null
-              ? 'Not connected'
+              ? tr.updatesNotConnected
               : s.guest
-              ? 'Only its paired phones update it'
+              ? tr.updatesGuest
               : newerImage
-              ? 'Version ${n.image}; ${latest.firmware} is out'
-              : 'Version ${n.image}',
+              ? tr.updatesFirmwareOut(n.image, latest.firmware)
+              : tr.version(n.image),
         ),
         trailing: newerImage
             ? FilledButton(
@@ -131,7 +127,7 @@ class _UpdatesSectionState extends State<UpdatesSection> {
                     builder: (_) => UpdateScreen(app, release: latest),
                   ),
                 ),
-                child: const Text('Send to the node'),
+                child: Text(tr.sendToNode),
               )
             : null,
       ),

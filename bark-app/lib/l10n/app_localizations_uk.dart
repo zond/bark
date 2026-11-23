@@ -411,23 +411,63 @@ class AppLocalizationsUk extends AppLocalizations {
       'Не підключено. Повідомлення чекають на телефоні';
 
   @override
-  String statusGuestFor30s(String node, String install) {
-    return 'Підключено до $node як гість на 30 с$install';
+  String statusGuestFor30s(String node) {
+    return 'Підключено до $node як гість на 30 с';
   }
 
   @override
-  String statusGuest(String node, String install) {
-    return 'Підключено до $node як гість$install';
+  String statusGuestFor30sInstalling(String node, int version) {
+    return 'Підключено до $node як гість на 30 с, встановлюється версія $version';
   }
 
   @override
-  String statusAtHome(String node, String install) {
-    return 'Підключено до вашого дому, $node$install';
+  String statusGuestFor30sUpdated(String node, int version) {
+    return 'Підключено до $node як гість на 30 с, оновлено до версії $version';
   }
 
   @override
-  String statusPaired(String node, String install) {
-    return 'Підключено до спареного вузла $node$install';
+  String statusGuest(String node) {
+    return 'Підключено до $node як гість';
+  }
+
+  @override
+  String statusGuestInstalling(String node, int version) {
+    return 'Підключено до $node як гість, встановлюється версія $version';
+  }
+
+  @override
+  String statusGuestUpdated(String node, int version) {
+    return 'Підключено до $node як гість, оновлено до версії $version';
+  }
+
+  @override
+  String statusAtHome(String node) {
+    return 'Підключено до вашого дому, $node';
+  }
+
+  @override
+  String statusAtHomeInstalling(String node, int version) {
+    return 'Підключено до вашого дому, $node, встановлюється версія $version';
+  }
+
+  @override
+  String statusAtHomeUpdated(String node, int version) {
+    return 'Підключено до вашого дому, $node, оновлено до версії $version';
+  }
+
+  @override
+  String statusPaired(String node) {
+    return 'Підключено до спареного вузла $node';
+  }
+
+  @override
+  String statusPairedInstalling(String node, int version) {
+    return 'Підключено до спареного вузла $node, встановлюється версія $version';
+  }
+
+  @override
+  String statusPairedUpdated(String node, int version) {
+    return 'Підключено до спареного вузла $node, оновлено до версії $version';
   }
 
   @override
@@ -854,7 +894,7 @@ class AppLocalizationsUk extends AppLocalizations {
   }
 
   @override
-  String get sessionNotConnected => 'немає підключення';
+  String get notConnected => 'немає підключення';
 
   @override
   String sessionPairedOnly(String what) {
@@ -993,7 +1033,7 @@ class AppLocalizationsUk extends AppLocalizations {
   String get cardDetails => 'Подробиці';
 
   @override
-  String get cardMyIdentity => 'Моя особа';
+  String get myIdentity => 'Моя особа';
 
   @override
   String get cardCopyIdentity => 'Копіювати особу';
@@ -1117,7 +1157,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get factVersion =>
-      'Версія прошивки, яку виконує вузол. Нова версія поширюється сама: вузол, що отримав її з телефону або через USB, передає її ретрансляторам довкола частинами, лишаючи канали повідомленням. Вузол приймає лише новішу версію, підписану проєктом, і поки збирає її, цей рядок показує, яку саме і скільки її блоків він має.';
+      'Версія прошивки, на якій працює вузол. Нова версія поширюється сама: вузол, що отримав її з телефону або через USB, передає її ретрансляторам довкола частинами, лишаючи канали повідомленням. Вузол приймає лише новішу версію, підписану проєктом, і поки збирає її, цей рядок показує, яку саме і скільки її блоків він має.';
 
   @override
   String get factExchanged =>
@@ -1283,7 +1323,7 @@ class AppLocalizationsUk extends AppLocalizations {
       'Цей телефон отримає особу, записану в словах. Контакти зможуть писати на нього, лише коли отримають його картку.';
 
   @override
-  String get settingsRestoreButton => 'Відновити';
+  String get restore => 'Відновити';
 
   @override
   String get settingsYourWords => 'Ваші 12 слів';
@@ -1292,7 +1332,7 @@ class AppLocalizationsUk extends AppLocalizations {
   String get settingsNotWords => 'Це не 12 резервних слів';
 
   @override
-  String get settingsRestored => 'Особу відновлено';
+  String get restoredIdentity => 'Особу відновлено';
 
   @override
   String get settingsPlace => 'Місце';
@@ -1652,7 +1692,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get linkRefusedBusy =>
-      'вузол уже має нову перевірену прошивку: спершу перезавантажте його';
+      'вузол уже має нову перевірену прошивку: спершу перезапустіть його';
 
   @override
   String get linkRefusedIncomplete => 'вузол отримав не всі байти прошивки';
@@ -1702,6 +1742,21 @@ class AppLocalizationsUk extends AppLocalizations {
   String linkNotSeen(String node) {
     return '$node не знайдено: підійдіть ближче й спробуйте знову';
   }
+
+  @override
+  String get linkImageTooShort => 'файл закороткий';
+
+  @override
+  String get linkImageNotOne => 'це не файл прошивки вузла';
+
+  @override
+  String get linkImageFormat => 'невідомий формат файлу';
+
+  @override
+  String get linkImageLength => 'довжина файлу не збігається із заголовком';
+
+  @override
+  String get linkImageHash => 'контрольна сума файлу не збігається';
 
   @override
   String get fullNode =>
@@ -2003,4 +2058,373 @@ class AppLocalizationsUk extends AppLocalizations {
   String placeNone(String error) {
     return 'Не вдалося визначити місцезнаходження: $error';
   }
+
+  @override
+  String version(int version) {
+    return 'Версія $version';
+  }
+
+  @override
+  String get sendToNode => 'Надіслати на вузол';
+
+  @override
+  String installInstalling(String node, int version) {
+    return 'Вузол $node встановлює версію $version і повернеться приблизно за хвилину';
+  }
+
+  @override
+  String installInstallingLate(String node, int version) {
+    return 'Вузол $node встановлює версію $version і ще не повернувся';
+  }
+
+  @override
+  String installSentHelp(String node, int version) {
+    return 'Вузол $node приблизно на хвилину перезапускається з версією $version, яку надіслав цей телефон. Телефон чекає на вузол і сам підключиться знову.';
+  }
+
+  @override
+  String installMeshHelp(String node, int version) {
+    return 'Вузол $node отримав версію $version від вузлів довкола. Спершу вузол передасть далі повідомлення, які зберігає (не довше ніж десять хвилин), а тоді приблизно на хвилину перезапуститься. Телефон сам підключиться знову; нічого не загубиться.';
+  }
+
+  @override
+  String get updateTitle => 'Оновити прошивку';
+
+  @override
+  String get updateNotConnected => 'Немає підключення до вузла.';
+
+  @override
+  String updateRuns(String node, int version) {
+    return '$node працює на версії $version.';
+  }
+
+  @override
+  String updateRunsSince(String node, int version, int from, String ago) {
+    return '$node працює на версії $version; $ago оновлено з версії $from.';
+  }
+
+  @override
+  String get updateLatest => 'Останній випуск';
+
+  @override
+  String get updatePickFile => 'Вибрати файл';
+
+  @override
+  String get updatePickedFile => 'вибраний файл';
+
+  @override
+  String get updateNoFile => 'файл не вибрано';
+
+  @override
+  String get updateDownloadFailed =>
+      'не вдалося завантажити файл: перевірте підключення до інтернету';
+
+  @override
+  String updateNoFirmware(String error) {
+    return 'Не вдалося отримати прошивку: $error';
+  }
+
+  @override
+  String get updateHearsNoOne => 'Вузол нікого не чує';
+
+  @override
+  String updateHearsNoOneWarning(int version, String file) {
+    return 'Після оновлення до версії $version вузол не чує нікого іншого: нова прошивка могла зламати його радіо. Щоб повернутися, двічі натисніть на вузлі кнопку скидання й скопіюйте на нього через USB файл $file з того випуску; телефон не може надіслати старішу версію.';
+  }
+
+  @override
+  String get updateNoRelease => 'Поки не відомо жодного випуску.';
+
+  @override
+  String updateReleaseNoFirmware(int release) {
+    return 'Випуск $release не містить прошивки для вузлів.';
+  }
+
+  @override
+  String updateRunsLatest(int version) {
+    return 'Вузол уже працює на прошивці останнього випуску, версії $version.';
+  }
+
+  @override
+  String updateRunsNewer(int version) {
+    return 'Вузол працює на новішій версії, ніж прошивка останнього випуску, $version.';
+  }
+
+  @override
+  String updateImage(String source, int kib) {
+    return '$source, $kib КіБ';
+  }
+
+  @override
+  String updateImageNotNewer(String source, int kib) {
+    return '$source, $kib КіБ: не новіша за прошивку вузла';
+  }
+
+  @override
+  String updateOnNode(int held, int total) {
+    return '$held з $total КіБ на вузлі';
+  }
+
+  @override
+  String get updateSending => 'Надсилання…';
+
+  @override
+  String get updateChecking => 'Вузол перевіряє прошивку…';
+
+  @override
+  String get updateGoOn => 'Продовжити';
+
+  @override
+  String get updateTryAgain => 'Спробувати знову';
+
+  @override
+  String updateReboot(int version) {
+    return 'Перезапустити з версією $version';
+  }
+
+  @override
+  String get updateStalled => 'Вузол не приймає жодної частини';
+
+  @override
+  String get updatePaused =>
+      'Зв\'язок обірвався; оновлення продовжиться, коли вузол повернеться';
+
+  @override
+  String updateHolds(int version) {
+    return 'Вузол отримав версію $version';
+  }
+
+  @override
+  String get updateLost => 'Вузол утратив прошивку';
+
+  @override
+  String updateChecked(int version) {
+    return 'Вузол перевірив версію $version';
+  }
+
+  @override
+  String updateCommitFailed(String error) {
+    return 'Не вдалося запустити перевірку прошивки: $error';
+  }
+
+  @override
+  String updateAnswered(String error) {
+    return 'Вузол відповів: $error';
+  }
+
+  @override
+  String updateRefused(String reason) {
+    return 'Вузол відмовив: $reason';
+  }
+
+  @override
+  String get updateRefusedNoReason => 'Вузол відмовив, не пояснивши чому';
+
+  @override
+  String get updateRestarts =>
+      'Вузол перезапускається, це триває приблизно хвилину';
+
+  @override
+  String get updateNotBack => 'Вузол не повернувся; можливо, його немає поруч';
+
+  @override
+  String updateRebootFailed(String error) {
+    return 'Не вдалося перезапустити вузол: $error';
+  }
+
+  @override
+  String updateOtherNode(String node) {
+    return 'телефон підключено до іншого вузла, не до $node';
+  }
+
+  @override
+  String get updatePairedOnly =>
+      'оновити вузол може лише спарений із ним телефон';
+
+  @override
+  String updateDidNotStart(int version, int running) {
+    return 'Версія $version не запустилася; вузол знову працює на версії $running';
+  }
+
+  @override
+  String get updatesHeading => 'Оновлення';
+
+  @override
+  String get updatesCheck => 'Перевірити оновлення';
+
+  @override
+  String get updatesUnreached => 'Не вдалося отримати список випусків';
+
+  @override
+  String get updatesApp => 'Застосунок';
+
+  @override
+  String get updatesDevBuild => 'Збірка для розробки';
+
+  @override
+  String updatesAppOut(int version, int latest) {
+    return 'Версія $version; вийшла $latest. Натисніть, щоб встановити';
+  }
+
+  @override
+  String updatesAppDownloading(int version, int latest) {
+    return 'Версія $version; завантажується $latest…';
+  }
+
+  @override
+  String updatesAppDownloadingPercent(int version, int latest, int percent) {
+    return 'Версія $version; завантажується $latest… $percent%';
+  }
+
+  @override
+  String updatesAppReady(int version, int latest) {
+    return 'Версія $version; версію $latest завантажено. Натисніть, щоб встановити';
+  }
+
+  @override
+  String updatesAppFailed(int version, int latest) {
+    return 'Версія $version; не вдалося завантажити $latest. Натисніть, щоб спробувати знову';
+  }
+
+  @override
+  String get updatesNodeNewer =>
+      'Оновіть застосунок, щоб користуватися новими можливостями вузла';
+
+  @override
+  String get updatesNodeFirmware => 'Прошивка вузла';
+
+  @override
+  String get updatesNotConnected => 'Не підключено';
+
+  @override
+  String get updatesGuest =>
+      'Оновлювати вузол можуть лише спарені з ним телефони';
+
+  @override
+  String updatesFirmwareOut(int version, int latest) {
+    return 'Версія $version; вийшла $latest';
+  }
+
+  @override
+  String releaseLine(String app, String node) {
+    return '$app; $node';
+  }
+
+  @override
+  String get releaseAppDev => 'Застосунок — збірка для розробки';
+
+  @override
+  String releaseAppOut(int version) {
+    return 'Вийшла версія застосунку $version: натисніть «Застосунок» нижче';
+  }
+
+  @override
+  String releaseAppUpToDate(int version) {
+    return 'Застосунок актуальний ($version)';
+  }
+
+  @override
+  String get releaseNoNode => 'немає підключеного вузла';
+
+  @override
+  String get releaseNotYours => 'ви не можете оновити цей вузол';
+
+  @override
+  String get releaseBench => 'прошивка вузла — тестова збірка';
+
+  @override
+  String releaseNoneCarried(int version) {
+    return 'вузол працює на версії $version; випуск не містить прошивки';
+  }
+
+  @override
+  String releaseFirmwareOut(int version) {
+    return 'вийшла прошивка вузла $version: надішліть її нижче';
+  }
+
+  @override
+  String releaseFirmwareUpToDate(int version) {
+    return 'прошивка вузла $version актуальна';
+  }
+
+  @override
+  String get identityHelp =>
+      'Файл містить вашу особу, ім\'я, дім, контакти й вузли, з якими ви створили пару, а також ваші повідомлення, якщо ви поставите позначку. Ваш пароль захищає файл: без нього ніхто не відкриє файл, навіть ви.\n\nНа новому телефоні натисніть «Відновити з файлу», а потім знову створіть пару зі своїми вузлами: пара існує лише на тому телефоні, де її створили. Тим часом ваш дім зберігає вашу пошту, і ви можете забрати її з будь-якого іншого вузла.\n\nКористуйтеся лише одним телефоном водночас: кожен із двох телефонів з однією особою забирав би пошту, якої інший ніколи не побачить.\n\nВаші 12 резервних слів повертають лише вашу особу.';
+
+  @override
+  String get identitySaveHow =>
+      'Збережіть її у файл, щоб перейти на новий телефон.';
+
+  @override
+  String get identitySave => 'Зберегти у файл';
+
+  @override
+  String get identityRestore => 'Відновити з файлу';
+
+  @override
+  String get identitySaveTitle => 'Зберегти мою особу';
+
+  @override
+  String get identitySaved => 'Збережено';
+
+  @override
+  String get identityNotSaved => 'Не збережено';
+
+  @override
+  String identitySaveFailed(String error) {
+    return 'Не вдалося зберегти: $error';
+  }
+
+  @override
+  String get identityRestoreTitle => 'Відновити з файлу?';
+
+  @override
+  String get identityRestoreHow =>
+      'Це замінить особу, контакти й повідомлення на цьому телефоні.';
+
+  @override
+  String get identityChooseFile => 'Вибрати файл';
+
+  @override
+  String identityOpenFailed(String error) {
+    return 'Не вдалося відкрити файл: $error';
+  }
+
+  @override
+  String get identityPasswordTitle => 'Пароль файлу';
+
+  @override
+  String get identityRestoredPairAgain =>
+      'Особу відновлено. Знову створіть пару зі своїми вузлами.';
+
+  @override
+  String identityRefused(String reason) {
+    return '$reason Нічого не змінилося.';
+  }
+
+  @override
+  String get identityNotFile => 'Це не файл особи bark.';
+
+  @override
+  String get identityOtherLayout => 'Цей файл з іншої версії застосунку.';
+
+  @override
+  String get identityWrongPassword =>
+      'Неправильний пароль або файл пошкоджено.';
+
+  @override
+  String get identityPassword => 'Пароль';
+
+  @override
+  String get identityPasswordAgain => 'Повторіть пароль';
+
+  @override
+  String get identityNotSame => 'Паролі не збігаються';
+
+  @override
+  String get identityAddMessages => 'Додати мої повідомлення';
+
+  @override
+  String get identityOnePhone =>
+      'Використовуйте особу лише на одному телефоні водночас.';
 }

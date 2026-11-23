@@ -411,23 +411,63 @@ class AppLocalizationsSv extends AppLocalizations {
       'Inte ansluten. Meddelanden väntar på telefonen';
 
   @override
-  String statusGuestFor30s(String node, String install) {
-    return 'Ansluten till $node som gäst i 30 s$install';
+  String statusGuestFor30s(String node) {
+    return 'Ansluten till $node som gäst i 30 s';
   }
 
   @override
-  String statusGuest(String node, String install) {
-    return 'Ansluten till $node som gäst$install';
+  String statusGuestFor30sInstalling(String node, int version) {
+    return 'Ansluten till $node som gäst i 30 s, version $version installeras';
   }
 
   @override
-  String statusAtHome(String node, String install) {
-    return 'Ansluten till ditt hem, $node$install';
+  String statusGuestFor30sUpdated(String node, int version) {
+    return 'Ansluten till $node som gäst i 30 s, version $version är installerad';
   }
 
   @override
-  String statusPaired(String node, String install) {
-    return 'Ansluten till $node, parkopplad$install';
+  String statusGuest(String node) {
+    return 'Ansluten till $node som gäst';
+  }
+
+  @override
+  String statusGuestInstalling(String node, int version) {
+    return 'Ansluten till $node som gäst, version $version installeras';
+  }
+
+  @override
+  String statusGuestUpdated(String node, int version) {
+    return 'Ansluten till $node som gäst, version $version är installerad';
+  }
+
+  @override
+  String statusAtHome(String node) {
+    return 'Ansluten till ditt hem, $node';
+  }
+
+  @override
+  String statusAtHomeInstalling(String node, int version) {
+    return 'Ansluten till ditt hem, $node, version $version installeras';
+  }
+
+  @override
+  String statusAtHomeUpdated(String node, int version) {
+    return 'Ansluten till ditt hem, $node, version $version är installerad';
+  }
+
+  @override
+  String statusPaired(String node) {
+    return 'Ansluten till $node, parkopplad';
+  }
+
+  @override
+  String statusPairedInstalling(String node, int version) {
+    return 'Ansluten till $node, parkopplad, version $version installeras';
+  }
+
+  @override
+  String statusPairedUpdated(String node, int version) {
+    return 'Ansluten till $node, parkopplad, version $version är installerad';
   }
 
   @override
@@ -842,7 +882,7 @@ class AppLocalizationsSv extends AppLocalizations {
   }
 
   @override
-  String get sessionNotConnected => 'inte ansluten';
+  String get notConnected => 'inte ansluten';
 
   @override
   String sessionPairedOnly(String what) {
@@ -986,7 +1026,7 @@ class AppLocalizationsSv extends AppLocalizations {
   String get cardDetails => 'Detaljer';
 
   @override
-  String get cardMyIdentity => 'Min identitet';
+  String get myIdentity => 'Min identitet';
 
   @override
   String get cardCopyIdentity => 'Kopiera identiteten';
@@ -1274,7 +1314,7 @@ class AppLocalizationsSv extends AppLocalizations {
       'Telefonen tar över identiteten från orden. Kontakter når den först när de har dess kort.';
 
   @override
-  String get settingsRestoreButton => 'Återställ';
+  String get restore => 'Återställ';
 
   @override
   String get settingsYourWords => 'Dina 12 ord';
@@ -1283,7 +1323,7 @@ class AppLocalizationsSv extends AppLocalizations {
   String get settingsNotWords => 'Det är inte 12 reservord';
 
   @override
-  String get settingsRestored => 'Identiteten återställd';
+  String get restoredIdentity => 'Identiteten återställd';
 
   @override
   String get settingsPlace => 'Plats';
@@ -1693,6 +1733,21 @@ class AppLocalizationsSv extends AppLocalizations {
   }
 
   @override
+  String get linkImageTooShort => 'filen är för kort';
+
+  @override
+  String get linkImageNotOne => 'filen är ingen programvara för en nod';
+
+  @override
+  String get linkImageFormat => 'filen har ett okänt format';
+
+  @override
+  String get linkImageLength => 'filens längd stämmer inte';
+
+  @override
+  String get linkImageHash => 'filens kontrollsumma stämmer inte';
+
+  @override
   String get fullNode =>
       'Den här noden är full: åtta telefoner är parkopplade med den.';
 
@@ -1985,4 +2040,372 @@ class AppLocalizationsSv extends AppLocalizations {
   String placeNone(String error) {
     return 'Ingen plats: $error';
   }
+
+  @override
+  String version(int version) {
+    return 'Version $version';
+  }
+
+  @override
+  String get sendToNode => 'Skicka till noden';
+
+  @override
+  String installInstalling(String node, int version) {
+    return '$node installerar version $version och är tillbaka om ungefär en minut';
+  }
+
+  @override
+  String installInstallingLate(String node, int version) {
+    return '$node installerar version $version och är inte tillbaka än';
+  }
+
+  @override
+  String installSentHelp(String node, int version) {
+    return '$node startar om med version $version, som den här telefonen skickade, och är borta ungefär en minut. Telefonen väntar på noden och ansluter igen av sig själv.';
+  }
+
+  @override
+  String installMeshHelp(String node, int version) {
+    return '$node fick version $version från noderna runt omkring. Noden skickar först vidare meddelandena den har, i högst tio minuter, och startar sedan om, vilket tar ungefär en minut. Telefonen ansluter igen av sig själv; inget går förlorat.';
+  }
+
+  @override
+  String get updateTitle => 'Uppdatera programvaran';
+
+  @override
+  String get updateNotConnected => 'Inte ansluten till en nod.';
+
+  @override
+  String updateRuns(String node, int version) {
+    return '$node kör version $version.';
+  }
+
+  @override
+  String updateRunsSince(String node, int version, int from, String ago) {
+    return '$node kör version $version, uppdaterad från version $from $ago.';
+  }
+
+  @override
+  String get updateLatest => 'Senaste utgåvan';
+
+  @override
+  String get updatePickFile => 'Välj en fil';
+
+  @override
+  String get updatePickedFile => 'en vald fil';
+
+  @override
+  String get updateNoFile => 'ingen fil vald';
+
+  @override
+  String get updateDownloadFailed =>
+      'filen kunde inte laddas ner: kontrollera internetanslutningen';
+
+  @override
+  String updateNoFirmware(String error) {
+    return 'Det gick inte att hämta programvaran: $error';
+  }
+
+  @override
+  String get updateHearsNoOne => 'Noden hör ingen';
+
+  @override
+  String updateHearsNoOneWarning(int version, String file) {
+    return 'Sedan version $version hör noden ingen annan nod: den nya programvaran kan ha förstört radion. För att gå tillbaka, dubbeltryck på nodens återställningsknapp och kopiera $file från den utgåvan till noden via USB; telefonen kan inte skicka en äldre version.';
+  }
+
+  @override
+  String get updateNoRelease => 'Ingen känd utgåva än.';
+
+  @override
+  String updateReleaseNoFirmware(int release) {
+    return 'Utgåva $release innehåller ingen programvara för noder.';
+  }
+
+  @override
+  String updateRunsLatest(int version) {
+    return 'Noden kör redan programvaran från den senaste utgåvan, version $version.';
+  }
+
+  @override
+  String updateRunsNewer(int version) {
+    return 'Noden kör en nyare version än programvaran från den senaste utgåvan, $version.';
+  }
+
+  @override
+  String updateImage(String source, int kib) {
+    return '$source, $kib KiB';
+  }
+
+  @override
+  String updateImageNotNewer(String source, int kib) {
+    return '$source, $kib KiB: inte nyare än nodens';
+  }
+
+  @override
+  String updateOnNode(int held, int total) {
+    return '$held av $total KiB på noden';
+  }
+
+  @override
+  String get updateSending => 'Skickar…';
+
+  @override
+  String get updateChecking => 'Noden kontrollerar programvaran…';
+
+  @override
+  String get updateGoOn => 'Fortsätt';
+
+  @override
+  String get updateTryAgain => 'Försök igen';
+
+  @override
+  String updateReboot(int version) {
+    return 'Starta om med version $version';
+  }
+
+  @override
+  String get updateStalled => 'Noden tar inte emot några delar';
+
+  @override
+  String get updatePaused =>
+      'Anslutningen bröts; uppdateringen fortsätter när noden är tillbaka';
+
+  @override
+  String updateHolds(int version) {
+    return 'Noden har tagit emot version $version';
+  }
+
+  @override
+  String get updateLost => 'Noden har förlorat programvaran';
+
+  @override
+  String updateChecked(int version) {
+    return 'Noden har kontrollerat version $version';
+  }
+
+  @override
+  String updateCommitFailed(String error) {
+    return 'Det gick inte att starta kontrollen av programvaran: $error';
+  }
+
+  @override
+  String updateAnswered(String error) {
+    return 'Noden svarade med $error';
+  }
+
+  @override
+  String updateRefused(String reason) {
+    return 'Noden sa nej: $reason';
+  }
+
+  @override
+  String get updateRefusedNoReason => 'Noden sa nej utan att säga varför';
+
+  @override
+  String get updateRestarts => 'Noden startar om, det tar ungefär en minut';
+
+  @override
+  String get updateNotBack =>
+      'Noden är inte tillbaka och kan vara utom räckhåll';
+
+  @override
+  String updateRebootFailed(String error) {
+    return 'Omstarten misslyckades: $error';
+  }
+
+  @override
+  String updateOtherNode(String node) {
+    return 'ansluten till en annan nod än $node';
+  }
+
+  @override
+  String get updatePairedOnly =>
+      'bara en telefon som är parkopplad med noden kan uppdatera den';
+
+  @override
+  String updateDidNotStart(int version, int running) {
+    return 'Version $version startade inte; noden är tillbaka på version $running';
+  }
+
+  @override
+  String get updatesHeading => 'Uppdateringar';
+
+  @override
+  String get updatesCheck => 'Sök efter uppdateringar';
+
+  @override
+  String get updatesUnreached => 'Det gick inte att nå listan över utgåvor';
+
+  @override
+  String get updatesApp => 'App';
+
+  @override
+  String get updatesDevBuild => 'En utvecklingsversion';
+
+  @override
+  String updatesAppOut(int version, int latest) {
+    return 'Version $version; $latest är ute. Tryck för att installera';
+  }
+
+  @override
+  String updatesAppDownloading(int version, int latest) {
+    return 'Version $version; laddar ner $latest…';
+  }
+
+  @override
+  String updatesAppDownloadingPercent(int version, int latest, int percent) {
+    return 'Version $version; laddar ner $latest… $percent %';
+  }
+
+  @override
+  String updatesAppReady(int version, int latest) {
+    return 'Version $version; $latest är nedladdad. Tryck för att installera';
+  }
+
+  @override
+  String updatesAppFailed(int version, int latest) {
+    return 'Version $version; $latest kunde inte laddas ner. Tryck för att försöka igen';
+  }
+
+  @override
+  String get updatesNodeNewer =>
+      'Uppdatera appen för att få nodens nya funktioner';
+
+  @override
+  String get updatesNodeFirmware => 'Nodens programvara';
+
+  @override
+  String get updatesNotConnected => 'Inte ansluten';
+
+  @override
+  String get updatesGuest =>
+      'Bara nodens parkopplade telefoner kan uppdatera noden';
+
+  @override
+  String updatesFirmwareOut(int version, int latest) {
+    return 'Version $version; $latest är ute';
+  }
+
+  @override
+  String releaseLine(String app, String node) {
+    return '$app; $node';
+  }
+
+  @override
+  String get releaseAppDev => 'Appen är en utvecklingsversion';
+
+  @override
+  String releaseAppOut(int version) {
+    return 'Appversion $version är ute: tryck på App nedan';
+  }
+
+  @override
+  String releaseAppUpToDate(int version) {
+    return 'Appen är aktuell ($version)';
+  }
+
+  @override
+  String get releaseNoNode => 'ingen nod ansluten';
+
+  @override
+  String get releaseNotYours => 'du kan inte uppdatera noden';
+
+  @override
+  String get releaseBench => 'nodens programvara är en testversion';
+
+  @override
+  String releaseNoneCarried(int version) {
+    return 'noden kör version $version; utgåvan innehåller ingen programvara för noder';
+  }
+
+  @override
+  String releaseFirmwareOut(int version) {
+    return 'nodprogramvara $version är ute: skicka den nedan';
+  }
+
+  @override
+  String releaseFirmwareUpToDate(int version) {
+    return 'nodens programvara $version är aktuell';
+  }
+
+  @override
+  String get identityHelp =>
+      'Filen innehåller din identitet, ditt namn, ditt hem, dina kontakter och noderna du har parkopplat med, och även dina meddelanden om du kryssar i rutan. Ditt lösenord låser filen: utan lösenordet kan ingen öppna den, inte ens du.\n\nPå den nya telefonen trycker du på Återställ från en fil och parkopplar sedan med dina noder igen: en parkoppling finns bara på telefonen där den gjordes. Ditt hem sparar din post under tiden, och du kan hämta posten från vilken annan nod som helst.\n\nAnvänd en telefon i taget: två telefoner med samma identitet skulle var och en ta emot post som den andra aldrig ser.\n\nDina 12 reservord ger bara tillbaka din identitet.';
+
+  @override
+  String get identitySaveHow =>
+      'Spara identiteten i en fil för att flytta till en ny telefon.';
+
+  @override
+  String get identitySave => 'Spara i en fil';
+
+  @override
+  String get identityRestore => 'Återställ från en fil';
+
+  @override
+  String get identitySaveTitle => 'Spara min identitet';
+
+  @override
+  String get identitySaved => 'Sparat';
+
+  @override
+  String get identityNotSaved => 'Inte sparat';
+
+  @override
+  String identitySaveFailed(String error) {
+    return 'Det gick inte att spara: $error';
+  }
+
+  @override
+  String get identityRestoreTitle => 'Återställa från en fil?';
+
+  @override
+  String get identityRestoreHow =>
+      'Detta ersätter identiteten, kontakterna och meddelandena på den här telefonen.';
+
+  @override
+  String get identityChooseFile => 'Välj fil';
+
+  @override
+  String identityOpenFailed(String error) {
+    return 'Det gick inte att öppna filen: $error';
+  }
+
+  @override
+  String get identityPasswordTitle => 'Filens lösenord';
+
+  @override
+  String get identityRestoredPairAgain =>
+      'Identiteten återställd. Parkoppla igen med dina noder.';
+
+  @override
+  String identityRefused(String reason) {
+    return '$reason Inget ändrades.';
+  }
+
+  @override
+  String get identityNotFile => 'Det här är ingen identitetsfil från bark.';
+
+  @override
+  String get identityOtherLayout =>
+      'Filen kommer från en annan version av appen.';
+
+  @override
+  String get identityWrongPassword => 'Fel lösenord eller så är filen skadad.';
+
+  @override
+  String get identityPassword => 'Lösenord';
+
+  @override
+  String get identityPasswordAgain => 'Upprepa lösenordet';
+
+  @override
+  String get identityNotSame => 'Lösenorden är olika';
+
+  @override
+  String get identityAddMessages => 'Ta med mina meddelanden';
+
+  @override
+  String get identityOnePhone => 'Använd identiteten på en telefon i taget.';
 }

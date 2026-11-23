@@ -300,16 +300,52 @@ class AppModel {
     final h = links.homeName;
     // The home is a sentence of its own after the line.
     final home = h == null ? '' : '. ${tr.statusHomeAt(shownName(h))}';
-    final installs = this.installs.note;
+    final i = installs.note;
+    // One whole message for each state of the node's install.
+    String line(
+      String node,
+      String Function(String) plain,
+      String Function(String, int) installing,
+      String Function(String, int) updated,
+    ) => switch (i) {
+      null => plain(node),
+      (now: InstallNow.installing, :final version) => installing(node, version),
+      (now: InstallNow.updated, :final version) => updated(node, version),
+    };
     if (g != null && links.tappedGuest) {
-      return '${tr.statusGuestFor30s(shownName(g), installs)}$home';
+      final l = line(
+        shownName(g),
+        tr.statusGuestFor30s,
+        tr.statusGuestFor30sInstalling,
+        tr.statusGuestFor30sUpdated,
+      );
+      return '$l$home';
     }
     if (g != null && (n == null || session.guest)) {
-      return '${tr.statusGuest(shownName(g), installs)}$home';
+      final l = line(
+        shownName(g),
+        tr.statusGuest,
+        tr.statusGuestInstalling,
+        tr.statusGuestUpdated,
+      );
+      return '$l$home';
     }
     if (n == null) return null;
-    if (mailbox.atHome) return tr.statusAtHome(nodeLabel(n.id), installs);
-    return '${tr.statusPaired(nodeLabel(n.id), installs)}$home';
+    if (mailbox.atHome) {
+      return line(
+        nodeLabel(n.id),
+        tr.statusAtHome,
+        tr.statusAtHomeInstalling,
+        tr.statusAtHomeUpdated,
+      );
+    }
+    final l = line(
+      nodeLabel(n.id),
+      tr.statusPaired,
+      tr.statusPairedInstalling,
+      tr.statusPairedUpdated,
+    );
+    return '$l$home';
   }
 
   void dispose() {

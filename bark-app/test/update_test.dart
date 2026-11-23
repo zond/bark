@@ -9,6 +9,7 @@
 // when the latest release is offered; and the screen of a finished
 // update.
 
+import 'dart:io' show HttpException, SocketException;
 import 'dart:typed_data';
 
 import 'package:bark_app/app.dart';
@@ -139,8 +140,44 @@ void main() {
     expect(pickedName('v2.img'), 'v2.img');
     expect(pickedName('v2.bin'), 'v2.img');
     expect(pickedName('bark-fw-2'), 'bark-fw-2.img');
-    expect(pickedName(''), 'a picked file');
+    expect(pickedName(''), isNull);
   });
+
+  for (final error in [
+    const SocketException('Failed host lookup'),
+    const HttpException('https://x/img2: HTTP 403'),
+  ]) {
+    testWidgets('a failed download says so in words, the network\'s own '
+        'to the log: ${error.runtimeType}', (t) async {
+      final sodium = await SodiumInit.init();
+      DateTime now() => DateTime.utc(2026, 11, 8, 10);
+      final app = AppModel(
+        sodium: sodium,
+        me: Me(MemoryStore(), sodium, now),
+        session: Session(store: MemoryStore(), now: now),
+        contacts: Contacts(MemoryStore()),
+        now: now,
+        releases: Releases(
+          MemoryStore('release'),
+          now: now,
+          download: (_) => Future.error(error),
+        ),
+      );
+      await t.runAsync(app.load);
+      const r = Release(2, app: 2, firmware: 2, image: 'https://x/img2');
+      await t.pumpWidget(MaterialApp(home: UpdateScreen(app, release: r)));
+      await t.pump();
+      expect(
+        find.text(
+          'No firmware: could not download the file: check the internet '
+          'connection',
+        ),
+        findsOneWidget,
+      );
+      expect(app.session.log.map((l) => l.text), contains(contains('$error')));
+      expect(app.updater.image, isNull);
+    });
+  }
 
   group('against the fake node', () {
     late Sodium sodium;

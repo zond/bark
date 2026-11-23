@@ -5,6 +5,7 @@
 // whether the node hears anyone on its new image.
 
 import 'dart:async';
+import 'dart:io' show IOException;
 import 'dart:math';
 
 import 'package:crypto/crypto.dart' show sha256;
@@ -72,10 +73,12 @@ Step next(UpdateProgress p, FirmwareImage image) {
 }
 
 /// The node took none of the pieces of [stalledWindows] windows.
-class Stalled implements Exception {
+class Stalled implements Exception, Spoken {
   const Stalled();
   @override
-  String toString() => 'The node takes no pieces';
+  String words(AppLocalizations w) => w.updateStalled;
+  @override
+  String toString() => words(english);
 }
 
 /// Where the update stands, as the person sees it.
@@ -129,7 +132,8 @@ class Updater extends ChangeNotifier {
 
   FirmwareImage? image;
 
-  /// Where the image came from, for the person.
+  /// Where the image came from, for the person: its file's name, null
+  /// for a file with none.
   String? from;
 
   Phase phase = Phase.idle;
@@ -137,8 +141,12 @@ class Updater extends ChangeNotifier {
   /// The image's bytes the node holds, as last read.
   int held = 0;
 
-  /// The last thing the node said, or what went wrong.
-  String? message;
+  /// The last thing the node said, or what went wrong, in the words
+  /// given: made when shown, so it follows a change of language.
+  String Function(AppLocalizations)? _message;
+
+  /// [_message] in the language spoken.
+  String? get message => _message?.call(tr);
 
   /// The node the image goes to, from the send that began it: what the
   /// app does next, and the update's outcome, are that node's alone.
@@ -191,10 +199,7 @@ class Updater extends ChangeNotifier {
   /// stages no image below its own version, so the one it ran before goes
   /// on by USB.
   String hearsNoOneWarning(Updated u) =>
-      'Since version ${u.to} it hears no other node: the new firmware may '
-      'have broken its radio. To go back, double-tap its reset button and '
-      'copy bark-fw-${u.from}.uf2 from that release to it over USB; the '
-      'phone cannot send an older version.';
+      tr.updateHearsNoOneWarning(u.to, 'bark-fw-${u.from}.uf2');
 
   /// The app is in an exchange with the node that runs without the
   /// person: sending the image, or waiting for its check. Closing the link
@@ -236,14 +241,10 @@ class Updater extends ChangeNotifier {
     final r = release();
     final n = session.node;
     if (n == null || latest != null) return null;
-    if (r == null) return 'No release known yet.';
-    if (r.image == null) return 'Release ${r.n} carries no node firmware.';
-    if (r.firmware == n.image) {
-      return 'The node already runs the latest release\'s firmware, '
-          'version ${r.firmware}.';
-    }
-    return 'The node runs a newer version than the latest release\'s '
-        'firmware, ${r.firmware}.';
+    if (r == null) return tr.updateNoRelease;
+    if (r.image == null) return tr.updateReleaseNoFirmware(r.n);
+    if (r.firmware == n.image) return tr.updateRunsLatest(r.firmware);
+    return tr.updateRunsNewer(r.firmware);
   }
 
   /// The link has closed since the reboot was asked for.
@@ -264,15 +265,16 @@ class Updater extends ChangeNotifier {
 
   bool _running = false;
 
-  void _set(Phase p, [String? m]) {
+  void _set(Phase p, [String Function(AppLocalizations)? m]) {
     if (p != Phase.rebooting) _away?.cancel();
     phase = p;
-    message = m;
+    _message = m;
     notifyListeners();
   }
 
-  /// Chooses `i`, from `source`, for the next send.
-  void choose(FirmwareImage i, String source) {
+  /// Chooses `i`, from `source`, for the next send; a file with no name
+  /// has no `source`.
+  void choose(FirmwareImage i, String? source) {
     image = i;
     from = source;
     held = 0;
@@ -283,14 +285,12 @@ class Updater extends ChangeNotifier {
   NodeLink _link() {
     final l = session.link;
     final n = session.node;
-    if (l == null || n == null) throw StateError('not connected');
+    if (l == null || n == null) throw NotOwned((w) => w.notConnected);
     final t = _target;
     if (t != null && !listEquals(n.id, t)) {
-      throw StateError('connected to another node than ${nodeLabel(t)}');
+      throw NotOwned((w) => w.updateOtherNode(nodeLabel(t)));
     }
-    if (session.guest) {
-      throw StateError('only the phone paired with the node updates it');
-    }
+    if (session.guest) throw NotOwned((w) => w.updatePairedOnly);
     return l;
   }
 
@@ -307,10 +307,10 @@ class Updater extends ChangeNotifier {
     } on AttException catch (e) {
       await _refused(e, Phase.staged);
     } on Stalled catch (e) {
-      _set(Phase.failed, '$e');
+      _set(Phase.failed, e.words);
     } catch (e) {
       session.note('Update: paused at $held B, $e');
-      _set(Phase.paused, 'The link dropped; it goes on when the node is back');
+      _set(Phase.paused, (w) => w.updatePaused);
     } finally {
       _running = false;
     }
@@ -348,13 +348,11 @@ class Updater extends ChangeNotifier {
       case Step.commit:
         await _commit(link, img);
       case Step.reboot:
-        _set(Phase.committed, 'The node holds version ${img.version}');
+        _set(Phase.committed, (w) => w.updateHolds(img.version));
       case Step.begin || Step.send:
         // The node forgot the image: a flash that failed.
-        _set(
-          Phase.failed,
-          p.refused?.why(english) ?? 'The node lost the firmware',
-        );
+        final why = p.refused;
+        _set(Phase.failed, (w) => why?.why(w) ?? w.updateLost);
     }
   }
 
@@ -362,7 +360,7 @@ class Updater extends ChangeNotifier {
     _set(Phase.committing);
     await link.writeUpdate(encodeCommit());
     session.note('Update: version ${img.version} committed');
-    _set(Phase.committed, 'The node checked version ${img.version}');
+    _set(Phase.committed, (w) => w.updateChecked(img.version));
   }
 
   /// Commits the image the node holds, again after a refusal for its
@@ -376,7 +374,7 @@ class Updater extends ChangeNotifier {
     } on AttException catch (e) {
       await _refused(e, Phase.staged);
     } catch (e) {
-      _set(Phase.failed, 'Committing failed: $e');
+      _set(Phase.failed, (w) => w.updateCommitFailed(said(e, w)));
     } finally {
       _running = false;
     }
@@ -387,7 +385,7 @@ class Updater extends ChangeNotifier {
   /// on USB or charged.
   Future<void> _refused(AttException e, Phase kept) async {
     if (e.code != AttError.refused) {
-      _set(Phase.failed, 'The node answered $e');
+      _set(Phase.failed, (w) => w.updateAnswered(said(e, w)));
       return;
     }
     Refusal? why;
@@ -395,9 +393,10 @@ class Updater extends ChangeNotifier {
       why = (await session.link?.readUpdate())?.refused;
     } catch (_) {}
     session.note('Update: refused, ${why?.name ?? '?'}');
+    final r = why;
     _set(
-      why == Refusal.battery ? kept : Phase.failed,
-      'The node refused: ${why?.why(english) ?? 'it did not say why'}',
+      r == Refusal.battery ? kept : Phase.failed,
+      (w) => r == null ? w.updateRefusedNoReason : w.updateRefused(r.why(w)),
     );
   }
 
@@ -419,18 +418,18 @@ class Updater extends ChangeNotifier {
         session.note('Update: the reboot\'s answer was lost to its end, $e');
       }
       session.note('Update: reboot asked');
-      _set(Phase.rebooting, 'The node restarts, about a minute');
+      _set(Phase.rebooting, (w) => w.updateRestarts);
       _away?.cancel();
       _away = Timer(backWithin, () {
         if (phase == Phase.rebooting) {
-          _set(Phase.rebooting, 'The node is not back; it may be out of reach');
+          _set(Phase.rebooting, (w) => w.updateNotBack);
         }
       });
       _tellAway();
     } on AttException catch (e) {
       await _refused(e, Phase.committed);
     } catch (e) {
-      _set(Phase.failed, 'Reboot failed: $e');
+      _set(Phase.failed, (w) => w.updateRebootFailed(said(e, w)));
     } finally {
       _running = false;
     }
@@ -457,7 +456,7 @@ class Updater extends ChangeNotifier {
     if (phase == Phase.paused && !_running) {
       unawaited(send());
     } else if (phase == Phase.rebooting && _down) {
-      final want = image?.version;
+      final want = image!.version;
       if (n.image == want) {
         _updated = (
           id: n.id,
@@ -473,10 +472,8 @@ class Updater extends ChangeNotifier {
         session.note('Update: version ${n.image} runs');
         return;
       }
-      _set(
-        Phase.failed,
-        'Version $want did not start; the node is back on ${n.image}',
-      );
+      final running = n.image;
+      _set(Phase.failed, (w) => w.updateDidNotStart(want, running));
     }
   }
 
@@ -493,19 +490,39 @@ class Updater extends ChangeNotifier {
 /// it, with the `.img` that images carry (`bark-fw/scripts/image.py`;
 /// a release's `bark-fw-<N>.img`). Android's picker gives a copy of the
 /// file, named with the extension of its type, `.bin` for one whose type
-/// Android does not know, as an image's.
-String pickedName(String name) {
+/// Android does not know, as an image's; null for a file with no name,
+/// which the screen names in the language spoken.
+String? pickedName(String name) {
   final dot = name.lastIndexOf('.');
   final base = dot > 0 ? name.substring(0, dot) : name;
-  return base.isEmpty ? 'a picked file' : '$base.img';
+  return base.isEmpty ? null : '$base.img';
 }
 
-/// The image of `r`, downloaded by `get` and checked, with its file name.
+/// The firmware could not be downloaded; the network's own words went to
+/// the log, as they are no help to the person.
+class DownloadFailed implements Exception, Spoken {
+  const DownloadFailed();
+  @override
+  String words(AppLocalizations w) => w.updateDownloadFailed;
+  @override
+  String toString() => words(english);
+}
+
+/// The image of `r`, downloaded by `get` and checked, with its file name;
+/// a network failure is told to `note` and thrown as [DownloadFailed].
 Future<(FirmwareImage, String)> downloadImage(
-  Release r, [
+  Release r,
+  void Function(String) note, [
   Future<List<int>> Function(String url) get = httpGet,
 ]) async {
   final url = r.image;
   if (url == null) throw StateError('release ${r.n} has no ${r.imageName}');
-  return (parseImage(Uint8List.fromList(await get(url))), r.imageName);
+  final List<int> file;
+  try {
+    file = await get(url);
+  } on IOException catch (e) {
+    note('Update: downloading ${r.imageName} failed: $e');
+    throw const DownloadFailed();
+  }
+  return (parseImage(Uint8List.fromList(file)), r.imageName);
 }

@@ -11,6 +11,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import 'l10n.dart';
 import 'link.dart';
 import 'store.dart';
 
@@ -329,28 +330,28 @@ class Releases extends ChangeNotifier {
 
 /// What a check the person asked for found, in one line: this app's
 /// version against the latest release's app, and the node's image
-/// against the release's firmware, or that no node is linked.
+/// against the release's firmware, or that no node is linked. Each half
+/// is a clause of its own, which the line puts in order.
 String updatesLine(Releases r, NodeInfo? node, {bool guest = false}) {
   final l = r.latest;
   final app = r.app == 0
-      ? 'app is a development build'
+      ? tr.releaseAppDev
       : l != null && l.apk != null && l.app > r.app
-      ? 'app ${l.app} is out: tap App below'
-      : 'app up to date (${r.app})';
+      ? tr.releaseAppOut(l.app)
+      : tr.releaseAppUpToDate(r.app);
   final String image;
   if (node == null) {
-    image = 'no node linked';
+    image = tr.releaseNoNode;
   } else if (guest) {
-    image = 'the node is not yours to update';
+    image = tr.releaseNotYours;
   } else if (node.image == 0) {
-    image = 'node firmware is a bench build';
+    image = tr.releaseBench;
   } else if (l == null || l.image == null) {
-    image = 'node firmware ${node.image}; the release carries none';
+    image = tr.releaseNoneCarried(node.image);
   } else if (l.firmware > node.image) {
-    image = 'node firmware ${l.firmware} is out: send it below';
+    image = tr.releaseFirmwareOut(l.firmware);
   } else {
-    image = 'node firmware ${node.image}, up to date';
+    image = tr.releaseFirmwareUpToDate(node.image);
   }
-  final line = '$app; $image';
-  return line[0].toUpperCase() + line.substring(1);
+  return tr.releaseLine(app, image);
 }

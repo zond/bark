@@ -227,25 +227,55 @@
     "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
   },
   "statusNotLooking": "Not connected. Texts wait on the phone",
-  "statusGuestFor30s": "Connected to {node} as a guest for 30 s{install}",
+  "statusGuestFor30s": "Connected to {node} as a guest for 30 s",
   "@statusGuestFor30s": {
-    "description": "{install} is what the node's install adds: empty, or a clause that begins with a comma, such as ', installing version 5'.",
-    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "install": {"type": "String"}}
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
   },
-  "statusGuest": "Connected to {node} as a guest{install}",
+  "statusGuestFor30sInstalling": "Connected to {node} as a guest for 30 s, installing version {version}",
+  "@statusGuestFor30sInstalling": {
+    "description": "As statusGuestFor30s, while the node is about to install a new version of its firmware. So are the other status…Installing messages.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "version": {"type": "int"}}
+  },
+  "statusGuestFor30sUpdated": "Connected to {node} as a guest for 30 s, updated to version {version}",
+  "@statusGuestFor30sUpdated": {
+    "description": "As statusGuestFor30s, for a minute after the node came back on a new version of its firmware. So are the other status…Updated messages.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "version": {"type": "int"}}
+  },
+  "statusGuest": "Connected to {node} as a guest",
   "@statusGuest": {
-    "description": "{install} as in statusGuestFor30s.",
-    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "install": {"type": "String"}}
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
   },
-  "statusAtHome": "Connected to your home, {node}{install}",
+  "statusGuestInstalling": "Connected to {node} as a guest, installing version {version}",
+  "@statusGuestInstalling": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "version": {"type": "int"}}
+  },
+  "statusGuestUpdated": "Connected to {node} as a guest, updated to version {version}",
+  "@statusGuestUpdated": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "version": {"type": "int"}}
+  },
+  "statusAtHome": "Connected to your home, {node}",
   "@statusAtHome": {
-    "description": "{install} as in statusGuestFor30s.",
-    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "install": {"type": "String"}}
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
   },
-  "statusPaired": "Connected to {node}, paired{install}",
+  "statusAtHomeInstalling": "Connected to your home, {node}, installing version {version}",
+  "@statusAtHomeInstalling": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "version": {"type": "int"}}
+  },
+  "statusAtHomeUpdated": "Connected to your home, {node}, updated to version {version}",
+  "@statusAtHomeUpdated": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "version": {"type": "int"}}
+  },
+  "statusPaired": "Connected to {node}, paired",
   "@statusPaired": {
-    "description": "{install} as in statusGuestFor30s.",
-    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "install": {"type": "String"}}
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "statusPairedInstalling": "Connected to {node}, paired, installing version {version}",
+  "@statusPairedInstalling": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "version": {"type": "int"}}
+  },
+  "statusPairedUpdated": "Connected to {node}, paired, updated to version {version}",
+  "@statusPairedUpdated": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "version": {"type": "int"}}
   },
   "statusHomeAt": "Home at {node}",
   "@statusHomeAt": {
@@ -547,8 +577,8 @@
   "@sessionReadFailed": {
     "placeholders": {"error": {"type": "String"}}
   },
-  "sessionNotConnected": "not connected",
-  "@sessionNotConnected": {
+  "notConnected": "not connected",
+  "@notConnected": {
     "description": "Why something failed; lower case, as it follows words such as \"Setting Public failed: \"."
   },
   "sessionPairedOnly": "{what} is the paired phone's alone",
@@ -690,9 +720,9 @@
   "@cardDetails": {
     "description": "A section on My card that opens to the card's parts as text."
   },
-  "cardMyIdentity": "My identity",
-  "@cardMyIdentity": {
-    "description": "The person's identity, the public key their texts are sealed to, shown in hex."
+  "myIdentity": "My identity",
+  "@myIdentity": {
+    "description": "The person's identity, the public key their texts are sealed to: the label of its hex on My card, and the heading of Settings' section that saves it to a file."
   },
   "cardCopyIdentity": "Copy the identity",
   "@cardCopyIdentity": {
@@ -919,16 +949,19 @@
   },
   "settingsRestoreTitle": "Restore from words?",
   "settingsRestoreHow": "This phone takes the identity of the words. Contacts reach it only once they have its card.",
-  "settingsRestoreButton": "Restore",
-  "@settingsRestoreButton": {
-    "description": "The button in the dialog settingsRestoreTitle."
+  "restore": "Restore",
+  "@restore": {
+    "description": "The button that restores the identity, in the dialog settingsRestoreTitle and in the one that takes an identity file's password."
   },
   "settingsYourWords": "Your 12 words",
   "@settingsYourWords": {
     "description": "The title of the dialog where the backup words are typed."
   },
   "settingsNotWords": "Those are not 12 words of a backup",
-  "settingsRestored": "Identity restored",
+  "restoredIdentity": "Identity restored",
+  "@restoredIdentity": {
+    "description": "Shown once the identity was restored, from the 12 words or from a file."
+  },
   "settingsPlace": "Place",
   "@settingsPlace": {
     "description": "A heading: the node's position, from its GPS or set by hand."
@@ -1308,6 +1341,26 @@
     "description": "A sentence without its full stop, which the app adds.",
     "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
   },
+  "linkImageTooShort": "malformed image: too short",
+  "@linkImageTooShort": {
+    "description": "Why a file, picked or downloaded, is not node firmware the app can send; it follows updateNoFirmware's words, so lower case. So are the other linkImage… reasons."
+  },
+  "linkImageNotOne": "malformed image: not one",
+  "@linkImageNotOne": {
+    "description": "The file does not begin as a firmware file does."
+  },
+  "linkImageFormat": "malformed image: format",
+  "@linkImageFormat": {
+    "description": "The firmware file is of a layout this app does not know."
+  },
+  "linkImageLength": "malformed image: length",
+  "@linkImageLength": {
+    "description": "The firmware file is longer or shorter than its header says."
+  },
+  "linkImageHash": "malformed image: hash",
+  "@linkImageHash": {
+    "description": "The firmware file's bytes do not match the checksum in its header: it is damaged."
+  },
 
   "fullNode": "This node is full: eight phones are paired with it.",
   "@fullNode": {
@@ -1548,5 +1601,381 @@
   "@placeNone": {
     "description": "The phone could not tell where it is. {error} is the phone's own reason, in English.",
     "placeholders": {"error": {"type": "String"}}
+  },
+
+  "version": "Version {version}",
+  "@version": {
+    "description": "A version of the app or of a node's firmware, standing alone: Settings' line on the app or the node, or the title of a firmware file chosen to send.",
+    "placeholders": {"version": {"type": "int"}}
+  },
+  "sendToNode": "Send to the node",
+  "@sendToNode": {
+    "description": "A button that sends new firmware to the connected node."
+  },
+
+  "installInstalling": "{node} is installing version {version}, back in about a minute",
+  "@installInstalling": {
+    "description": "The line on the first screen and in Settings while a paired node is away, restarting into a new version of its firmware.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "version": {"type": "int"}}
+  },
+  "installInstallingLate": "{node} is installing version {version}, not back yet",
+  "@installInstallingLate": {
+    "description": "As installInstalling, once the node is away longer than its restart takes.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "version": {"type": "int"}}
+  },
+  "installSentHelp": "{node} restarts into version {version}, which this phone sent it, for about a minute. The phone waits for it and reconnects by itself.",
+  "@installSentHelp": {
+    "description": "The help on that line, for firmware this phone sent the node.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "version": {"type": "int"}}
+  },
+  "installMeshHelp": "{node} got version {version} from the nodes around it. It passes on the texts it holds, at most ten minutes, then restarts for about a minute. The phone reconnects by itself; nothing is lost.",
+  "@installMeshHelp": {
+    "description": "The help on that line, for firmware the node got over the radio from other nodes. 'It' is the node.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "version": {"type": "int"}}
+  },
+
+  "updateTitle": "Update firmware",
+  "@updateTitle": {
+    "description": "The title of the screen that sends new firmware to the connected node."
+  },
+  "updateNotConnected": "Not connected to a node.",
+  "updateRuns": "{node} runs version {version}.",
+  "@updateRuns": {
+    "description": "The version of the firmware the connected node runs.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "version": {"type": "int"}}
+  },
+  "updateRunsSince": "{node} runs version {version}, updated from version {from} {ago}.",
+  "@updateRunsSince": {
+    "description": "As updateRuns, after this phone updated the node. {ago} is how long ago, such as timeMinutesAgo or timeJustNow.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "version": {"type": "int"}, "from": {"type": "int"}, "ago": {"type": "String"}}
+  },
+  "updateLatest": "Latest release",
+  "@updateLatest": {
+    "description": "A button: download the firmware of the project's latest release, to send it to the node."
+  },
+  "updatePickFile": "Pick a file",
+  "@updatePickFile": {
+    "description": "A button: choose a firmware file on the phone, to send it to the node."
+  },
+  "updatePickedFile": "a picked file",
+  "@updatePickedFile": {
+    "description": "Stands for the name of a firmware file chosen on the phone when it has none; it begins the line updateImage, in lower case."
+  },
+  "updateNoFile": "no file chosen",
+  "@updateNoFile": {
+    "description": "Why there is no firmware to send: the person closed the file picker. It follows updateNoFirmware's words, so lower case."
+  },
+  "updateDownloadFailed": "could not download the file: check the internet connection",
+  "@updateDownloadFailed": {
+    "description": "Why there is no firmware to send: downloading the release's file failed. It follows updateNoFirmware's words, so lower case."
+  },
+  "updateNoFirmware": "No firmware: {error}",
+  "@updateNoFirmware": {
+    "description": "Downloading or reading a firmware file failed. {error} is why, such as linkImageHash.",
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "updateHearsNoOne": "The node hears no one",
+  "@updateHearsNoOne": {
+    "description": "The title of a warning: since the update, the node hears no other node."
+  },
+  "updateHearsNoOneWarning": "Since version {version} it hears no other node: the new firmware may have broken its radio. To go back, double-tap its reset button and copy {file} from that release to it over USB; the phone cannot send an older version.",
+  "@updateHearsNoOneWarning": {
+    "description": "Under updateHearsNoOne. 'It' is the node; 'that release' is the release of the version the node ran before, whose file {file} is.",
+    "placeholders": {"version": {"type": "int"}, "file": {"type": "String", "example": "bark-fw-1.uf2"}}
+  },
+  "updateNoRelease": "No release known yet.",
+  "@updateNoRelease": {
+    "description": "Why the button updateLatest is off: the app has not yet learnt of any release."
+  },
+  "updateReleaseNoFirmware": "Release {release} carries no node firmware.",
+  "@updateReleaseNoFirmware": {
+    "description": "Why the button updateLatest is off.",
+    "placeholders": {"release": {"type": "int"}}
+  },
+  "updateRunsLatest": "The node already runs the latest release's firmware, version {version}.",
+  "@updateRunsLatest": {
+    "description": "Why the button updateLatest is off.",
+    "placeholders": {"version": {"type": "int"}}
+  },
+  "updateRunsNewer": "The node runs a newer version than the latest release's firmware, {version}.",
+  "@updateRunsNewer": {
+    "description": "Why the button updateLatest is off; {version} is the version of the latest release's firmware.",
+    "placeholders": {"version": {"type": "int"}}
+  },
+  "updateImage": "{source}, {kib} KiB",
+  "@updateImage": {
+    "description": "Under the firmware's version: where it came from and its size.",
+    "placeholders": {"source": {"type": "String", "example": "bark-fw-2.img", "description": "The file's name, or updatePickedFile."}, "kib": {"type": "int", "description": "The size in kibibytes."}}
+  },
+  "updateImageNotNewer": "{source}, {kib} KiB: not newer than the node's",
+  "@updateImageNotNewer": {
+    "description": "As updateImage, for firmware no newer than the version the node runs, which the node would not take.",
+    "placeholders": {"source": {"type": "String", "example": "bark-fw-2.img"}, "kib": {"type": "int"}}
+  },
+  "updateOnNode": "{held} of {total} KiB on the node",
+  "@updateOnNode": {
+    "description": "How much of the firmware the node has received, in kibibytes.",
+    "placeholders": {"held": {"type": "int"}, "total": {"type": "int"}}
+  },
+  "updateSending": "Sending…",
+  "@updateSending": {
+    "description": "While the firmware goes to the node."
+  },
+  "updateChecking": "The node checks the firmware…",
+  "updateGoOn": "Go on",
+  "@updateGoOn": {
+    "description": "A button: go on sending the firmware after the link dropped."
+  },
+  "updateTryAgain": "Try again",
+  "@updateTryAgain": {
+    "description": "A button: ask the node again to check the firmware it has, as after it refused for a low battery."
+  },
+  "updateReboot": "Reboot into version {version}",
+  "@updateReboot": {
+    "description": "A button: the node restarts and starts the new firmware.",
+    "placeholders": {"version": {"type": "int"}}
+  },
+  "updateStalled": "The node takes no pieces",
+  "@updateStalled": {
+    "description": "The update stopped: the node took none of the firmware's pieces for a while."
+  },
+  "updatePaused": "The link dropped; it goes on when the node is back",
+  "@updatePaused": {
+    "description": "'It' is the update. The link is the phone's Bluetooth link with the node."
+  },
+  "updateHolds": "The node holds version {version}",
+  "@updateHolds": {
+    "description": "The node has every byte of the firmware and has checked it; what is left is to restart it.",
+    "placeholders": {"version": {"type": "int"}}
+  },
+  "updateLost": "The node lost the firmware",
+  "updateChecked": "The node checked version {version}",
+  "@updateChecked": {
+    "placeholders": {"version": {"type": "int"}}
+  },
+  "updateCommitFailed": "Committing failed: {error}",
+  "@updateCommitFailed": {
+    "description": "Asking the node to check the firmware it received and take it failed.",
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "updateAnswered": "The node answered {error}",
+  "@updateAnswered": {
+    "description": "The node answered with an error, such as linkAttError.",
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "updateRefused": "The node refused: {reason}",
+  "@updateRefused": {
+    "description": "{reason} is one of the linkRefused… reasons.",
+    "placeholders": {"reason": {"type": "String"}}
+  },
+  "updateRefusedNoReason": "The node refused: it did not say why",
+  "updateRestarts": "The node restarts, about a minute",
+  "@updateRestarts": {
+    "description": "The node restarts into the new firmware, which takes about a minute."
+  },
+  "updateNotBack": "The node is not back; it may be out of reach",
+  "@updateNotBack": {
+    "description": "The node has not come back after its restart for longer than it takes."
+  },
+  "updateRebootFailed": "Reboot failed: {error}",
+  "@updateRebootFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "updateOtherNode": "connected to another node than {node}",
+  "@updateOtherNode": {
+    "description": "Why a step of the update failed: the phone is on another node than the one it updates. Lower case, as it follows words such as updateRebootFailed's.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "updatePairedOnly": "only the phone paired with the node updates it",
+  "@updatePairedOnly": {
+    "description": "Why a step of the update failed: the phone uses the node as a guest. Lower case, as updateOtherNode."
+  },
+  "updateDidNotStart": "Version {version} did not start; the node is back on {running}",
+  "@updateDidNotStart": {
+    "description": "The new firmware did not start and the node went back to the version it ran before, {running}.",
+    "placeholders": {"version": {"type": "int"}, "running": {"type": "int"}}
+  },
+
+  "updatesHeading": "Updates",
+  "@updatesHeading": {
+    "description": "The heading of Settings' section on new versions of the app and of the node's firmware."
+  },
+  "updatesCheck": "Check for updates",
+  "updatesUnreached": "Could not reach the release list",
+  "updatesApp": "App",
+  "@updatesApp": {
+    "description": "The row on this app's version; releaseAppOut names it."
+  },
+  "updatesDevBuild": "A development build",
+  "@updatesDevBuild": {
+    "description": "Under updatesApp: this app was built by hand, not by a release, and so has no version."
+  },
+  "updatesAppOut": "Version {version}; {latest} is out. Tap to install",
+  "@updatesAppOut": {
+    "description": "Under updatesApp: this app's version, and the newer one of the latest release.",
+    "placeholders": {"version": {"type": "int"}, "latest": {"type": "int"}}
+  },
+  "updatesAppDownloading": "Version {version}; downloading {latest}…",
+  "@updatesAppDownloading": {
+    "placeholders": {"version": {"type": "int"}, "latest": {"type": "int"}}
+  },
+  "updatesAppDownloadingPercent": "Version {version}; downloading {latest}… {percent}%",
+  "@updatesAppDownloadingPercent": {
+    "placeholders": {"version": {"type": "int"}, "latest": {"type": "int"}, "percent": {"type": "int"}}
+  },
+  "updatesAppReady": "Version {version}; {latest} is downloaded. Tap to install",
+  "@updatesAppReady": {
+    "placeholders": {"version": {"type": "int"}, "latest": {"type": "int"}}
+  },
+  "updatesAppFailed": "Version {version}; {latest} did not download. Tap to try again",
+  "@updatesAppFailed": {
+    "placeholders": {"version": {"type": "int"}, "latest": {"type": "int"}}
+  },
+  "updatesNodeNewer": "Update it for the node's new features",
+  "@updatesNodeNewer": {
+    "description": "A sentence after the line on the app's version, when the node runs newer firmware than this app knows; 'it' is the app. The app adds the full stop before it."
+  },
+  "updatesNodeFirmware": "Node firmware",
+  "@updatesNodeFirmware": {
+    "description": "The row on the connected node's firmware; releaseFirmwareOut names it too."
+  },
+  "updatesNotConnected": "Not connected",
+  "@updatesNotConnected": {
+    "description": "Under updatesNodeFirmware: no node connected."
+  },
+  "updatesGuest": "Only its paired phones update it",
+  "@updatesGuest": {
+    "description": "Under updatesNodeFirmware, for a node this phone uses as a guest: 'its' and 'it' are the node."
+  },
+  "updatesFirmwareOut": "Version {version}; {latest} is out",
+  "@updatesFirmwareOut": {
+    "description": "Under updatesNodeFirmware: the version the node runs, and the newer one of the latest release.",
+    "placeholders": {"version": {"type": "int"}, "latest": {"type": "int"}}
+  },
+
+  "releaseLine": "{app}; {node}",
+  "@releaseLine": {
+    "description": "What Check for updates found, in one line: {app} is one of the releaseApp… clauses, {node} one of the others, in lower case.",
+    "placeholders": {"app": {"type": "String"}, "node": {"type": "String"}}
+  },
+  "releaseAppDev": "App is a development build",
+  "@releaseAppDev": {
+    "description": "This app was built by hand, not by a release. It begins releaseLine."
+  },
+  "releaseAppOut": "App {version} is out: tap App below",
+  "@releaseAppOut": {
+    "description": "App below is the row updatesApp. It begins releaseLine, so it has a capital; so does releaseAppUpToDate.",
+    "placeholders": {"version": {"type": "int"}}
+  },
+  "releaseAppUpToDate": "App up to date ({version})",
+  "@releaseAppUpToDate": {
+    "description": "This app is the latest release's. It begins releaseLine, so it has a capital.",
+    "placeholders": {"version": {"type": "int"}}
+  },
+  "releaseNoNode": "no node linked",
+  "@releaseNoNode": {
+    "description": "Follows a releaseApp… clause in releaseLine, so lower case; so do the other release… clauses on the node."
+  },
+  "releaseNotYours": "the node is not yours to update",
+  "@releaseNotYours": {
+    "description": "The phone uses the node as a guest; only its paired phones update it."
+  },
+  "releaseBench": "node firmware is a bench build",
+  "@releaseBench": {
+    "description": "The node runs firmware built by hand and loaded over USB, which has no version."
+  },
+  "releaseNoneCarried": "node firmware {version}; the release carries none",
+  "@releaseNoneCarried": {
+    "description": "The node runs version {version}; the latest release has no node firmware.",
+    "placeholders": {"version": {"type": "int"}}
+  },
+  "releaseFirmwareOut": "node firmware {version} is out: send it below",
+  "@releaseFirmwareOut": {
+    "description": "Below is the row updatesNodeFirmware, with its button sendToNode.",
+    "placeholders": {"version": {"type": "int"}}
+  },
+  "releaseFirmwareUpToDate": "node firmware {version}, up to date",
+  "@releaseFirmwareUpToDate": {
+    "placeholders": {"version": {"type": "int"}}
+  },
+
+  "identityHelp": "The file holds your identity, name, home, contacts and the nodes you paired with, and your messages if you tick the box. Your password locks it: without it nobody can open the file, not even you.\n\nOn the new phone, tap Restore from a file, then pair with your nodes again: a pairing stays on the phone it was made on. Your home keeps your mail meanwhile, and you can fetch it from any other node.\n\nUse one phone at a time: two phones with one identity would each take mail the other never sees.\n\nYour 12 words bring back your identity alone.",
+  "@identityHelp": {
+    "description": "The help of Settings' section myIdentity, on the identity file. Restore from a file is the button identityRestore; the box is identityAddMessages."
+  },
+  "identitySaveHow": "Save it to a file to move to a new phone.",
+  "@identitySaveHow": {
+    "description": "Under the heading myIdentity: 'it' is the identity."
+  },
+  "identitySave": "Save to a file",
+  "@identitySave": {
+    "description": "A button that saves the identity file."
+  },
+  "identityRestore": "Restore from a file",
+  "@identityRestore": {
+    "description": "A button that restores the identity from an identity file."
+  },
+  "identitySaveTitle": "Save my identity",
+  "@identitySaveTitle": {
+    "description": "The title of the dialog that takes the identity file's new password."
+  },
+  "identitySaved": "Saved",
+  "@identitySaved": {
+    "description": "The identity file was saved."
+  },
+  "identityNotSaved": "Not saved",
+  "@identityNotSaved": {
+    "description": "The person closed the phone's file dialog without saving."
+  },
+  "identitySaveFailed": "Saving failed: {error}",
+  "@identitySaveFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "identityRestoreTitle": "Restore from a file?",
+  "identityRestoreHow": "This replaces the identity, contacts and messages on this phone.",
+  "identityChooseFile": "Choose file",
+  "@identityChooseFile": {
+    "description": "The button of the dialog identityRestoreTitle: it opens the phone's file picker."
+  },
+  "identityOpenFailed": "Opening failed: {error}",
+  "@identityOpenFailed": {
+    "description": "Opening the picked file failed.",
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "identityPasswordTitle": "The file's password",
+  "@identityPasswordTitle": {
+    "description": "The title of the dialog that takes the password of the identity file being restored."
+  },
+  "identityRestoredPairAgain": "Identity restored. Pair again with your nodes.",
+  "identityRefused": "{reason} Nothing changed.",
+  "@identityRefused": {
+    "description": "The identity file was not read. {reason} is a sentence with its full stop, such as identityWrongPassword.",
+    "placeholders": {"reason": {"type": "String"}}
+  },
+  "identityNotFile": "This is not a bark identity file.",
+  "@identityNotFile": {
+    "description": "bark is the app's name, always in lower case."
+  },
+  "identityOtherLayout": "This file is from another version of the app.",
+  "identityWrongPassword": "Wrong password, or the file is damaged.",
+  "identityPassword": "Password",
+  "@identityPassword": {
+    "description": "The label of the field where the identity file's password is typed."
+  },
+  "identityPasswordAgain": "Password again",
+  "@identityPasswordAgain": {
+    "description": "The label of the field where a new password is typed a second time."
+  },
+  "identityNotSame": "Not the same",
+  "@identityNotSame": {
+    "description": "Under identityPasswordAgain: the two passwords typed differ."
+  },
+  "identityAddMessages": "Add my messages",
+  "@identityAddMessages": {
+    "description": "A box to tick: the identity file holds the person's messages too."
+  },
+  "identityOnePhone": "Use it on one phone at a time.",
+  "@identityOnePhone": {
+    "description": "In the dialog identitySaveTitle: 'it' is the identity."
   }
 }

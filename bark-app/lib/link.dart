@@ -108,6 +108,25 @@ class Malformed implements Exception, Spoken {
   String toString() => words(english);
 }
 
+/// Why a firmware file is not one the app sends.
+enum BadImage { tooShort, notOne, format, length, hash }
+
+/// A file that is not a firmware image the app sends, which the person
+/// reads as the reason there is none. Its English, the log's, names the
+/// fault as [Malformed] does.
+class MalformedImage extends Malformed {
+  final BadImage why;
+  const MalformedImage(this.why) : super('image');
+  @override
+  String words(AppLocalizations w) => switch (why) {
+    BadImage.tooShort => w.linkImageTooShort,
+    BadImage.notOne => w.linkImageNotOne,
+    BadImage.format => w.linkImageFormat,
+    BadImage.length => w.linkImageLength,
+    BadImage.hash => w.linkImageHash,
+  };
+}
+
 String hex(List<int> bytes) =>
     bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 
@@ -768,11 +787,13 @@ class FirmwareImage {
     List<int> file,
     List<int> Function(List<int>) sha256,
   ) {
-    if (file.length <= headerLen) throw const Malformed('image: too short');
-    for (var i = 0; i < _magic.length; i++) {
-      if (file[i] != _magic[i]) throw const Malformed('image: not one');
+    if (file.length <= headerLen) {
+      throw const MalformedImage(BadImage.tooShort);
     }
-    if (file[4] != _format) throw const Malformed('image: format');
+    for (var i = 0; i < _magic.length; i++) {
+      if (file[i] != _magic[i]) throw const MalformedImage(BadImage.notOne);
+    }
+    if (file[4] != _format) throw const MalformedImage(BadImage.format);
     int le32(int at) =>
         file[at] |
         (file[at + 1] << 8) |
@@ -781,11 +802,13 @@ class FirmwareImage {
     final version = le32(8);
     final length = le32(12);
     if (length != file.length - headerLen) {
-      throw const Malformed('image: length');
+      throw const MalformedImage(BadImage.length);
     }
     final bytes = Uint8List.fromList(file.sublist(headerLen));
     final hash = Uint8List.fromList(file.sublist(16, 16 + hashLen));
-    if (hex(sha256(bytes)) != hex(hash)) throw const Malformed('image: hash');
+    if (hex(sha256(bytes)) != hex(hash)) {
+      throw const MalformedImage(BadImage.hash);
+    }
     return FirmwareImage._(
       Uint8List.fromList(file.sublist(0, headerLen)),
       bytes,

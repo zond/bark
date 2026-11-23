@@ -404,23 +404,63 @@ class AppLocalizationsEn extends AppLocalizations {
   String get statusNotLooking => 'Not connected. Texts wait on the phone';
 
   @override
-  String statusGuestFor30s(String node, String install) {
-    return 'Connected to $node as a guest for 30 s$install';
+  String statusGuestFor30s(String node) {
+    return 'Connected to $node as a guest for 30 s';
   }
 
   @override
-  String statusGuest(String node, String install) {
-    return 'Connected to $node as a guest$install';
+  String statusGuestFor30sInstalling(String node, int version) {
+    return 'Connected to $node as a guest for 30 s, installing version $version';
   }
 
   @override
-  String statusAtHome(String node, String install) {
-    return 'Connected to your home, $node$install';
+  String statusGuestFor30sUpdated(String node, int version) {
+    return 'Connected to $node as a guest for 30 s, updated to version $version';
   }
 
   @override
-  String statusPaired(String node, String install) {
-    return 'Connected to $node, paired$install';
+  String statusGuest(String node) {
+    return 'Connected to $node as a guest';
+  }
+
+  @override
+  String statusGuestInstalling(String node, int version) {
+    return 'Connected to $node as a guest, installing version $version';
+  }
+
+  @override
+  String statusGuestUpdated(String node, int version) {
+    return 'Connected to $node as a guest, updated to version $version';
+  }
+
+  @override
+  String statusAtHome(String node) {
+    return 'Connected to your home, $node';
+  }
+
+  @override
+  String statusAtHomeInstalling(String node, int version) {
+    return 'Connected to your home, $node, installing version $version';
+  }
+
+  @override
+  String statusAtHomeUpdated(String node, int version) {
+    return 'Connected to your home, $node, updated to version $version';
+  }
+
+  @override
+  String statusPaired(String node) {
+    return 'Connected to $node, paired';
+  }
+
+  @override
+  String statusPairedInstalling(String node, int version) {
+    return 'Connected to $node, paired, installing version $version';
+  }
+
+  @override
+  String statusPairedUpdated(String node, int version) {
+    return 'Connected to $node, paired, updated to version $version';
   }
 
   @override
@@ -831,7 +871,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get sessionNotConnected => 'not connected';
+  String get notConnected => 'not connected';
 
   @override
   String sessionPairedOnly(String what) {
@@ -969,7 +1009,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cardDetails => 'Details';
 
   @override
-  String get cardMyIdentity => 'My identity';
+  String get myIdentity => 'My identity';
 
   @override
   String get cardCopyIdentity => 'Copy the identity';
@@ -1254,7 +1294,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'This phone takes the identity of the words. Contacts reach it only once they have its card.';
 
   @override
-  String get settingsRestoreButton => 'Restore';
+  String get restore => 'Restore';
 
   @override
   String get settingsYourWords => 'Your 12 words';
@@ -1263,7 +1303,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsNotWords => 'Those are not 12 words of a backup';
 
   @override
-  String get settingsRestored => 'Identity restored';
+  String get restoredIdentity => 'Identity restored';
 
   @override
   String get settingsPlace => 'Place';
@@ -1671,6 +1711,21 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get linkImageTooShort => 'malformed image: too short';
+
+  @override
+  String get linkImageNotOne => 'malformed image: not one';
+
+  @override
+  String get linkImageFormat => 'malformed image: format';
+
+  @override
+  String get linkImageLength => 'malformed image: length';
+
+  @override
+  String get linkImageHash => 'malformed image: hash';
+
+  @override
   String get fullNode => 'This node is full: eight phones are paired with it.';
 
   @override
@@ -1959,4 +2014,368 @@ class AppLocalizationsEn extends AppLocalizations {
   String placeNone(String error) {
     return 'No location: $error';
   }
+
+  @override
+  String version(int version) {
+    return 'Version $version';
+  }
+
+  @override
+  String get sendToNode => 'Send to the node';
+
+  @override
+  String installInstalling(String node, int version) {
+    return '$node is installing version $version, back in about a minute';
+  }
+
+  @override
+  String installInstallingLate(String node, int version) {
+    return '$node is installing version $version, not back yet';
+  }
+
+  @override
+  String installSentHelp(String node, int version) {
+    return '$node restarts into version $version, which this phone sent it, for about a minute. The phone waits for it and reconnects by itself.';
+  }
+
+  @override
+  String installMeshHelp(String node, int version) {
+    return '$node got version $version from the nodes around it. It passes on the texts it holds, at most ten minutes, then restarts for about a minute. The phone reconnects by itself; nothing is lost.';
+  }
+
+  @override
+  String get updateTitle => 'Update firmware';
+
+  @override
+  String get updateNotConnected => 'Not connected to a node.';
+
+  @override
+  String updateRuns(String node, int version) {
+    return '$node runs version $version.';
+  }
+
+  @override
+  String updateRunsSince(String node, int version, int from, String ago) {
+    return '$node runs version $version, updated from version $from $ago.';
+  }
+
+  @override
+  String get updateLatest => 'Latest release';
+
+  @override
+  String get updatePickFile => 'Pick a file';
+
+  @override
+  String get updatePickedFile => 'a picked file';
+
+  @override
+  String get updateNoFile => 'no file chosen';
+
+  @override
+  String get updateDownloadFailed =>
+      'could not download the file: check the internet connection';
+
+  @override
+  String updateNoFirmware(String error) {
+    return 'No firmware: $error';
+  }
+
+  @override
+  String get updateHearsNoOne => 'The node hears no one';
+
+  @override
+  String updateHearsNoOneWarning(int version, String file) {
+    return 'Since version $version it hears no other node: the new firmware may have broken its radio. To go back, double-tap its reset button and copy $file from that release to it over USB; the phone cannot send an older version.';
+  }
+
+  @override
+  String get updateNoRelease => 'No release known yet.';
+
+  @override
+  String updateReleaseNoFirmware(int release) {
+    return 'Release $release carries no node firmware.';
+  }
+
+  @override
+  String updateRunsLatest(int version) {
+    return 'The node already runs the latest release\'s firmware, version $version.';
+  }
+
+  @override
+  String updateRunsNewer(int version) {
+    return 'The node runs a newer version than the latest release\'s firmware, $version.';
+  }
+
+  @override
+  String updateImage(String source, int kib) {
+    return '$source, $kib KiB';
+  }
+
+  @override
+  String updateImageNotNewer(String source, int kib) {
+    return '$source, $kib KiB: not newer than the node\'s';
+  }
+
+  @override
+  String updateOnNode(int held, int total) {
+    return '$held of $total KiB on the node';
+  }
+
+  @override
+  String get updateSending => 'Sending…';
+
+  @override
+  String get updateChecking => 'The node checks the firmware…';
+
+  @override
+  String get updateGoOn => 'Go on';
+
+  @override
+  String get updateTryAgain => 'Try again';
+
+  @override
+  String updateReboot(int version) {
+    return 'Reboot into version $version';
+  }
+
+  @override
+  String get updateStalled => 'The node takes no pieces';
+
+  @override
+  String get updatePaused =>
+      'The link dropped; it goes on when the node is back';
+
+  @override
+  String updateHolds(int version) {
+    return 'The node holds version $version';
+  }
+
+  @override
+  String get updateLost => 'The node lost the firmware';
+
+  @override
+  String updateChecked(int version) {
+    return 'The node checked version $version';
+  }
+
+  @override
+  String updateCommitFailed(String error) {
+    return 'Committing failed: $error';
+  }
+
+  @override
+  String updateAnswered(String error) {
+    return 'The node answered $error';
+  }
+
+  @override
+  String updateRefused(String reason) {
+    return 'The node refused: $reason';
+  }
+
+  @override
+  String get updateRefusedNoReason => 'The node refused: it did not say why';
+
+  @override
+  String get updateRestarts => 'The node restarts, about a minute';
+
+  @override
+  String get updateNotBack => 'The node is not back; it may be out of reach';
+
+  @override
+  String updateRebootFailed(String error) {
+    return 'Reboot failed: $error';
+  }
+
+  @override
+  String updateOtherNode(String node) {
+    return 'connected to another node than $node';
+  }
+
+  @override
+  String get updatePairedOnly =>
+      'only the phone paired with the node updates it';
+
+  @override
+  String updateDidNotStart(int version, int running) {
+    return 'Version $version did not start; the node is back on $running';
+  }
+
+  @override
+  String get updatesHeading => 'Updates';
+
+  @override
+  String get updatesCheck => 'Check for updates';
+
+  @override
+  String get updatesUnreached => 'Could not reach the release list';
+
+  @override
+  String get updatesApp => 'App';
+
+  @override
+  String get updatesDevBuild => 'A development build';
+
+  @override
+  String updatesAppOut(int version, int latest) {
+    return 'Version $version; $latest is out. Tap to install';
+  }
+
+  @override
+  String updatesAppDownloading(int version, int latest) {
+    return 'Version $version; downloading $latest…';
+  }
+
+  @override
+  String updatesAppDownloadingPercent(int version, int latest, int percent) {
+    return 'Version $version; downloading $latest… $percent%';
+  }
+
+  @override
+  String updatesAppReady(int version, int latest) {
+    return 'Version $version; $latest is downloaded. Tap to install';
+  }
+
+  @override
+  String updatesAppFailed(int version, int latest) {
+    return 'Version $version; $latest did not download. Tap to try again';
+  }
+
+  @override
+  String get updatesNodeNewer => 'Update it for the node\'s new features';
+
+  @override
+  String get updatesNodeFirmware => 'Node firmware';
+
+  @override
+  String get updatesNotConnected => 'Not connected';
+
+  @override
+  String get updatesGuest => 'Only its paired phones update it';
+
+  @override
+  String updatesFirmwareOut(int version, int latest) {
+    return 'Version $version; $latest is out';
+  }
+
+  @override
+  String releaseLine(String app, String node) {
+    return '$app; $node';
+  }
+
+  @override
+  String get releaseAppDev => 'App is a development build';
+
+  @override
+  String releaseAppOut(int version) {
+    return 'App $version is out: tap App below';
+  }
+
+  @override
+  String releaseAppUpToDate(int version) {
+    return 'App up to date ($version)';
+  }
+
+  @override
+  String get releaseNoNode => 'no node linked';
+
+  @override
+  String get releaseNotYours => 'the node is not yours to update';
+
+  @override
+  String get releaseBench => 'node firmware is a bench build';
+
+  @override
+  String releaseNoneCarried(int version) {
+    return 'node firmware $version; the release carries none';
+  }
+
+  @override
+  String releaseFirmwareOut(int version) {
+    return 'node firmware $version is out: send it below';
+  }
+
+  @override
+  String releaseFirmwareUpToDate(int version) {
+    return 'node firmware $version, up to date';
+  }
+
+  @override
+  String get identityHelp =>
+      'The file holds your identity, name, home, contacts and the nodes you paired with, and your messages if you tick the box. Your password locks it: without it nobody can open the file, not even you.\n\nOn the new phone, tap Restore from a file, then pair with your nodes again: a pairing stays on the phone it was made on. Your home keeps your mail meanwhile, and you can fetch it from any other node.\n\nUse one phone at a time: two phones with one identity would each take mail the other never sees.\n\nYour 12 words bring back your identity alone.';
+
+  @override
+  String get identitySaveHow => 'Save it to a file to move to a new phone.';
+
+  @override
+  String get identitySave => 'Save to a file';
+
+  @override
+  String get identityRestore => 'Restore from a file';
+
+  @override
+  String get identitySaveTitle => 'Save my identity';
+
+  @override
+  String get identitySaved => 'Saved';
+
+  @override
+  String get identityNotSaved => 'Not saved';
+
+  @override
+  String identitySaveFailed(String error) {
+    return 'Saving failed: $error';
+  }
+
+  @override
+  String get identityRestoreTitle => 'Restore from a file?';
+
+  @override
+  String get identityRestoreHow =>
+      'This replaces the identity, contacts and messages on this phone.';
+
+  @override
+  String get identityChooseFile => 'Choose file';
+
+  @override
+  String identityOpenFailed(String error) {
+    return 'Opening failed: $error';
+  }
+
+  @override
+  String get identityPasswordTitle => 'The file\'s password';
+
+  @override
+  String get identityRestoredPairAgain =>
+      'Identity restored. Pair again with your nodes.';
+
+  @override
+  String identityRefused(String reason) {
+    return '$reason Nothing changed.';
+  }
+
+  @override
+  String get identityNotFile => 'This is not a bark identity file.';
+
+  @override
+  String get identityOtherLayout =>
+      'This file is from another version of the app.';
+
+  @override
+  String get identityWrongPassword => 'Wrong password, or the file is damaged.';
+
+  @override
+  String get identityPassword => 'Password';
+
+  @override
+  String get identityPasswordAgain => 'Password again';
+
+  @override
+  String get identityNotSame => 'Not the same';
+
+  @override
+  String get identityAddMessages => 'Add my messages';
+
+  @override
+  String get identityOnePhone => 'Use it on one phone at a time.';
 }

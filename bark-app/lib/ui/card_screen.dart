@@ -96,7 +96,7 @@ class CardScreen extends StatelessWidget {
               childrenPadding: EdgeInsets.zero,
               children: [
                 copyable(
-                  tr.cardMyIdentity,
+                  tr.myIdentity,
                   me.key,
                   copy: tr.cardCopyIdentity,
                   copied: tr.cardIdentityCopied,

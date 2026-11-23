@@ -730,29 +730,77 @@ abstract class AppLocalizations {
   /// **'Not connected. Texts wait on the phone'**
   String get statusNotLooking;
 
-  /// {install} is what the node's install adds: empty, or a clause that begins with a comma, such as ', installing version 5'.
+  /// No description provided for @statusGuestFor30s.
   ///
   /// In en, this message translates to:
-  /// **'Connected to {node} as a guest for 30 s{install}'**
-  String statusGuestFor30s(String node, String install);
+  /// **'Connected to {node} as a guest for 30 s'**
+  String statusGuestFor30s(String node);
 
-  /// {install} as in statusGuestFor30s.
+  /// As statusGuestFor30s, while the node is about to install a new version of its firmware. So are the other status…Installing messages.
   ///
   /// In en, this message translates to:
-  /// **'Connected to {node} as a guest{install}'**
-  String statusGuest(String node, String install);
+  /// **'Connected to {node} as a guest for 30 s, installing version {version}'**
+  String statusGuestFor30sInstalling(String node, int version);
 
-  /// {install} as in statusGuestFor30s.
+  /// As statusGuestFor30s, for a minute after the node came back on a new version of its firmware. So are the other status…Updated messages.
   ///
   /// In en, this message translates to:
-  /// **'Connected to your home, {node}{install}'**
-  String statusAtHome(String node, String install);
+  /// **'Connected to {node} as a guest for 30 s, updated to version {version}'**
+  String statusGuestFor30sUpdated(String node, int version);
 
-  /// {install} as in statusGuestFor30s.
+  /// No description provided for @statusGuest.
   ///
   /// In en, this message translates to:
-  /// **'Connected to {node}, paired{install}'**
-  String statusPaired(String node, String install);
+  /// **'Connected to {node} as a guest'**
+  String statusGuest(String node);
+
+  /// No description provided for @statusGuestInstalling.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected to {node} as a guest, installing version {version}'**
+  String statusGuestInstalling(String node, int version);
+
+  /// No description provided for @statusGuestUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected to {node} as a guest, updated to version {version}'**
+  String statusGuestUpdated(String node, int version);
+
+  /// No description provided for @statusAtHome.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected to your home, {node}'**
+  String statusAtHome(String node);
+
+  /// No description provided for @statusAtHomeInstalling.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected to your home, {node}, installing version {version}'**
+  String statusAtHomeInstalling(String node, int version);
+
+  /// No description provided for @statusAtHomeUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected to your home, {node}, updated to version {version}'**
+  String statusAtHomeUpdated(String node, int version);
+
+  /// No description provided for @statusPaired.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected to {node}, paired'**
+  String statusPaired(String node);
+
+  /// No description provided for @statusPairedInstalling.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected to {node}, paired, installing version {version}'**
+  String statusPairedInstalling(String node, int version);
+
+  /// No description provided for @statusPairedUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected to {node}, paired, updated to version {version}'**
+  String statusPairedUpdated(String node, int version);
 
   /// A sentence after the line that says which node the phone is on.
   ///
@@ -1364,7 +1412,7 @@ abstract class AppLocalizations {
   ///
   /// In en, this message translates to:
   /// **'not connected'**
-  String get sessionNotConnected;
+  String get notConnected;
 
   /// Why something failed for a guest. The value is the English name of what was asked of the node, such as Public or Phones.
   ///
@@ -1558,11 +1606,11 @@ abstract class AppLocalizations {
   /// **'Details'**
   String get cardDetails;
 
-  /// The person's identity, the public key their texts are sealed to, shown in hex.
+  /// The person's identity, the public key their texts are sealed to: the label of its hex on My card, and the heading of Settings' section that saves it to a file.
   ///
   /// In en, this message translates to:
   /// **'My identity'**
-  String get cardMyIdentity;
+  String get myIdentity;
 
   /// A button's tooltip; cardIdentityCopied says it is done. The other cardCopy… and …Copied messages are the same for the other rows.
   ///
@@ -2050,11 +2098,11 @@ abstract class AppLocalizations {
   /// **'This phone takes the identity of the words. Contacts reach it only once they have its card.'**
   String get settingsRestoreHow;
 
-  /// The button in the dialog settingsRestoreTitle.
+  /// The button that restores the identity, in the dialog settingsRestoreTitle and in the one that takes an identity file's password.
   ///
   /// In en, this message translates to:
   /// **'Restore'**
-  String get settingsRestoreButton;
+  String get restore;
 
   /// The title of the dialog where the backup words are typed.
   ///
@@ -2068,11 +2116,11 @@ abstract class AppLocalizations {
   /// **'Those are not 12 words of a backup'**
   String get settingsNotWords;
 
-  /// No description provided for @settingsRestored.
+  /// Shown once the identity was restored, from the 12 words or from a file.
   ///
   /// In en, this message translates to:
   /// **'Identity restored'**
-  String get settingsRestored;
+  String get restoredIdentity;
 
   /// A heading: the node's position, from its GPS or set by hand.
   ///
@@ -2734,6 +2782,36 @@ abstract class AppLocalizations {
   /// **'{node} not found: come nearer and try again'**
   String linkNotSeen(String node);
 
+  /// Why a file, picked or downloaded, is not node firmware the app can send; it follows updateNoFirmware's words, so lower case. So are the other linkImage… reasons.
+  ///
+  /// In en, this message translates to:
+  /// **'malformed image: too short'**
+  String get linkImageTooShort;
+
+  /// The file does not begin as a firmware file does.
+  ///
+  /// In en, this message translates to:
+  /// **'malformed image: not one'**
+  String get linkImageNotOne;
+
+  /// The firmware file is of a layout this app does not know.
+  ///
+  /// In en, this message translates to:
+  /// **'malformed image: format'**
+  String get linkImageFormat;
+
+  /// The firmware file is longer or shorter than its header says.
+  ///
+  /// In en, this message translates to:
+  /// **'malformed image: length'**
+  String get linkImageLength;
+
+  /// The firmware file's bytes do not match the checksum in its header: it is damaged.
+  ///
+  /// In en, this message translates to:
+  /// **'malformed image: hash'**
+  String get linkImageHash;
+
   /// A node takes no more pairings; shown in Settings' sections on the home and on the node.
   ///
   /// In en, this message translates to:
@@ -3213,6 +3291,564 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No location: {error}'**
   String placeNone(String error);
+
+  /// A version of the app or of a node's firmware, standing alone: Settings' line on the app or the node, or the title of a firmware file chosen to send.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version}'**
+  String version(int version);
+
+  /// A button that sends new firmware to the connected node.
+  ///
+  /// In en, this message translates to:
+  /// **'Send to the node'**
+  String get sendToNode;
+
+  /// The line on the first screen and in Settings while a paired node is away, restarting into a new version of its firmware.
+  ///
+  /// In en, this message translates to:
+  /// **'{node} is installing version {version}, back in about a minute'**
+  String installInstalling(String node, int version);
+
+  /// As installInstalling, once the node is away longer than its restart takes.
+  ///
+  /// In en, this message translates to:
+  /// **'{node} is installing version {version}, not back yet'**
+  String installInstallingLate(String node, int version);
+
+  /// The help on that line, for firmware this phone sent the node.
+  ///
+  /// In en, this message translates to:
+  /// **'{node} restarts into version {version}, which this phone sent it, for about a minute. The phone waits for it and reconnects by itself.'**
+  String installSentHelp(String node, int version);
+
+  /// The help on that line, for firmware the node got over the radio from other nodes. 'It' is the node.
+  ///
+  /// In en, this message translates to:
+  /// **'{node} got version {version} from the nodes around it. It passes on the texts it holds, at most ten minutes, then restarts for about a minute. The phone reconnects by itself; nothing is lost.'**
+  String installMeshHelp(String node, int version);
+
+  /// The title of the screen that sends new firmware to the connected node.
+  ///
+  /// In en, this message translates to:
+  /// **'Update firmware'**
+  String get updateTitle;
+
+  /// No description provided for @updateNotConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Not connected to a node.'**
+  String get updateNotConnected;
+
+  /// The version of the firmware the connected node runs.
+  ///
+  /// In en, this message translates to:
+  /// **'{node} runs version {version}.'**
+  String updateRuns(String node, int version);
+
+  /// As updateRuns, after this phone updated the node. {ago} is how long ago, such as timeMinutesAgo or timeJustNow.
+  ///
+  /// In en, this message translates to:
+  /// **'{node} runs version {version}, updated from version {from} {ago}.'**
+  String updateRunsSince(String node, int version, int from, String ago);
+
+  /// A button: download the firmware of the project's latest release, to send it to the node.
+  ///
+  /// In en, this message translates to:
+  /// **'Latest release'**
+  String get updateLatest;
+
+  /// A button: choose a firmware file on the phone, to send it to the node.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a file'**
+  String get updatePickFile;
+
+  /// Stands for the name of a firmware file chosen on the phone when it has none; it begins the line updateImage, in lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'a picked file'**
+  String get updatePickedFile;
+
+  /// Why there is no firmware to send: the person closed the file picker. It follows updateNoFirmware's words, so lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'no file chosen'**
+  String get updateNoFile;
+
+  /// Why there is no firmware to send: downloading the release's file failed. It follows updateNoFirmware's words, so lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'could not download the file: check the internet connection'**
+  String get updateDownloadFailed;
+
+  /// Downloading or reading a firmware file failed. {error} is why, such as linkImageHash.
+  ///
+  /// In en, this message translates to:
+  /// **'No firmware: {error}'**
+  String updateNoFirmware(String error);
+
+  /// The title of a warning: since the update, the node hears no other node.
+  ///
+  /// In en, this message translates to:
+  /// **'The node hears no one'**
+  String get updateHearsNoOne;
+
+  /// Under updateHearsNoOne. 'It' is the node; 'that release' is the release of the version the node ran before, whose file {file} is.
+  ///
+  /// In en, this message translates to:
+  /// **'Since version {version} it hears no other node: the new firmware may have broken its radio. To go back, double-tap its reset button and copy {file} from that release to it over USB; the phone cannot send an older version.'**
+  String updateHearsNoOneWarning(int version, String file);
+
+  /// Why the button updateLatest is off: the app has not yet learnt of any release.
+  ///
+  /// In en, this message translates to:
+  /// **'No release known yet.'**
+  String get updateNoRelease;
+
+  /// Why the button updateLatest is off.
+  ///
+  /// In en, this message translates to:
+  /// **'Release {release} carries no node firmware.'**
+  String updateReleaseNoFirmware(int release);
+
+  /// Why the button updateLatest is off.
+  ///
+  /// In en, this message translates to:
+  /// **'The node already runs the latest release\'s firmware, version {version}.'**
+  String updateRunsLatest(int version);
+
+  /// Why the button updateLatest is off; {version} is the version of the latest release's firmware.
+  ///
+  /// In en, this message translates to:
+  /// **'The node runs a newer version than the latest release\'s firmware, {version}.'**
+  String updateRunsNewer(int version);
+
+  /// Under the firmware's version: where it came from and its size.
+  ///
+  /// In en, this message translates to:
+  /// **'{source}, {kib} KiB'**
+  String updateImage(String source, int kib);
+
+  /// As updateImage, for firmware no newer than the version the node runs, which the node would not take.
+  ///
+  /// In en, this message translates to:
+  /// **'{source}, {kib} KiB: not newer than the node\'s'**
+  String updateImageNotNewer(String source, int kib);
+
+  /// How much of the firmware the node has received, in kibibytes.
+  ///
+  /// In en, this message translates to:
+  /// **'{held} of {total} KiB on the node'**
+  String updateOnNode(int held, int total);
+
+  /// While the firmware goes to the node.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending…'**
+  String get updateSending;
+
+  /// No description provided for @updateChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'The node checks the firmware…'**
+  String get updateChecking;
+
+  /// A button: go on sending the firmware after the link dropped.
+  ///
+  /// In en, this message translates to:
+  /// **'Go on'**
+  String get updateGoOn;
+
+  /// A button: ask the node again to check the firmware it has, as after it refused for a low battery.
+  ///
+  /// In en, this message translates to:
+  /// **'Try again'**
+  String get updateTryAgain;
+
+  /// A button: the node restarts and starts the new firmware.
+  ///
+  /// In en, this message translates to:
+  /// **'Reboot into version {version}'**
+  String updateReboot(int version);
+
+  /// The update stopped: the node took none of the firmware's pieces for a while.
+  ///
+  /// In en, this message translates to:
+  /// **'The node takes no pieces'**
+  String get updateStalled;
+
+  /// 'It' is the update. The link is the phone's Bluetooth link with the node.
+  ///
+  /// In en, this message translates to:
+  /// **'The link dropped; it goes on when the node is back'**
+  String get updatePaused;
+
+  /// The node has every byte of the firmware and has checked it; what is left is to restart it.
+  ///
+  /// In en, this message translates to:
+  /// **'The node holds version {version}'**
+  String updateHolds(int version);
+
+  /// No description provided for @updateLost.
+  ///
+  /// In en, this message translates to:
+  /// **'The node lost the firmware'**
+  String get updateLost;
+
+  /// No description provided for @updateChecked.
+  ///
+  /// In en, this message translates to:
+  /// **'The node checked version {version}'**
+  String updateChecked(int version);
+
+  /// Asking the node to check the firmware it received and take it failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Committing failed: {error}'**
+  String updateCommitFailed(String error);
+
+  /// The node answered with an error, such as linkAttError.
+  ///
+  /// In en, this message translates to:
+  /// **'The node answered {error}'**
+  String updateAnswered(String error);
+
+  /// {reason} is one of the linkRefused… reasons.
+  ///
+  /// In en, this message translates to:
+  /// **'The node refused: {reason}'**
+  String updateRefused(String reason);
+
+  /// No description provided for @updateRefusedNoReason.
+  ///
+  /// In en, this message translates to:
+  /// **'The node refused: it did not say why'**
+  String get updateRefusedNoReason;
+
+  /// The node restarts into the new firmware, which takes about a minute.
+  ///
+  /// In en, this message translates to:
+  /// **'The node restarts, about a minute'**
+  String get updateRestarts;
+
+  /// The node has not come back after its restart for longer than it takes.
+  ///
+  /// In en, this message translates to:
+  /// **'The node is not back; it may be out of reach'**
+  String get updateNotBack;
+
+  /// No description provided for @updateRebootFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Reboot failed: {error}'**
+  String updateRebootFailed(String error);
+
+  /// Why a step of the update failed: the phone is on another node than the one it updates. Lower case, as it follows words such as updateRebootFailed's.
+  ///
+  /// In en, this message translates to:
+  /// **'connected to another node than {node}'**
+  String updateOtherNode(String node);
+
+  /// Why a step of the update failed: the phone uses the node as a guest. Lower case, as updateOtherNode.
+  ///
+  /// In en, this message translates to:
+  /// **'only the phone paired with the node updates it'**
+  String get updatePairedOnly;
+
+  /// The new firmware did not start and the node went back to the version it ran before, {running}.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version} did not start; the node is back on {running}'**
+  String updateDidNotStart(int version, int running);
+
+  /// The heading of Settings' section on new versions of the app and of the node's firmware.
+  ///
+  /// In en, this message translates to:
+  /// **'Updates'**
+  String get updatesHeading;
+
+  /// No description provided for @updatesCheck.
+  ///
+  /// In en, this message translates to:
+  /// **'Check for updates'**
+  String get updatesCheck;
+
+  /// No description provided for @updatesUnreached.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not reach the release list'**
+  String get updatesUnreached;
+
+  /// The row on this app's version; releaseAppOut names it.
+  ///
+  /// In en, this message translates to:
+  /// **'App'**
+  String get updatesApp;
+
+  /// Under updatesApp: this app was built by hand, not by a release, and so has no version.
+  ///
+  /// In en, this message translates to:
+  /// **'A development build'**
+  String get updatesDevBuild;
+
+  /// Under updatesApp: this app's version, and the newer one of the latest release.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version}; {latest} is out. Tap to install'**
+  String updatesAppOut(int version, int latest);
+
+  /// No description provided for @updatesAppDownloading.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version}; downloading {latest}…'**
+  String updatesAppDownloading(int version, int latest);
+
+  /// No description provided for @updatesAppDownloadingPercent.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version}; downloading {latest}… {percent}%'**
+  String updatesAppDownloadingPercent(int version, int latest, int percent);
+
+  /// No description provided for @updatesAppReady.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version}; {latest} is downloaded. Tap to install'**
+  String updatesAppReady(int version, int latest);
+
+  /// No description provided for @updatesAppFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version}; {latest} did not download. Tap to try again'**
+  String updatesAppFailed(int version, int latest);
+
+  /// A sentence after the line on the app's version, when the node runs newer firmware than this app knows; 'it' is the app. The app adds the full stop before it.
+  ///
+  /// In en, this message translates to:
+  /// **'Update it for the node\'s new features'**
+  String get updatesNodeNewer;
+
+  /// The row on the connected node's firmware; releaseFirmwareOut names it too.
+  ///
+  /// In en, this message translates to:
+  /// **'Node firmware'**
+  String get updatesNodeFirmware;
+
+  /// Under updatesNodeFirmware: no node connected.
+  ///
+  /// In en, this message translates to:
+  /// **'Not connected'**
+  String get updatesNotConnected;
+
+  /// Under updatesNodeFirmware, for a node this phone uses as a guest: 'its' and 'it' are the node.
+  ///
+  /// In en, this message translates to:
+  /// **'Only its paired phones update it'**
+  String get updatesGuest;
+
+  /// Under updatesNodeFirmware: the version the node runs, and the newer one of the latest release.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version}; {latest} is out'**
+  String updatesFirmwareOut(int version, int latest);
+
+  /// What Check for updates found, in one line: {app} is one of the releaseApp… clauses, {node} one of the others, in lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'{app}; {node}'**
+  String releaseLine(String app, String node);
+
+  /// This app was built by hand, not by a release. It begins releaseLine.
+  ///
+  /// In en, this message translates to:
+  /// **'App is a development build'**
+  String get releaseAppDev;
+
+  /// App below is the row updatesApp. It begins releaseLine, so it has a capital; so does releaseAppUpToDate.
+  ///
+  /// In en, this message translates to:
+  /// **'App {version} is out: tap App below'**
+  String releaseAppOut(int version);
+
+  /// This app is the latest release's. It begins releaseLine, so it has a capital.
+  ///
+  /// In en, this message translates to:
+  /// **'App up to date ({version})'**
+  String releaseAppUpToDate(int version);
+
+  /// Follows a releaseApp… clause in releaseLine, so lower case; so do the other release… clauses on the node.
+  ///
+  /// In en, this message translates to:
+  /// **'no node linked'**
+  String get releaseNoNode;
+
+  /// The phone uses the node as a guest; only its paired phones update it.
+  ///
+  /// In en, this message translates to:
+  /// **'the node is not yours to update'**
+  String get releaseNotYours;
+
+  /// The node runs firmware built by hand and loaded over USB, which has no version.
+  ///
+  /// In en, this message translates to:
+  /// **'node firmware is a bench build'**
+  String get releaseBench;
+
+  /// The node runs version {version}; the latest release has no node firmware.
+  ///
+  /// In en, this message translates to:
+  /// **'node firmware {version}; the release carries none'**
+  String releaseNoneCarried(int version);
+
+  /// Below is the row updatesNodeFirmware, with its button sendToNode.
+  ///
+  /// In en, this message translates to:
+  /// **'node firmware {version} is out: send it below'**
+  String releaseFirmwareOut(int version);
+
+  /// No description provided for @releaseFirmwareUpToDate.
+  ///
+  /// In en, this message translates to:
+  /// **'node firmware {version}, up to date'**
+  String releaseFirmwareUpToDate(int version);
+
+  /// The help of Settings' section myIdentity, on the identity file. Restore from a file is the button identityRestore; the box is identityAddMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'The file holds your identity, name, home, contacts and the nodes you paired with, and your messages if you tick the box. Your password locks it: without it nobody can open the file, not even you.\n\nOn the new phone, tap Restore from a file, then pair with your nodes again: a pairing stays on the phone it was made on. Your home keeps your mail meanwhile, and you can fetch it from any other node.\n\nUse one phone at a time: two phones with one identity would each take mail the other never sees.\n\nYour 12 words bring back your identity alone.'**
+  String get identityHelp;
+
+  /// Under the heading myIdentity: 'it' is the identity.
+  ///
+  /// In en, this message translates to:
+  /// **'Save it to a file to move to a new phone.'**
+  String get identitySaveHow;
+
+  /// A button that saves the identity file.
+  ///
+  /// In en, this message translates to:
+  /// **'Save to a file'**
+  String get identitySave;
+
+  /// A button that restores the identity from an identity file.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore from a file'**
+  String get identityRestore;
+
+  /// The title of the dialog that takes the identity file's new password.
+  ///
+  /// In en, this message translates to:
+  /// **'Save my identity'**
+  String get identitySaveTitle;
+
+  /// The identity file was saved.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved'**
+  String get identitySaved;
+
+  /// The person closed the phone's file dialog without saving.
+  ///
+  /// In en, this message translates to:
+  /// **'Not saved'**
+  String get identityNotSaved;
+
+  /// No description provided for @identitySaveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Saving failed: {error}'**
+  String identitySaveFailed(String error);
+
+  /// No description provided for @identityRestoreTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore from a file?'**
+  String get identityRestoreTitle;
+
+  /// No description provided for @identityRestoreHow.
+  ///
+  /// In en, this message translates to:
+  /// **'This replaces the identity, contacts and messages on this phone.'**
+  String get identityRestoreHow;
+
+  /// The button of the dialog identityRestoreTitle: it opens the phone's file picker.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose file'**
+  String get identityChooseFile;
+
+  /// Opening the picked file failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Opening failed: {error}'**
+  String identityOpenFailed(String error);
+
+  /// The title of the dialog that takes the password of the identity file being restored.
+  ///
+  /// In en, this message translates to:
+  /// **'The file\'s password'**
+  String get identityPasswordTitle;
+
+  /// No description provided for @identityRestoredPairAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Identity restored. Pair again with your nodes.'**
+  String get identityRestoredPairAgain;
+
+  /// The identity file was not read. {reason} is a sentence with its full stop, such as identityWrongPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'{reason} Nothing changed.'**
+  String identityRefused(String reason);
+
+  /// bark is the app's name, always in lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'This is not a bark identity file.'**
+  String get identityNotFile;
+
+  /// No description provided for @identityOtherLayout.
+  ///
+  /// In en, this message translates to:
+  /// **'This file is from another version of the app.'**
+  String get identityOtherLayout;
+
+  /// No description provided for @identityWrongPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Wrong password, or the file is damaged.'**
+  String get identityWrongPassword;
+
+  /// The label of the field where the identity file's password is typed.
+  ///
+  /// In en, this message translates to:
+  /// **'Password'**
+  String get identityPassword;
+
+  /// The label of the field where a new password is typed a second time.
+  ///
+  /// In en, this message translates to:
+  /// **'Password again'**
+  String get identityPasswordAgain;
+
+  /// Under identityPasswordAgain: the two passwords typed differ.
+  ///
+  /// In en, this message translates to:
+  /// **'Not the same'**
+  String get identityNotSame;
+
+  /// A box to tick: the identity file holds the person's messages too.
+  ///
+  /// In en, this message translates to:
+  /// **'Add my messages'**
+  String get identityAddMessages;
+
+  /// In the dialog identitySaveTitle: 'it' is the identity.
+  ///
+  /// In en, this message translates to:
+  /// **'Use it on one phone at a time.'**
+  String get identityOnePhone;
 }
 
 class _AppLocalizationsDelegate

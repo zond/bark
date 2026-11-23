@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import 'decision.dart';
+import 'l10n.dart';
 import 'link.dart';
 import 'node_link.dart';
 import 'session.dart';
@@ -229,10 +230,12 @@ class Installs extends ChangeNotifier {
   String? get installingLine {
     if (session.connected || !waitsForInstall(situation())) return null;
     final i = install!;
+    final node = shownName(i.node);
     // Only an image the phone sent is waited for past its swap.
     final late = i.sent && clock().difference(i.gone!) >= swapAway;
-    return '${shownName(i.node)} is installing version ${i.version}, '
-        '${late ? 'not back yet' : 'back in about a minute'}';
+    return late
+        ? tr.installInstallingLate(node, i.version)
+        : tr.installInstalling(node, i.version);
   }
 
   /// Why the node is or was away for an install, for the help; null when
@@ -240,32 +243,30 @@ class Installs extends ChangeNotifier {
   String? get installHelp {
     if (!draining && installingLine == null) return null;
     final i = install!;
-    if (i.sent) {
-      return '${shownName(i.node)} restarts into version ${i.version}, which '
-          'this phone sent it, for about a minute. The phone waits for it '
-          'and reconnects by itself.';
-    }
-    return '${shownName(i.node)} got version ${i.version} from the nodes '
-        'around it. It passes on the texts it holds, at most ten minutes, '
-        'then restarts for about a minute. The phone reconnects by itself; '
-        'nothing is lost.';
+    final node = shownName(i.node);
+    return i.sent
+        ? tr.installSentHelp(node, i.version)
+        : tr.installMeshHelp(node, i.version);
   }
 
-  /// What the line adds of the connected node's install: that it is
+  /// What the line says of the connected node's install: that it is
   /// installing a version, or that it came back on it within
-  /// [updatedShown].
-  String get note {
+  /// [updatedShown]; null for nothing.
+  ({InstallNow now, int version})? get note {
     final i = install;
-    if (i == null || !session.connected) return '';
-    if (draining) return ', installing version ${i.version}';
+    if (i == null || !session.connected) return null;
+    if (draining) return (now: InstallNow.installing, version: i.version);
     final back = i.back;
     final n = session.node;
     if (back != null &&
         n != null &&
         nodeName(n.id) == i.node &&
         clock().difference(back) < updatedShown) {
-      return ', updated to version ${i.version}';
+      return (now: InstallNow.updated, version: i.version);
     }
-    return '';
+    return null;
   }
 }
+
+/// Where the connected node's install stands, as the line says it.
+enum InstallNow { installing, updated }

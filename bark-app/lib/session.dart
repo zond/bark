@@ -913,7 +913,7 @@ class Session extends ChangeNotifier {
   NodeLink _owned(String what) {
     final link = _link;
     if (link == null || node == null) {
-      throw NotOwned((w) => w.sessionNotConnected);
+      throw NotOwned((w) => w.notConnected);
     }
     if (guest) throw NotOwned((w) => w.sessionPairedOnly(what));
     return link;
