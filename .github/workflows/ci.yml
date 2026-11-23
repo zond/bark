@@ -79,7 +79,7 @@ jobs:
       - run: cargo test --workspace
 
   # The firmware and the loader are each their own workspace, outside the
-  # host one (README.md, "Building"), so nothing above checks them. Clippy
+  # host one (DEVELOPING.md, "Building"), so nothing above checks them. Clippy
   # builds each for the board's target, set in their .cargo/config.toml,
   # and the firmware twice: the node and the console are different code.
   firmware:

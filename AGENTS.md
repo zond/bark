@@ -12,7 +12,9 @@ Run `date` to know the day.
 
 ## Where things are
 
-Read `README.md` first. The protocol specification is `docs/protocol.md`; it is edited
+Read `README.md` first, then `DEVELOPING.md` for the code's layout and how to build it.
+The manual for people who use bark is `site/manual.html`, a page of the project's site;
+keep it true when what a person sees or does changes. The protocol specification is `docs/protocol.md`; it is edited
 together with the code it describes. Decisions are numbered D1, D2, ... in
 `docs/roadmap.md` so they can be cited and revisited. The contract between the protocol core
 and its drivers is `docs/core-interface.md`.
@@ -73,7 +75,8 @@ back rather than forward wherever the order allows. Say each thing once, in the 
 it belongs to, and refer to it from elsewhere. Write as tersely as a software or radio
 engineer who has not seen the project can still read, and no terser.
 
-`README.md` is the project overview. This file is the contributor guide and ruleset.
+`README.md` is the project's front page, for a reader who knows nothing of the subject;
+`DEVELOPING.md` is for those who build it. This file is the contributor guide and ruleset.
 `docs/` holds design, research and decisions, each dated.
 
 ## User interface

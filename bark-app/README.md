@@ -235,7 +235,7 @@ is a prototype for the bench, not the app people will carry.
     address, with **Set home** where the node is not
     the home, **Remove home** while one is set, and **Send my card**
     as on the first screen. The dialog names its action on the button,
-    **Make it my home** or **No home**, and says what happens to the
+    **Set** or **Remove**, and says what happens to the
     card: "Your new card goes to your N contacts", "Your card stays the
     same", or, while an earlier change has not gone out, that it still
     waits for **Send my card**; on a public node the phone uses as a
@@ -1031,7 +1031,7 @@ D182, D202).
 
 At start, and once a day while it runs, the app asks GitHub's releases
 API, without an account, for the repository's latest release `v<N>`
-(`lib/releases.dart`; `README.md`, "Releases"), and downloads its
+(`lib/releases.dart`; `DEVELOPING.md`, "Releases"), and downloads its
 `release.json`, `{"release": N, "app": A, "firmware": F}`: the app's
 version A and the node firmware's F that the release carries, each N
 when the release built it or an earlier release's carried on unchanged;
@@ -1366,7 +1366,7 @@ is signed with the debug key, except in CI (`CI=true`), where it fails:
 the runner's debug key is lost with the runner, and an APK signed with
 it could not be updated by the next. Both files are kept out of the
 repository by `android/.gitignore`; the release workflow writes them
-from the repository's secrets (`README.md`, "Releases").
+from the repository's secrets (`DEVELOPING.md`, "Releases").
 
 The tests check every value's bytes against the vectors of
 `bark-link/src/tests.rs`, the message ID among them; check keys,

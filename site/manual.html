@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The bark manual</title>
+<meta name="description" content="How to set up a bark node and use the app.">
+<style>
+  :root { --text: #222; --muted: #666; --rule: #ddd; --red: #c62828; }
+  body {
+    margin: 0; background: #fff; color: var(--text);
+    font: 17px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 40rem; margin: 0 auto; padding: 2.5rem 1rem 1.5rem; }
+  .home { display: inline-block; }
+  svg { display: block; width: 3rem; height: 3rem; margin-bottom: 1rem; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.25rem; margin: 2.5rem 0 .5rem; padding-top: 1rem; border-top: 1px solid var(--rule); }
+  a { color: var(--red); }
+  code { font-size: .9em; background: #f4f4f4; padding: .05em .3em; border-radius: .2em; }
+  li { margin: .25rem 0; }
+  .table { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: .95rem; }
+  th, td { text-align: left; vertical-align: top; padding: .4rem .6rem .4rem 0; border-bottom: 1px solid var(--rule); }
+  footer {
+    max-width: 40rem; margin: 0 auto; padding: 1rem 1rem 2rem;
+    border-top: 1px solid var(--rule); color: var(--muted); font-size: .9rem;
+  }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <a class="home" href="./" aria-label="bark, the front page"><svg viewBox="0 0 100 100" fill="none" stroke="#888" stroke-width="1.5" aria-hidden="true"><path d="M50 50L94.0 50.0 M50 50L88.1 28.0 M50 50L72.0 11.9 M50 50L50.0 6.0 M50 50L28.0 11.9 M50 50L11.9 28.0 M50 50L6.0 50.0 M50 50L11.9 72.0 M50 50L28.0 88.1 M50 50L50.0 94.0 M50 50L72.0 88.1 M50 50L88.1 72.0"/><path d="M58.0 50.0L57.4 45.8L54.5 42.2L50.0 40.5L45.0 41.3L40.9 44.8L39.0 50.0L40.0 55.8L44.0 60.4L50.0 62.5L56.5 61.3L61.7 56.8L64.0 50.0L62.6 42.8L57.5 37.0L50.0 34.5L42.0 36.1L35.7 41.8L33.0 50.0L34.8 58.7L41.0 65.6L50.0 68.5L59.5 66.5L66.9 59.8L70.0 50.0L67.8 39.8L60.5 31.8L50.0 28.5L39.0 30.9L30.5 38.8L27.0 50.0L29.6 61.7L38.0 70.8L50.0 74.5L62.5 71.7L72.1 62.8L76.0 50.0L72.9 36.8L63.5 26.6L50.0 22.5L36.0 25.8L25.3 35.8L21.0 50.0L24.5 64.7L35.0 76.0L50.0 80.5L65.5 76.8L77.3 65.8L82.0 50.0L78.1 33.8L66.5 21.4L50.0 16.5L33.0 20.6L20.1 32.8L15.0 50.0L19.3 67.7L32.0 81.2L50.0 86.5L68.5 82.0L82.5 68.8L88.0 50.0L83.3 30.8L69.5 16.2L50.0 10.5L30.0 15.4L14.9 29.8L9.0 50.0L14.1 70.7L29.0 86.4L50.0 92.5L71.5 87.2L87.7 71.8L94.0 50.0"/></svg></a>
+<h1 id="the-bark-manual">The bark manual</h1>
+<p>How to set up a node, use the app, and what everything on the screens
+means. For what bark is, start at the <a href="./">front page</a>.</p>
+<h2 id="contents">Contents</h2>
+<ol type="1">
+<li><a href="#words-used-here">Words used here</a></li>
+<li><a href="#what-you-need">What you need</a></li>
+<li><a href="#setting-up-a-node">Setting up a node</a></li>
+<li><a href="#the-nodes-screen-and-buttons">The node's screen and buttons</a></li>
+<li><a href="#installing-the-app">Installing the app</a></li>
+<li><a href="#connecting-to-a-node">Connecting to a node</a></li>
+<li><a href="#contacts-and-cards">Contacts and cards</a></li>
+<li><a href="#writing-and-reading-messages">Writing and reading messages</a></li>
+<li><a href="#your-home-node">Your home node</a></li>
+<li><a href="#sharing-a-node-with-others">Sharing a node with others</a></li>
+<li><a href="#the-map-of-nearby-nodes">The map of nearby nodes</a></li>
+<li><a href="#updates">Updates</a></li>
+<li><a href="#backup-and-moving-to-a-new-phone">Backup and moving to a new phone</a></li>
+<li><a href="#running-in-the-background">Running in the background</a></li>
+<li><a href="#where-to-put-nodes">Where to put nodes</a></li>
+<li><a href="#privacy-and-limits">Privacy and limits</a></li>
+<li><a href="#when-something-does-not-work">When something does not work</a></li>
+<li><a href="#for-the-curious">For the curious</a></li>
+</ol>
+<h2 id="words-used-here">Words used here</h2>
+<ul>
+<li><strong>Node:</strong> the small radio device. Each has an ID of twelve letters
+and digits, shown on its screen, such as <code>BAE6E6CBF4F5</code>.</li>
+<li><strong>Relay:</strong> a node that passes on other people's messages. A node on a
+charger is a relay.</li>
+<li><strong>Sleepy node:</strong> a node saving its battery. It sleeps most of the
+time and talks through one relay near it, its <strong>anchor</strong>.</li>
+<li><strong>Address:</strong> a node's place and its ID. Messages are sent to an
+address.</li>
+<li><strong>Card:</strong> what you give someone so they can write to you. It holds
+your name, your key and the address to reach you at. It is shown as a
+QR code.</li>
+<li><strong>Home node:</strong> a node that stays in one place on power and keeps your
+messages until you fetch them.</li>
+<li><strong>Owner:</strong> the one person who decides who else may have a home on a
+node.</li>
+<li><strong>Public node:</strong> a node that anyone nearby may use from the app.
+Every node is public until its people make it private.</li>
+<li><strong>Paired:</strong> your phone and a node know each other, after you typed
+the code from the node's screen once.</li>
+</ul>
+<h2 id="what-you-need">What you need</h2>
+<ul>
+<li>A <strong>LILYGO T-Echo for 433 MHz</strong> with its antenna. Or no node at all,
+if a public node is near you.</li>
+<li>A USB cable and, for a relay, a charger.</li>
+<li>An <strong>Android phone</strong>.</li>
+</ul>
+<h2 id="setting-up-a-node">Setting up a node</h2>
+<p><strong>Before anything else, screw on the antenna.</strong> A radio that sends
+without one can be damaged.</p>
+<p><strong>Put the software on it.</strong> A new T-Echo comes with other software. To
+replace it:</p>
+<ol type="1">
+<li>Download <code>bark.uf2</code> from the
+<a href="https://github.com/zond/bark/releases/latest">latest release</a>.</li>
+<li>Connect the node to a computer with the USB cable. If nothing
+happens with a cable that has the small plug at both ends, try one
+with the larger, flat plug at the computer's end.</li>
+<li>Press the reset button, the upper one on the node's side, twice
+quickly. A drive named <code>TECHOBOOT</code> appears on the computer.</li>
+<li>Copy <code>bark.uf2</code> to that drive. The drive disappears and the node
+restarts. Some computers show an error as it disappears; ignore it.</li>
+</ol>
+<p>The screen now shows a QR code with the node's ID under it. You do this
+once: later versions arrive by themselves (<a href="#updates">Updates</a>).</p>
+<p><strong>Give it a place.</strong> A node must know where it stands, because
+addresses are places. It finds out from its GPS, which needs a view of
+the sky and may take some minutes the first time. Indoors, or to be
+exact, set the place from the app instead: <strong>Settings</strong>, <strong>This node</strong>,
+<strong>Place</strong>.</p>
+<p><strong>Give it power.</strong> On a charger the node is a relay and helps everyone
+around it. On battery it relays while it stands still, until the
+battery is low, and turns sleepy when carried.</p>
+<h2 id="the-nodes-screen-and-buttons">The node's screen and buttons</h2>
+<p>The node has two buttons on its side. A small label on the screen
+points at each.</p>
+<ul>
+<li><strong>The upper button restarts the node.</strong> Pressed twice quickly, it
+opens the drive for new software instead.</li>
+<li><strong>The lower button, pressed briefly,</strong> switches the screen between
+the QR code and the node's state, which stays for 30 seconds.</li>
+<li><strong>The lower button, held 3 seconds,</strong> switches the node between relay
+and sleepy, whatever its power. It stays so until you plug the cable
+in or pull it out.</li>
+</ul>
+<p><strong>The QR code</strong> leads to the project's page, where anyone can get the
+app. Under it is the node's ID. While a phone pairs, the pairing code
+is shown there instead.</p>
+<p><strong>The state</strong> has a line for each of these:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Line</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FIXED RELAY</code>, <code>CARRIED RELAY</code>, <code>RELAY NO PLACE</code></td>
+<td>a relay: standing still, being carried, or not yet knowing its place</td>
+</tr>
+<tr>
+<td><code>SLEEPY ANCHORED</code>, <code>SLEEPY NO ANCHOR</code></td>
+<td>a sleepy node: with a relay to talk through, or still looking for one</td>
+</tr>
+<tr>
+<td><code>STARTING</code></td>
+<td>just switched on, listening before it joins</td>
+</tr>
+<tr>
+<td><code>ID</code></td>
+<td>the node's ID</td>
+</tr>
+<tr>
+<td><code>NODE V47</code></td>
+<td>the version of its software</td>
+</tr>
+<tr>
+<td><code>GET V48 14/31</code></td>
+<td>it is receiving a new version, and how far it has come</td>
+</tr>
+<tr>
+<td><code>PHONE UNPAIRED</code>, <code>PUBLIC</code>, <code>PRIVATE</code>, <code>3 PHONES</code></td>
+<td>who may use it</td>
+</tr>
+<tr>
+<td><code>PAIR CODE</code></td>
+<td>the code to type in the app</td>
+</tr>
+<tr>
+<td><code>CONFIRM</code></td>
+<td>a code to type in the app when you remove a phone or change the owner</td>
+</tr>
+<tr>
+<td><code>PHONES FULL</code></td>
+<td>eight phones are paired, and there is room for no more</td>
+</tr>
+<tr>
+<td><code>KNOWN 5/4/2</code></td>
+<td>other nodes it hears now, how many of them clearly, and how many of those have taken a message from it</td>
+</tr>
+<tr>
+<td><code>POWER USB</code> or <code>BATTERY 73%/9D</code></td>
+<td>its power, and on battery about how long it lasts as it runs now</td>
+</tr>
+<tr>
+<td><code>UP</code></td>
+<td>how long since it was switched on</td>
+</tr>
+<tr>
+<td><code>TIME</code></td>
+<td>the time when the screen was drawn</td>
+</tr>
+</tbody>
+</table></div>
+<p>The screen keeps its picture when the node is off. If a press changes
+nothing within a few seconds, the node is not running.</p>
+<h2 id="installing-the-app">Installing the app</h2>
+<p>Open the <a href="./">front page</a> on the phone, or scan the code on any node's
+screen, and tap <strong>Get the app</strong>. Android
+asks once whether your browser may install apps.</p>
+<p>At the first start the app asks for Bluetooth, which is how it reaches
+a node. A <strong>Get started</strong> card then lists three steps:</p>
+<ol type="1">
+<li><strong>Set your name.</strong> It goes on your card.</li>
+<li><strong>Find a node.</strong> See the next section.</li>
+<li><strong>Add a first contact.</strong></li>
+</ol>
+<p>The app also makes your <strong>12 words</strong>. They are your identity. Write
+them down and keep them safe: if you lose the phone, they are the only
+way back (<a href="#backup-and-moving-to-a-new-phone">Backup</a>).</p>
+<h2 id="connecting-to-a-node">Connecting to a node</h2>
+<p>Open <strong>Settings</strong>, <strong>Node</strong>, and tap <strong>Scan</strong>. Nodes in Bluetooth
+range, a room or two, are listed with their signal.</p>
+<ul>
+<li><strong>Your own node: pair with it.</strong> Tap <strong>Pair</strong>. The node's screen
+shows a six-digit code; type it in the app. From then on the app
+connects to it by itself whenever it is near. A node takes up to
+eight paired phones, and a phone can be paired with several nodes.</li>
+<li><strong>Someone else's public node: use it as a guest.</strong> Tap it. No code is
+needed. The app connects for a moment whenever it has something to
+send or collect, so that other guests get their turn.</li>
+</ul>
+<p>A line at the top of the first screen always says where you stand, for
+example "Connected to your home", "Connected to ID … as a guest" or
+"Not connected. Texts wait on the phone". Tap the small info button
+beside it to learn why.</p>
+<p>You do not need to be connected to write. Messages wait on the phone
+and go out when a node is next in reach.</p>
+<h2 id="contacts-and-cards">Contacts and cards</h2>
+<p>To write to someone you need their <strong>card</strong>, and they need yours to
+answer.</p>
+<ul>
+<li><strong>Show yours:</strong> the QR button opens <strong>My card</strong>. Let the other person
+scan it, or tap <strong>Share</strong> to send it some other way.</li>
+<li><strong>Take theirs:</strong> <strong>Scan their card</strong> with the camera, or paste a card
+you were sent, under <strong>Contacts</strong>.</li>
+</ul>
+<p>A card says where to reach its person. With a home node it stays good
+for as long as that home stands. Without one the card is marked
+<strong>temporary</strong>: it names the node you used last, which helps only while
+you keep coming back to it.</p>
+<p>When your card changes, for example after you choose a new home, the
+app tells you and offers <strong>Send my card</strong>. It never sends your card by
+itself.</p>
+<p>A person who writes to you before you have their card shows as <strong>not
+verified</strong>: the app cannot yet know they are who they say.</p>
+<p>Swipe a contact or a conversation aside to archive it. Archived ones
+are kept under <strong>Archived</strong> and come back when the person writes.</p>
+<h2 id="writing-and-reading-messages">Writing and reading messages</h2>
+<p>Open a conversation, write, send. Small marks under each message tell
+its story; tap the message for an explanation of every mark.</p>
+<p><strong>A message you sent</strong> shows, in turn:</p>
+<ul>
+<li>a clock: waiting on the phone for a node;</li>
+<li>two arrows: being handed to the node;</li>
+<li>a check: the network has taken it.</li>
+</ul>
+<p>The check does not mean it has arrived. The network sends no news of
+arrival; you know it came when the person answers.</p>
+<p>If the network is busy it gives the message back, and the app says "The
+network is busy, sending again in …" and tries again by itself. Nothing
+the network has taken is thrown away for being old.</p>
+<p><strong>Long messages.</strong> A single message holds about 200 letters, fewer in
+scripts that take more room for each letter. A longer text is sent in
+parts, up to 16, and shown as one message. The app says how many parts
+before you send.</p>
+<p><strong>Reactions.</strong> Press and hold a message you received to answer with an
+emoji. The sender sees it on their message.</p>
+<p><strong>Where a message goes.</strong> To the address on the person's card: their
+home, if they have one. But each message also carries, encrypted, the
+address of the node its sender wrote from, so a quick reply goes
+straight to where they are.</p>
+<h2 id="your-home-node">Your home node</h2>
+<p>Without a home, messages for you go to the node you last used and wait
+there. That works for someone who always uses the same node. If you
+move around, set a home.</p>
+<p><strong>A home must stay in one place, on power, and know its place.</strong> A node
+in your window on a charger is the usual choice.</p>
+<ul>
+<li><strong>Set it:</strong> connect to the node, then <strong>Settings</strong>, <strong>Home node</strong>,
+<strong>Set home</strong>. If you were using it as a guest, you pair first. Your
+card changes, so send it to your contacts when the app offers.</li>
+<li><strong>Read your mail at home:</strong> when the phone is connected to your home,
+messages arrive by themselves.</li>
+<li><strong>Read your mail away from home:</strong> tap the inbox button, <strong>Fetch my
+mail</strong>. The request travels to your home and the messages travel back
+to the node you are on. This can take up to about half an hour on a
+large network; the button shows that it is waiting.</li>
+<li><strong>Change or remove it:</strong> <strong>Set home</strong> on another node, or <strong>Remove
+home</strong>. Your old home sends you what it still keeps, then forgets
+you. If it was out of reach just then, the app finishes the job the
+next time your phone is connected to it.</li>
+<li><strong>After restoring your identity on a new phone:</strong> <strong>Use my existing
+home</strong>, and give the home's address.</li>
+</ul>
+<h2 id="sharing-a-node-with-others">Sharing a node with others</h2>
+<p><strong>Public or private.</strong> Under <strong>Settings</strong>, <strong>This node</strong>, the switch
+<strong>Public</strong> decides whether phones that are not paired may use the node
+as guests. It is on from the start.</p>
+<p><strong>The phones at a node.</strong> The same place lists every phone paired with
+the node and every person with a home there. From here you can
+<strong>Unpair</strong> your own phone, or remove someone else's; the node then
+shows a <strong>CONFIRM</strong> code to type, so that only someone standing at the
+node can do it.</p>
+<p><strong>The owner.</strong> The first person to make a node their home becomes its
+owner. The owner can, from anywhere:</p>
+<ul>
+<li>give a contact a home on the node: <strong>Share my home node</strong> in that
+conversation's menu;</li>
+<li>see who has a home there, and remove one: <strong>Settings</strong>, <strong>Home
+node</strong>, <strong>People with a home here</strong>;</li>
+<li>make someone else the owner.</li>
+</ul>
+<p>If a node has no owner, a person whose home it is can press <strong>Become
+owner</strong> while connected to it. A node holds the homes of up to eight
+people.</p>
+<h2 id="the-map-of-nearby-nodes">The map of nearby nodes</h2>
+<p><strong>Nearby nodes</strong>, in the menu, shows the node you are connected to and
+the nodes it hears, on a street map. The map itself needs the internet;
+the nodes are shown without it.</p>
+<p>The line to each node is green, amber or red for a good, fair or
+fragile radio link. Tap a node for what is known of it: relay or
+sleepy, fixed or carried, its place, its power, how well it is heard,
+when it was last heard, its software's version, and which of your
+contacts were last seen there.</p>
+<p>A sleepy node hears little besides its anchor, so the map from a pocket
+node is nearly empty. That is normal.</p>
+<h2 id="updates">Updates</h2>
+<p><strong>The app.</strong> When a newer version is out and the phone has internet, a
+bar at the top says so. Tap it to install.</p>
+<p><strong>A node, by itself.</strong> A node that hears a neighbour with a newer
+version collects it over the radio, piece by piece, checks that the
+project signed it, and restarts into it. Nothing needs to be done. It
+takes a few hours for a relay and most of a day for a sleepy node.
+Pairings, homes and stored mail are kept. A node on a low battery waits
+until it has power.</p>
+<p><strong>A node, from the phone.</strong> To start a new version off, or to hurry:
+<strong>Settings</strong>, <strong>Updates</strong>, <strong>Send to the node</strong>, then <strong>Reboot into
+version …</strong>. The transfer takes under a minute and the restart about
+another.</p>
+<p>A node takes only software signed by the project, and only a version
+newer than its own. If a new version fails to start properly, the node
+goes back to the one before.</p>
+<h2 id="backup-and-moving-to-a-new-phone">Backup and moving to a new phone</h2>
+<ul>
+<li><strong>The 12 words</strong> bring back your identity, so people can still reach
+you with the card they have. They do not bring back contacts or
+messages. See and restore them under <strong>Settings</strong>, <strong>Backup</strong>.</li>
+<li><strong>The identity file</strong> brings everything: identity, contacts and, if
+you tick the box, messages. <strong>Settings</strong>, <strong>My identity</strong>, <strong>Save to
+a file</strong>, with a password of your choosing; on the new phone,
+<strong>Restore from a file</strong>.</li>
+</ul>
+<p>Use an identity on one phone at a time. After moving, pair the new
+phone with your nodes again: a pairing belongs to the phone and does
+not move.</p>
+<h2 id="running-in-the-background">Running in the background</h2>
+<p>The app keeps its connection with the screen off, and shows a
+notification saying which node it is on. New messages are announced
+like in any messenger.</p>
+<p>Some phones stop apps to save battery. If messages only arrive when you
+open the app, go to <strong>Settings</strong>, <strong>Battery</strong>, <strong>Let bark run</strong>.</p>
+<h2 id="where-to-put-nodes">Where to put nodes</h2>
+<ul>
+<li><strong>High and in the open</strong> is what counts. A node on a roof or in an
+upstairs window reaches far more neighbours than one on a desk. Radio
+at this frequency goes through a wall or two but not through a hill.</li>
+<li><strong>A relay at home, a node in the pocket</strong> is the usual pair: the
+relay is your home and helps the neighbourhood; the pocket node is
+your way in wherever you are.</li>
+<li><strong>Outdoors, keep it dry.</strong> A case that lets you reach the buttons and
+see the screen saves trouble later.</li>
+<li><strong>A public node</strong> suits a place people visit: put it where its screen
+can be seen, since the code on it is how people get the app.</li>
+</ul>
+<p>A network grows by relays within reach of each other. One node alone
+can do nothing but wait.</p>
+<h2 id="privacy-and-limits">Privacy and limits</h2>
+<ul>
+<li><strong>Only the recipient can read a message.</strong> The app encrypts it for
+them alone, and no node on the way can open it.</li>
+<li><strong>Places are not private.</strong> Anyone with a radio in range learns each
+node's ID and where it stands. Someone listening near your home node
+may work out that your mail passes through it.</li>
+<li><strong>The network trusts every node.</strong> It was built for when
+infrastructure fails, not to resist an attacker. Someone who wants to
+disturb the nodes around them can.</li>
+<li><strong>It shares the air fairly.</strong> The law limits how much each node may
+send, so the network carries short texts and refuses more when it is
+full, telling the app when to try again.</li>
+<li><strong>Android only</strong>, for now.</li>
+</ul>
+<h2 id="when-something-does-not-work">When something does not work</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>What you see</th>
+<th>What to try</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>No node found in the scan</td>
+<td>Go closer; Bluetooth reaches a room or two. Check that the node runs: press its lower button and see whether the screen changes.</td>
+</tr>
+<tr>
+<td><code>RELAY NO PLACE</code> on the node</td>
+<td>It has no GPS fix. Give it a view of the sky, or set its place in the app.</td>
+</tr>
+<tr>
+<td><code>SLEEPY NO ANCHOR</code></td>
+<td>It hears no relay. Move nearer to one, or plug it in to make it a relay.</td>
+</tr>
+<tr>
+<td>"Does not know this phone"</td>
+<td>The node forgot the pairing. Tap <strong>Pair again</strong>.</td>
+</tr>
+<tr>
+<td>"Needs an update" beside a node</td>
+<td>The node's software is too old for this app. Send it the new version over USB, as when setting it up.</td>
+</tr>
+<tr>
+<td>A sent message stays on the clock</td>
+<td>No node is in reach. It goes when one is.</td>
+</tr>
+<tr>
+<td>"Your home did not answer your last fetch"</td>
+<td>The home is off or out of reach. Try again later; if it never answers, set another home.</td>
+</tr>
+<tr>
+<td>A node will not take the <code>TECHOBOOT</code> step</td>
+<td>Press the upper button twice, faster.</td>
+</tr>
+</tbody>
+</table></div>
+<p>The app's menu has a <strong>Debug</strong> screen with a log of what the app and
+the node said to each other. It is the first thing to look at, and to
+send along, when reporting a fault.</p>
+<h2 id="for-the-curious">For the curious</h2>
+<p>Things in the project that most people never need:</p>
+<ul>
+<li><strong><code>bark</code>, a command-line phone.</strong> Everything the app does over
+Bluetooth, from a Linux computer (<a href="https://github.com/zond/bark/blob/main/bark-cli/README.md"><code>bark-cli/README.md</code></a>).</li>
+<li><strong>The simulator.</strong> Runs the same software as the nodes for a whole
+city at once, tens of thousands of nodes, to test the design before
+hardware does (<a href="https://github.com/zond/bark/blob/main/docs/simulator-design.md"><code>docs/simulator-design.md</code></a>).</li>
+<li><strong>The loader.</strong> A small program on each node that swaps a new version
+in and the old one back if the new one fails (<a href="https://github.com/zond/bark/blob/main/bark-fw/README.md"><code>bark-fw/README.md</code></a>, "Updates").</li>
+<li><strong>The bench tools.</strong> Scripts and special builds for measuring radios
+and running tests on real boards (<a href="https://github.com/zond/bark/blob/main/bark-fw/README.md"><code>bark-fw/README.md</code></a>).</li>
+<li><strong>The specification and the decisions.</strong> Every rule the nodes follow
+is in <a href="https://github.com/zond/bark/blob/main/docs/protocol.md"><code>docs/protocol.md</code></a>, and every choice with its reason in
+<a href="https://github.com/zond/bark/blob/main/docs/roadmap.md"><code>docs/roadmap.md</code></a>.</li>
+</ul>
+<p>How to build all of it: <a href="https://github.com/zond/bark/blob/main/DEVELOPING.md"><code>DEVELOPING.md</code></a>.</p>
+</main>
+<footer>
+  <a href="./">The front page</a> ·
+  <a href="https://github.com/zond/bark">The source code and the design, on GitHub</a>
+</footer>
+</body>
+</html>

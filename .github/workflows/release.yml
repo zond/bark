@@ -168,7 +168,7 @@ jobs:
           targets: thumbv7em-none-eabihf
 
       # Two workspaces, each its own target directory: the firmware and the
-      # loader are not members of the host workspace (README.md, "Building").
+      # loader are not members of the host workspace (DEVELOPING.md, "Building").
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |

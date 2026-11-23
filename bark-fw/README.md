@@ -5,7 +5,7 @@ Cargo workspace, cross-compiled for `thumbv7em-none-eabihf` (roadmap D7).
 
 Current state (2026-11-09). It runs on four boards on the bench and is
 released as `bark-fw-<F>`, F the firmware's version in a release, which
-stays when only the app changed (`README.md`, "Releases";
+stays when only the app changed (`DEVELOPING.md`, "Releases";
 Verified and unverified, below). It starts behind a loader of its own,
 which swaps in a staged image, from the phone, the mesh or the console,
 and swaps it back if it does not confirm itself (Updates, below). The
@@ -688,7 +688,7 @@ both its UF2s (`uf2.py --header`, Over the mesh, below), so that a node
 flashed with a release holds it and serves it. F is the release's
 number N when the firmware changed since the previous release, and the
 previous release's F, its files carried on unchanged, when it did not
-(`README.md`, "Releases"), so nodes gather a new image only for a new
+(`DEVELOPING.md`, "Releases"), so nodes gather a new image only for a new
 firmware.
 
 From the phone (spec "Phone link", Updates; roadmap D145): the app
@@ -1014,7 +1014,7 @@ The release key is made once with `scripts/image.py keygen`, which
 writes the private key, PEM, readable by its owner alone, and prints
 the public key. The private key is kept outside the repository, in the
 same folder as the app's release key and backed up the same way
-(README.md, "Releases"): a node can take an image only from a key it
+(DEVELOPING.md, "Releases"): a node can take an image only from a key it
 holds, so with the key lost, every node is updated by hand at its next
 visit. Its public key goes in `keys/project.pub`, and the release
 workflow signs with it from the secret `BARK_SIGNING_KEY`:
