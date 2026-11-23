@@ -1,0 +1,65 @@
+# A sleepy node and its anchor (roadmap D244, D246):
+#
+# - the sleepy node's text to a place where nobody stands goes to its
+#   anchor, which has no other neighbour and returns it in the node's
+#   window; the node gives it back for no way;
+# - the button's long press, `flip` on the bench, turns the sleepy node
+#   relay, and it sends the burst a relay sends at boot.
+#
+# S is built to report battery whatever USB says, so it is sleepy from
+# its boot and still logs (docs/bringup-2026-11-06.md, "A sleepy node").
+
+about = "a sleepy node's text returned in its window, and its burst when the button wakes it"
+duration_s = 900.0
+
+[[boards]]
+name = "A"
+place_m = 0.0
+
+[[boards]]
+name = "S"
+place_m = 0.0
+env = { BARK_ON_BATTERY = "1" }
+
+[[actions]]
+at_s = 300.0
+board = "S"
+do = "say"
+command = "text 0123456789ab ${nowhere.lat} ${nowhere.lon} from the sleepy node to nobody"
+name = "noway"
+expect = '^bench: send id=(?P<id>[0-9a-f]{8}) .*taken'
+
+[[actions]]
+at_s = 720.0
+board = "S"
+do = "say"
+command = "flip"
+name = "flip"
+expect = '^bench: flipping the role'
+
+# The return waits for the node's next beat, at most a beat period of
+# 300 s after the anchor took the text (spec "Beats"), and goes in the
+# window after it.
+[[pass]]
+board = "S"
+line = '^bench: message id=${noway.id} given back why=no-way'
+after = "noway"
+within_s = 330.0
+why = "the anchor returned the text in the node's window and it went back for no way"
+
+[[pass]]
+board = "S"
+line = '^Role \{ sleepy: false'
+after = "flip"
+within_s = 5.0
+why = "the flip turned the node relay"
+
+# The heartbeat at the change and 13 burst slots a burst gap of 1.1 s
+# apart, the last at most 13 gaps after the turn (spec "Heartbeat").
+[[pass]]
+board = "S"
+line = '^tx ch=\d+ airtime_us='
+after = "flip"
+within_s = 16.1
+count = 13
+why = "the node sent its burst"

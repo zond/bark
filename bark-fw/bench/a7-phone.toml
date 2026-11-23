@@ -1,0 +1,33 @@
+# A7, the phone (docs/bench-suite-2026-11-13.md, "Acceptance tests"): two
+# relays held up and logged while `scripts/phonetest.py` runs the app on a
+# phone against A, with B the node its text goes to and the board that
+# sends the app's sealed message back (bark-app/README.md, "The phone
+# test").
+#
+# The scenario does nothing itself: the phone test judges its own steps.
+# B's image, one version above A's, is the update the phone gives A:
+#
+#     scripts/phonetest.py --node <A> --to <B> \
+#         --node-log <run>/<A's id>.log --to-log <run>/<B's id>.log \
+#         --image <run>/builds/B.img \
+#         --send 'python3 scripts/bench.py say {to} "payload {dst} {payload}"'
+
+about = "two relays held up for the phone test"
+# The phone test takes up to 30 min after the relays' first rotation.
+duration_s = 2400.0
+
+[[boards]]
+name = "A"
+place_m = -50.0
+
+[[boards]]
+name = "B"
+place_m = 50.0
+
+[[pass]]
+boards = ["A", "B"]
+line = '^boot relays=1 '
+why = "each holds the other"
+
+[checks]
+skip = { reset = "the phone's update reboots A, and the phone's link is no part of the checks' rules", gap = "A is silent while it swaps images" }

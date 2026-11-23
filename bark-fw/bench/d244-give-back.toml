@@ -1,0 +1,80 @@
+# A message its node cannot send on goes back to the application, with
+# why (spec "Addresses"; roadmap D244), on two relays:
+#
+# - a text to a place where nobody stands goes to B, the only neighbour,
+#   comes back, and is given back at A for no way;
+# - with B silent, a text to B is never taken and is given back for no
+#   neighbour;
+# - with B back, a text to B arrives.
+
+about = "a text given back for no way and for no neighbour, on two relays"
+duration_s = 720.0
+
+[[boards]]
+name = "A"
+place_m = -50.0
+
+[[boards]]
+name = "B"
+place_m = 50.0
+
+# After the first rotation, 195 s after the later boot (spec "Channel at
+# boot").
+[[actions]]
+at_s = 240.0
+board = "A"
+do = "say"
+command = "text 0123456789ab ${nowhere.lat} ${nowhere.lon} to nobody"
+name = "noway"
+expect = '^bench: send id=(?P<id>[0-9a-f]{8}) .*taken'
+
+[[actions]]
+at_s = 300.0
+board = "B"
+do = "off"
+
+# B is live in A's table for 390 s after its last heartbeat (spec
+# "Neighbour table"), so A takes the text and offers it to a node that
+# does not answer.
+[[actions]]
+at_s = 310.0
+board = "A"
+do = "say"
+command = "text ${B.id} ${B.lat} ${B.lon} to a silent neighbour"
+name = "alone"
+expect = '^bench: send id=(?P<id>[0-9a-f]{8}) .*taken'
+
+[[actions]]
+at_s = 420.0
+board = "B"
+do = "on"
+
+# B's burst reaches A within 13 burst gaps of its boot (spec "Heartbeat").
+[[actions]]
+at_s = 520.0
+board = "A"
+do = "say"
+command = "text ${B.id} ${B.lat} ${B.lon} to a neighbour that is back"
+name = "back"
+expect = '^bench: send id=(?P<id>[0-9a-f]{8}) .*taken'
+
+[[pass]]
+board = "A"
+line = '^bench: message id=${noway.id} given back why=no-way'
+after = "noway"
+within_s = 30.0
+why = "the search came back from B and the text went back for no way"
+
+[[pass]]
+board = "A"
+line = '^bench: message id=${alone.id} given back why=no-neighbour'
+after = "alone"
+within_s = 100.0
+why = "no node took the text and it went back for no neighbour"
+
+[[pass]]
+board = "B"
+line = '^message id=${back.id}$'
+after = "back"
+within_s = 30.0
+why = "a text to a neighbour that is back arrives"

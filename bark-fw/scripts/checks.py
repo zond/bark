@@ -324,7 +324,8 @@ DROPPED = re.compile(r"^Dropped \{ msg_id: MsgId\((\d+)\), reason: (\w+)")
 def radio(log: Log) -> list[Finding]:
     """A radio error or a message dropped: a radio counter of the driver's
     line above zero in a boot (they count from the boot), a `radio:`
-    warning, or the core's `Dropped` trace."""
+    warning, or the core's `Dropped` trace, but for a message given back
+    to its application."""
     out = []
     for boot in log.boots:
         worst: dict[str, tuple[int, int]] = {}
@@ -338,7 +339,9 @@ def radio(log: Log) -> list[Finding]:
             elif x.level == "WARN" and x.text.startswith("radio: "):
                 out.append(Finding("radio", FAIL, log.name, x.text, x.n))
             m = DROPPED.match(x.text)
-            if m:
+            # A message given back is its application's again, with why
+            # (spec "Addresses"): not lost.
+            if m and m.group(2) != "GivenBack":
                 out.append(Finding("radio", FAIL, log.name, f"message {int(m.group(1)):08x} dropped, {m.group(2)}", x.n))
         for k, (v, n) in worst.items():
             out.append(Finding("radio", FAIL, log.name, f"{k}={v}", n))

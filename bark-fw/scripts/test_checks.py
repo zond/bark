@@ -165,6 +165,10 @@ class Radio(unittest.TestCase):
         log = board_log("x", [(0.0, 1.0, "Dropped { msg_id: MsgId(3735928559), reason: NoRoute }")])
         self.assertEqual([f.what for f in checks.radio(log)], ["message deadbeef dropped, NoRoute"])
 
+    def test_a_message_given_back_is_not_dropped(self):
+        log = board_log("x", [(0.0, 1.0, "Dropped { msg_id: MsgId(3735928559), reason: GivenBack }")])
+        self.assertEqual(checks.radio(log), [])
+
 
 class Stack(unittest.TestCase):
     def test_under_the_floor_that_packing_guarantees(self):

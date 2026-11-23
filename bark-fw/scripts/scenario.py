@@ -79,7 +79,8 @@ its flash on: what came before is its old image's, and its forgetting.
 Variables are written ${name} in a command, a board or a line: for each
 board <label>.id (twelve hex digits), <label>.id_dec (as the firmware's
 NodeId prints, `186, 230, ...`), <label>.version, and <label>.lat and
-<label>.lon in degrees, the desk's where no place is built in; for each named action
+<label>.lon in degrees, the desk's where no place is built in; nowhere.lat
+and nowhere.lon, a place 2 km east of the desk where no board stands; for each named action
 its expect's groups, <name>.<group>, and a hex group as decimal with
 |dec, as a MsgId prints: ${ac.id|dec}. In a line they match literally.
 """
@@ -102,6 +103,8 @@ import bench
 import checks
 
 RUNS = bench.OUT / "runs"
+# Metres east of the desk: a place for a text nobody can deliver.
+NOWHERE_M = 2000.0
 # From the copy of a UF2 to the version in the board's log: the copy, the
 # boot, and the first 10 s report, which repeats the banner's version for a
 # host that reopened the port late (bark-fw/src/boot.rs); with room.
@@ -304,6 +307,9 @@ def id_dec(node: str) -> str:
 
 def board_vars(ids: dict[str, str], versions: dict[str, int], boards: list[Board] = []) -> dict[str, str]:
     out = {}
+    # No board stands there or within the owner radius of 50 m of it
+    # (spec "Owner"), so a text addressed there finds no way.
+    out["nowhere.lat"], out["nowhere.lon"] = bench.place(NOWHERE_M)
     for b in boards:
         # A board with no place built in is on the desk.
         out[f"{b.name}.lat"], out[f"{b.name}.lon"] = bench.place(b.place_m or 0.0)

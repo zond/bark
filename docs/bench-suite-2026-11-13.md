@@ -3,7 +3,7 @@
 **Status:** design, 2026-11-13. The runner, the standing checks, the
 bench build, the phone test and scenarios A1 to A5, A8, S2 and S3 are built.
 A1, A2, A3, A8 and S3 and the phone test, A7, have passed on the boards, the
-last three on 2026-11-20; A4 and A5 have run, and S2 has not yet. The anchor and clock checks came on 2026-11-17. Every board of a run runs the bench build, which logs
+last three on 2026-11-20; A4 and A5 have run, and S2 has not yet. On 2026-11-23, on two boards, the two scenarios of roadmap D244 and D246 passed, `bench/d244-give-back.toml` (a text given back for no way and for no neighbour) and `bench/d246-wake.toml` (a sleepy node's text returned in its window, and its burst when the button's stand-in wakes it), and A7 again, held up by `bench/a7-phone.toml`. The anchor and clock checks came on 2026-11-17. Every board of a run runs the bench build, which logs
 each transmission, as the heartbeat check needs. The bench build has a sync word of
 its own, so nodes running a release in range take no part in a run. Four T-Echo 433 boards on
 USB on one desk and one Android phone on adb. A quoted name after "spec"
