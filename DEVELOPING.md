@@ -130,7 +130,9 @@ push to main and every pull request.
 The project's page, `https://zond.github.io/bark`, built from `site/`
 by `.github/workflows/pages.yml`, links the latest release's app and
 the manual, `site/manual.html`; each node's screen shows the page's
-address as a QR code.
+address as a QR code. Each page has a hand-kept translation in
+`site/sv/` and `site/uk/`; `site/lang.js` sends a reader of an English
+page to their browser's language where there is one.
 
 A tag `v<N>`, N a positive integer, makes release N:
 `.github/workflows/release.yml` builds the firmware, the loader, the

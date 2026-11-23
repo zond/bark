@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Handbok för bark</title>
+<meta name="description" content="Hur du gör i ordning en bark-nod och använder appen.">
+<link rel="stylesheet" href="../manual.css">
+<link rel="alternate" hreflang="en" href="https://zond.github.io/bark/manual.html">
+<link rel="alternate" hreflang="sv" href="https://zond.github.io/bark/sv/manual.html">
+<link rel="alternate" hreflang="uk" href="https://zond.github.io/bark/uk/manual.html">
+<script src="../lang.js"></script>
+</head>
+<body>
+<main>
+  <nav class="lang" aria-label="Språk"><a lang="en" hreflang="en" href="../manual.html">English</a> · <span lang="sv" aria-current="true">Svenska</span> · <a lang="uk" hreflang="uk" href="../uk/manual.html">Українська</a></nav>
+  <a class="home" href="./" aria-label="bark, förstasidan"><svg viewBox="0 0 100 100" fill="none" stroke="#888" stroke-width="1.5" aria-hidden="true"><path d="M50 50L94.0 50.0 M50 50L88.1 28.0 M50 50L72.0 11.9 M50 50L50.0 6.0 M50 50L28.0 11.9 M50 50L11.9 28.0 M50 50L6.0 50.0 M50 50L11.9 72.0 M50 50L28.0 88.1 M50 50L50.0 94.0 M50 50L72.0 88.1 M50 50L88.1 72.0"/><path d="M58.0 50.0L57.4 45.8L54.5 42.2L50.0 40.5L45.0 41.3L40.9 44.8L39.0 50.0L40.0 55.8L44.0 60.4L50.0 62.5L56.5 61.3L61.7 56.8L64.0 50.0L62.6 42.8L57.5 37.0L50.0 34.5L42.0 36.1L35.7 41.8L33.0 50.0L34.8 58.7L41.0 65.6L50.0 68.5L59.5 66.5L66.9 59.8L70.0 50.0L67.8 39.8L60.5 31.8L50.0 28.5L39.0 30.9L30.5 38.8L27.0 50.0L29.6 61.7L38.0 70.8L50.0 74.5L62.5 71.7L72.1 62.8L76.0 50.0L72.9 36.8L63.5 26.6L50.0 22.5L36.0 25.8L25.3 35.8L21.0 50.0L24.5 64.7L35.0 76.0L50.0 80.5L65.5 76.8L77.3 65.8L82.0 50.0L78.1 33.8L66.5 21.4L50.0 16.5L33.0 20.6L20.1 32.8L15.0 50.0L19.3 67.7L32.0 81.2L50.0 86.5L68.5 82.0L82.5 68.8L88.0 50.0L83.3 30.8L69.5 16.2L50.0 10.5L30.0 15.4L14.9 29.8L9.0 50.0L14.1 70.7L29.0 86.4L50.0 92.5L71.5 87.2L87.7 71.8L94.0 50.0"/></svg></a>
+<h1 id="the-bark-manual">Handbok för bark</h1>
+<p>Hur du gör i ordning en nod, använder appen, och vad allt på skärmarna
+betyder. Vad bark är står på <a href="./">förstasidan</a>.</p>
+<p>Appen och nodens skärm är på engelska. Deras ord står här som de visas.</p>
+<h2 id="contents">Innehåll</h2>
+<ol type="1">
+<li><a href="#words-used-here">Ord som används här</a></li>
+<li><a href="#what-you-need">Vad du behöver</a></li>
+<li><a href="#setting-up-a-node">Göra i ordning en nod</a></li>
+<li><a href="#the-nodes-screen-and-buttons">Nodens skärm och knappar</a></li>
+<li><a href="#installing-the-app">Installera appen</a></li>
+<li><a href="#connecting-to-a-node">Ansluta till en nod</a></li>
+<li><a href="#contacts-and-cards">Kontakter och kort</a></li>
+<li><a href="#writing-and-reading-messages">Skriva och läsa meddelanden</a></li>
+<li><a href="#your-home-node">Din hemnod</a></li>
+<li><a href="#sharing-a-node-with-others">Dela en nod med andra</a></li>
+<li><a href="#the-map-of-nearby-nodes">Kartan över noder i närheten</a></li>
+<li><a href="#updates">Uppdateringar</a></li>
+<li><a href="#backup-and-moving-to-a-new-phone">Säkerhetskopia och byte av telefon</a></li>
+<li><a href="#running-in-the-background">Köra i bakgrunden</a></li>
+<li><a href="#where-to-put-nodes">Var noder ska sitta</a></li>
+<li><a href="#privacy-and-limits">Integritet och begränsningar</a></li>
+<li><a href="#when-something-does-not-work">När något inte fungerar</a></li>
+<li><a href="#for-the-curious">För den nyfikne</a></li>
+</ol>
+<h2 id="words-used-here">Ord som används här</h2>
+<ul>
+<li><strong>Nod:</strong> den lilla radioapparaten. Varje nod har ett ID på tolv
+bokstäver och siffror, som visas på dess skärm, till exempel
+<code>BAE6E6CBF4F5</code>.</li>
+<li><strong>Relä:</strong> en nod som skickar vidare andras meddelanden. En nod på
+laddare är ett relä.</li>
+<li><strong>Sömnig nod:</strong> en nod som sparar på batteriet. Den sover för det
+mesta och talar genom ett relä i närheten, sitt <strong>ankare</strong>.</li>
+<li><strong>Adress:</strong> en nods plats och dess ID. Meddelanden skickas till en
+adress.</li>
+<li><strong>Kort:</strong> det du ger någon för att de ska kunna skriva till dig. Det
+innehåller ditt namn, din nyckel och adressen du nås på. Det visas som
+en QR-kod.</li>
+<li><strong>Hemnod:</strong> en nod som står kvar på ett ställe med ström och
+förvarar dina meddelanden tills du hämtar dem.</li>
+<li><strong>Ägare:</strong> den enda person som bestämmer vilka andra som får ha sitt
+hem på en nod.</li>
+<li><strong>Publik nod:</strong> en nod som vem som helst i närheten får använda från
+appen. Varje nod är publik tills dess folk gör den privat.</li>
+<li><strong>Parkopplad:</strong> din telefon och en nod känner varandra, sedan du
+en gång skrivit in koden från nodens skärm.</li>
+</ul>
+<h2 id="what-you-need">Vad du behöver</h2>
+<ul>
+<li>En <strong>LILYGO T-Echo för 433 MHz</strong> med antenn. Eller ingen nod alls,
+om det finns en publik nod nära dig.</li>
+<li>En USB-kabel och, för ett relä, en laddare.</li>
+<li>En <strong>Android-telefon</strong>.</li>
+</ul>
+<h2 id="setting-up-a-node">Göra i ordning en nod</h2>
+<p><strong>Skruva på antennen före allt annat.</strong> En radio som sänder utan
+antenn kan ta skada.</p>
+<p><strong>Lägg in programvaran.</strong> En ny T-Echo levereras med annan
+programvara. Så byter du den:</p>
+<ol type="1">
+<li>Ladda ner <code>bark.uf2</code> från den
+<a href="https://github.com/zond/bark/releases/latest">senaste utgåvan</a>.</li>
+<li>Anslut noden till en dator med USB-kabeln. Händer inget med en kabel
+som har den lilla kontakten i båda ändar, prova en med den större,
+platta kontakten i datorns ände.</li>
+<li>Tryck två gånger snabbt på återställningsknappen, den övre på nodens
+sida. En enhet som heter <code>TECHOBOOT</code> dyker upp på datorn.</li>
+<li>Kopiera <code>bark.uf2</code> till den enheten. Enheten försvinner och noden
+startar om. En del datorer visar ett fel när den försvinner; strunta i
+det.</li>
+</ol>
+<p>Skärmen visar nu en QR-kod med nodens ID under. Det här gör du en gång:
+senare versioner kommer av sig själva (<a href="#updates">Uppdateringar</a>).</p>
+<p><strong>Ge den en plats.</strong> En nod måste veta var den står, eftersom adresser
+är platser. Det får den veta av sin GPS, som behöver fri sikt mot himlen
+och kan ta några minuter första gången. Inomhus, eller för att vara
+exakt, anger du i stället platsen i appen: <strong>Settings</strong>, <strong>This node</strong>,
+<strong>Place</strong>.</p>
+<p><strong>Ge den ström.</strong> Noden väljer vad den är efter sin ström och efter
+om den rör sig:</p>
+<ul>
+<li><strong>På laddare</strong> är den ett relä och hjälper alla omkring sig.</li>
+<li><strong>På batteri, stillastående,</strong> fortsätter den som relä tills
+batteriet är lågt, och blir sedan sömnig. Det är med avsikt: vid ett
+strömavbrott förlorar en hel stadsdels reläer strömmen samtidigt, och
+nätet får inte försvinna med den. Ett fullt batteri räcker till ungefär
+fyra dygn som relä.</li>
+<li><strong>På batteri, buren,</strong> är den sömnig.</li>
+</ul>
+<p>En sömnig nod skickar inte vidare någon annans meddelanden. Det enda
+undantaget är när den inte hör något relä alls: då skickar sömniga
+noder meddelanden mellan sig, långsamt, tills ett relä dyker upp.</p>
+<p>Vill du välja själv håller du den nedre knappen intryckt i 3 sekunder:
+det växlar noden mellan relä och sömnig
+(<a href="#the-nodes-screen-and-buttons">skärmen och knapparna</a>).
+En ficknod som ligger stilla länge, på ett skrivbord eller i en låda,
+räknas som stillastående och är relä; gör den sömnig på det här sättet
+om du hellre sparar batteriet åt dig själv.</p>
+<figure class="anim">
+<canvas id="a-sleepy" role="img" aria-label="Två reläer och en sömnig nod. Ett meddelande väntar hos den sömniga nodens relä tills den sömniga noden vaknar."></canvas>
+<figcaption>Reläer ger sig till känna ofta och skickar meddelanden vidare genast. En sömnig nod vaknar då och då; reläet den talar genom förvarar dess meddelanden till dess.</figcaption>
+</figure>
+<h2 id="the-nodes-screen-and-buttons">Nodens skärm och knappar</h2>
+<p>Noden har två knappar på sidan. En liten text på skärmen pekar på
+var och en.</p>
+<ul>
+<li><strong>Den övre knappen startar om noden.</strong> Två snabba tryck öppnar i
+stället enheten för ny programvara.</li>
+<li><strong>Den nedre knappen, kort tryck,</strong> växlar skärmen mellan QR-koden och
+nodens tillstånd, som visas i 30 sekunder.</li>
+<li><strong>Den nedre knappen, intryckt i 3 sekunder,</strong> växlar noden mellan
+relä och sömnig, oavsett ström. Så förblir den tills du sätter i eller
+drar ur kabeln.</li>
+</ul>
+<p><strong>QR-koden</strong> leder till projektets sida, där vem som helst kan hämta
+appen. Under den står nodens ID. Medan en telefon parkopplas visas
+parkopplingskoden där i stället.</p>
+<p><strong>Tillståndet</strong> har en rad för vart och ett av dessa:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Rad</th>
+<th>Betydelse</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FIXED RELAY</code>, <code>CARRIED RELAY</code>, <code>RELAY NO PLACE</code></td>
+<td>ett relä: stillastående, buret, eller utan att ännu veta sin plats</td>
+</tr>
+<tr>
+<td><code>SLEEPY ANCHORED</code>, <code>SLEEPY NO ANCHOR</code></td>
+<td>en sömnig nod: med ett relä att tala genom, eller på jakt efter ett</td>
+</tr>
+<tr>
+<td><code>STARTING</code></td>
+<td>nyss påslagen, lyssnar innan den går med</td>
+</tr>
+<tr>
+<td><code>ID</code></td>
+<td>nodens ID</td>
+</tr>
+<tr>
+<td><code>NODE V47</code></td>
+<td>programvarans version</td>
+</tr>
+<tr>
+<td><code>GET V48 14/31</code></td>
+<td>den tar emot en ny version, och hur långt den har kommit</td>
+</tr>
+<tr>
+<td><code>PHONE UNPAIRED</code>, <code>PUBLIC</code>, <code>PRIVATE</code>, <code>3 PHONES</code></td>
+<td>vilka som får använda den</td>
+</tr>
+<tr>
+<td><code>PAIR CODE</code></td>
+<td>koden att skriva in i appen</td>
+</tr>
+<tr>
+<td><code>CONFIRM</code></td>
+<td>en kod att skriva in i appen när du tar bort en telefon eller byter ägare</td>
+</tr>
+<tr>
+<td><code>PHONES FULL</code></td>
+<td>åtta telefoner är parkopplade, och fler får inte plats</td>
+</tr>
+<tr>
+<td><code>KNOWN 5/4/2</code></td>
+<td>andra noder den hör nu, hur många av dem tydligt, och hur många av dessa som har tagit emot ett meddelande från den</td>
+</tr>
+<tr>
+<td><code>POWER USB</code> eller <code>BATTERY 73%/9D</code></td>
+<td>dess ström, och på batteri ungefär hur länge det räcker som den går nu</td>
+</tr>
+<tr>
+<td><code>UP</code></td>
+<td>hur länge sedan den slogs på</td>
+</tr>
+<tr>
+<td><code>TIME</code></td>
+<td>klockslaget när skärmen ritades</td>
+</tr>
+</tbody>
+</table></div>
+<p>Skärmen behåller sin bild när noden är av. Om ett tryck inte ändrar
+något inom några sekunder är noden inte igång.</p>
+<h2 id="installing-the-app">Installera appen</h2>
+<p>Öppna <a href="./">förstasidan</a> på telefonen, eller skanna koden på vilken
+nods skärm som helst, och tryck på <strong>Hämta appen</strong>. Android frågar en
+gång om din webbläsare får installera appar.</p>
+<p>Vid första starten ber appen om Bluetooth, som är hur den når en nod.
+Ett kort, <strong>Get started</strong>, visar sedan tre steg:</p>
+<ol type="1">
+<li><strong>Set your name</strong>, ange ditt namn. Det hamnar på ditt kort.</li>
+<li><strong>Find a node</strong>, hitta en nod. Se nästa avsnitt.</li>
+<li><strong>Add a first contact</strong>, lägg till en första kontakt.</li>
+</ol>
+<p>Appen skapar också dina <strong>12 ord</strong>. De är din identitet. Skriv ner
+dem och förvara dem säkert: tappar du telefonen är de enda vägen
+tillbaka (<a href="#backup-and-moving-to-a-new-phone">Säkerhetskopia</a>).</p>
+<h2 id="connecting-to-a-node">Ansluta till en nod</h2>
+<p>Appen letar själv efter en nod, över Bluetooth, som når ett rum eller
+två.</p>
+<ul>
+<li><strong>En publik nod: inget att göra.</strong> Finns ingen egen nod inom
+räckhåll hittar appen en publik nod i närheten och använder den som
+gäst. Ingen kod behövs. Den ansluter en kort stund varje gång den har
+något att skicka eller hämta, så att andra gäster får sin tur.</li>
+<li><strong>Din egen nod: parkoppla med den, en gång.</strong> Öppna <strong>Settings</strong>,
+<strong>Node</strong>, tryck på <strong>Scan</strong> och sedan på <strong>Pair</strong> bredvid din nod.
+Dess skärm visar en sexsiffrig kod; skriv in den i appen. Sedan ansluter
+appen till den så fort den är nära, och väljer den före alla publika
+noder. En nod tar upp till åtta parkopplade telefoner, och en telefon
+kan vara parkopplad med flera noder.</li>
+</ul>
+<p>Samma lista visar varje nod inom räckhåll med dess signal, om du vill
+välja själv: tryck på en publik nod för att använda den som gäst.</p>
+<figure class="anim">
+<canvas id="a-guests" role="img" aria-label="En nod med en parkopplad telefon som förblir ansluten och fyra gästtelefoner som ansluter en i taget."></canvas>
+<figcaption>En parkopplad telefon förblir ansluten. Gäster ansluter en kort stund var, i tur och ordning.</figcaption>
+</figure>
+<p>En rad överst på första skärmen säger alltid hur det står till, till
+exempel "Connected to your home", "Connected to ID … as a guest" eller
+"Not connected. Texts wait on the phone". Tryck på den lilla
+infoknappen bredvid för att få veta varför.</p>
+<p>Du behöver inte vara ansluten för att skriva. Meddelanden väntar på
+telefonen och går iväg nästa gång en nod är inom räckhåll.</p>
+<h2 id="contacts-and-cards">Kontakter och kort</h2>
+<p>För att skriva till någon behöver du deras <strong>kort</strong>, och de behöver
+ditt för att svara.</p>
+<ul>
+<li><strong>Visa ditt:</strong> QR-knappen öppnar <strong>My card</strong>. Låt den andra skanna
+det, eller tryck på <strong>Share</strong> för att skicka det på annat sätt.</li>
+<li><strong>Ta emot deras:</strong> <strong>Scan their card</strong> med kameran, eller klistra in
+ett kort du har fått, under <strong>Contacts</strong>.</li>
+</ul>
+<p>Ett kort säger var dess person nås. Med en hemnod gäller det så länge
+det hemmet står kvar. Utan en är kortet märkt <strong>temporary</strong>: det
+pekar på noden du använde senast, vilket bara hjälper så länge du
+återkommer till den.</p>
+<p>När ditt kort ändras, till exempel när du väljer ett nytt hem, säger
+appen till och erbjuder <strong>Send my card</strong>. Den skickar aldrig ditt kort
+av sig själv.</p>
+<p>En person som skriver till dig innan du har deras kort visas som <strong>not
+verified</strong>: appen kan ännu inte veta att de är den de säger.</p>
+<p>Svep en kontakt eller ett samtal åt sidan för att arkivera. De
+arkiverade finns under <strong>Archived</strong> och kommer tillbaka när personen
+skriver.</p>
+<h2 id="writing-and-reading-messages">Skriva och läsa meddelanden</h2>
+<p>Öppna ett samtal, skriv, skicka. Små märken under varje meddelande
+berättar hur det har gått; tryck på meddelandet för en förklaring av
+varje märke.</p>
+<p><strong>Ett meddelande du har skickat</strong> visar i tur och ordning:</p>
+<ul>
+<li>en klocka: väntar på telefonen på en nod;</li>
+<li>två pilar: lämnas över till noden;</li>
+<li>en bock: nätet har tagit emot det.</li>
+</ul>
+<p>Bocken betyder inte att det har kommit fram. Nätet skickar inget
+besked om det; du vet att det kom fram när personen svarar.</p>
+<p>Är nätet upptaget lämnar det tillbaka meddelandet, och appen säger "The
+network is busy, sending again in …" och försöker igen av sig själv.
+Inget som nätet har tagit emot kastas för att det är gammalt.</p>
+<p><strong>Långa meddelanden.</strong> Ett meddelande rymmer ungefär 200 bokstäver,
+färre i skriftsystem där varje bokstav tar mer plats. En längre text
+skickas i delar, upp till 16, och visas som ett meddelande. Appen säger
+hur många delar innan du skickar.</p>
+<p><strong>Reaktioner.</strong> Håll fingret på ett meddelande du har fått för att
+svara med en emoji. Avsändaren ser den på sitt meddelande.</p>
+<p><strong>Vart ett meddelande går.</strong> Till adressen på personens kort: deras
+hem, om de har ett. Men varje meddelande bär också, krypterat, adressen
+till noden avsändaren skrev från, så ett snabbt svar går raka vägen dit
+de är.</p>
+<figure class="anim">
+<canvas id="a-route" role="img" aria-label="Ett meddelande hoppar från nod till nod mot en plats, vänder i en återvändsgränd och går runt en annan väg."></canvas>
+<figcaption>Varje nod lämnar meddelandet till den granne som är närmast platsen det ska till. I en återvändsgränd går det tillbaka och prövar en annan väg. Varje hopp bekräftas.</figcaption>
+</figure>
+<h2 id="your-home-node">Din hemnod</h2>
+<p>Utan ett hem går meddelanden till dig till noden du använde senast och
+väntar där. Det fungerar för den som alltid använder samma nod. Rör du
+på dig, välj ett hem.</p>
+<p><strong>Ett hem måste stå kvar på ett ställe, ha ström, och veta sin
+plats.</strong> En nod i ditt fönster på en laddare är det vanliga valet.</p>
+<figure class="anim">
+<canvas id="a-home" role="img" aria-label="Ett meddelande från en vän väntar på en hemnod. En förfrågan från en telefon långt bort går till hemmet, och meddelandet går tillbaka till telefonen. Svaret går raka vägen till vännens nod, inte genom hemmet, och vännens svar kommer raka vägen tillbaka. Sedan går telefonen, en klocka går framåt, och nästa meddelande väntar på hemmet igen."></canvas>
+<figcaption>Meddelanden väntar på ditt hem. När du hämtar går förfrågan till ditt hem och meddelandena kommer tillbaka till noden du är vid. Ditt svar går raka vägen till noden din vän skrev från, och den närmaste minuten gör deras meddelanden till dig likadant. Därefter väntar de på ditt hem igen.</figcaption>
+</figure>
+<ul>
+<li><strong>Välj det:</strong> anslut till noden, sedan <strong>Settings</strong>, <strong>Home node</strong>,
+<strong>Set home</strong>. Använde du den som gäst parkopplar du först. Ditt kort
+ändras, så skicka det till dina kontakter när appen erbjuder det.</li>
+<li><strong>Läs din post hemma:</strong> när telefonen är ansluten till ditt hem
+kommer meddelanden av sig själva.</li>
+<li><strong>Läs din post hemifrån:</strong> tryck på inkorgsknappen, <strong>Fetch my
+mail</strong>. Förfrågan går till ditt hem och meddelandena går tillbaka till
+noden du är vid. Det kan ta upp till ungefär en halvtimme i ett stort
+nät; knappen visar att den väntar.</li>
+<li><strong>Byt eller ta bort det:</strong> <strong>Set home</strong> på en annan nod, eller
+<strong>Remove home</strong>. Ditt gamla hem skickar dig det den har kvar och
+glömmer dig sedan. Var det utom räckhåll just då gör appen klart saken
+nästa gång din telefon är ansluten till det.</li>
+<li><strong>När du har återställt din identitet på en ny telefon:</strong> <strong>Use my
+existing home</strong>, och ange hemmets adress.</li>
+</ul>
+<h2 id="sharing-a-node-with-others">Dela en nod med andra</h2>
+<p><strong>Publik eller privat.</strong> Under <strong>Settings</strong>, <strong>This node</strong>, avgör
+reglaget <strong>Public</strong> om telefoner som inte är parkopplade får använda
+noden som gäster. Det är på från början.</p>
+<p><strong>Telefonerna på en nod.</strong> På samma ställe listas varje telefon som är
+parkopplad med noden och varje person som har sitt hem där. Härifrån
+kan du koppla bort din egen telefon med <strong>Unpair</strong>, eller ta bort någon
+annans; noden visar då en <strong>CONFIRM</strong>-kod att skriva in, så att bara
+den som står vid noden kan göra det.</p>
+<p><strong>Ägaren.</strong> Den första som gör en nod till sitt hem blir dess ägare.
+Ägaren kan, var som helst ifrån:</p>
+<ul>
+<li>ge en kontakt ett hem på noden: <strong>Share my home node</strong> i det
+samtalets meny;</li>
+<li>se vilka som har sitt hem där, och ta bort någon: <strong>Settings</strong>,
+<strong>Home node</strong>, <strong>People with a home here</strong>;</li>
+<li>göra någon annan till ägare.</li>
+</ul>
+<p>Har en nod ingen ägare kan en person som har den som hem trycka på
+<strong>Become owner</strong> medan de är anslutna till den. En nod rymmer hem åt
+upp till åtta personer.</p>
+<h2 id="the-map-of-nearby-nodes">Kartan över noder i närheten</h2>
+<p><strong>Nearby nodes</strong>, i menyn, visar noden du är ansluten till och noderna
+den hör, på en gatukarta. Själva kartan behöver internet; noderna visas
+även utan.</p>
+<p>Linjen till varje nod är grön, gul eller röd för en bra, hygglig eller
+skör radiolänk. Tryck på en nod för att se vad som är känt om den: relä
+eller sömnig, stillastående eller buren, dess plats, dess ström, hur väl
+den hörs, när den senast hördes, programvarans version, och vilka av
+dina kontakter som senast sågs där.</p>
+<p>En sömnig nod hör inte mycket mer än sitt ankare, så kartan från en
+ficknod är nästan tom. Det är som det ska.</p>
+<h2 id="updates">Uppdateringar</h2>
+<p><strong>Appen.</strong> När en nyare version finns och telefonen har internet säger
+en rad överst det. Tryck på den för att installera.</p>
+<p><strong>En nod, av sig själv.</strong> En nod som hör en granne med en nyare
+version samlar in den över radio, bit för bit, kontrollerar att
+projektet har signerat den, och startar om med den. Medan den samlar
+skickar den redan vidare de bitar den har till sina egna grannar. Inget
+behöver göras. Det tar några timmar för ett relä och större delen av ett
+dygn för en sömnig nod. Parkopplingar, hem och sparad post finns kvar.
+En nod med lågt batteri väntar tills den har ström.</p>
+<figure class="anim">
+<canvas id="a-update" role="img" aria-label="En telefon ger en nod en ny version, och den sprider sig från nod till nod tills alla har den."></canvas>
+<figcaption>En nod får en ny version från en telefon. Dess grannar samlar in den i bitar, och skickar vidare de bitar de har medan de ännu samlar resten. En nod som har allt kontrollerar det och startar om med det.</figcaption>
+</figure>
+<p><strong>En nod, från telefonen.</strong> För att sätta igång en ny version, eller
+skynda på: <strong>Settings</strong>, <strong>Updates</strong>, <strong>Send to the node</strong>, sedan
+<strong>Reboot into version …</strong>. Överföringen tar under en minut och
+omstarten ungefär en till.</p>
+<p>En nod tar bara emot programvara som projektet har signerat, och bara
+en version nyare än sin egen. Om en ny version inte startar som den ska
+går noden tillbaka till den förra.</p>
+<h2 id="backup-and-moving-to-a-new-phone">Säkerhetskopia och byte av telefon</h2>
+<ul>
+<li><strong>De 12 orden</strong> ger tillbaka din identitet, så att folk fortfarande
+når dig med kortet de har. De ger inte tillbaka kontakter eller
+meddelanden. Se och återställ dem under <strong>Settings</strong>, <strong>Backup</strong>.</li>
+<li><strong>Identitetsfilen</strong> ger allt: identitet, kontakter och, om du kryssar
+i rutan, meddelanden. <strong>Settings</strong>, <strong>My identity</strong>, <strong>Save to a
+file</strong>, med ett lösenord du väljer; på den nya telefonen <strong>Restore
+from a file</strong>.</li>
+</ul>
+<p>Använd en identitet på en telefon i taget. Efter flytten parkopplar du
+den nya telefonen med dina noder igen: en parkoppling hör till
+telefonen och följer inte med.</p>
+<h2 id="running-in-the-background">Köra i bakgrunden</h2>
+<p>Appen behåller sin anslutning med skärmen släckt, och visar en avisering
+som säger vilken nod den är på. Nya meddelanden aviseras som i vilken
+meddelandeapp som helst.</p>
+<p>En del telefoner stänger appar för att spara batteri. Kommer meddelanden
+bara när du öppnar appen, gå till <strong>Settings</strong>, <strong>Battery</strong>, <strong>Let
+bark run</strong>.</p>
+<h2 id="where-to-put-nodes">Var noder ska sitta</h2>
+<ul>
+<li><strong>Högt och fritt</strong> är det som räknas. En nod på ett tak eller i ett
+fönster en trappa upp når många fler grannar än en på ett skrivbord.
+Radio på den här frekvensen går genom en vägg eller två men inte genom
+en kulle.</li>
+<li><strong>Ett relä hemma, en nod i fickan</strong> är det vanliga paret: reläet är
+ditt hem och hjälper grannskapet; ficknoden är din väg in var du än
+är.</li>
+<li><strong>Utomhus, håll den torr.</strong> En låda där du kommer åt knapparna och
+ser skärmen sparar besvär längre fram.</li>
+<li><strong>En publik nod</strong> passar på ett ställe folk besöker: sätt den där
+skärmen syns, eftersom koden på den är hur folk får appen.</li>
+</ul>
+<p>Ett nät växer genom reläer inom räckhåll för varandra. En ensam nod
+kan inget annat än vänta.</p>
+<h2 id="privacy-and-limits">Integritet och begränsningar</h2>
+<ul>
+<li><strong>Bara mottagaren kan läsa ett meddelande.</strong> Appen krypterar det för
+dem ensamma, och ingen nod på vägen kan öppna det.</li>
+<li><strong>Platser är inte privata.</strong> Vem som helst med en radio inom räckhåll
+får veta varje nods ID och var den står. Den som lyssnar nära din hemnod
+kan räkna ut att din post går genom den.</li>
+<li><strong>Nätet litar på varje nod.</strong> Det är byggt för när infrastrukturen
+sviker, inte för att stå emot en angripare. Den som vill störa noderna
+omkring sig kan göra det.</li>
+<li><strong>Det delar etern rättvist.</strong> Lagen begränsar hur mycket varje nod
+får sända, så nätet bär korta texter och tackar nej till fler när det
+är fullt, och säger till appen när den ska försöka igen.</li>
+<li><strong>Bara Android</strong>, än så länge.</li>
+</ul>
+<h2 id="when-something-does-not-work">När något inte fungerar</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Vad du ser</th>
+<th>Vad du kan prova</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ingen nod hittas vid sökningen</td>
+<td>Gå närmare; Bluetooth når ett rum eller två. Kontrollera att noden är igång: tryck på dess nedre knapp och se om skärmen ändras.</td>
+</tr>
+<tr>
+<td><code>RELAY NO PLACE</code> på noden</td>
+<td>Den har ingen GPS-position. Ge den fri sikt mot himlen, eller ange dess plats i appen.</td>
+</tr>
+<tr>
+<td><code>SLEEPY NO ANCHOR</code></td>
+<td>Den hör inget relä. Flytta närmare ett, eller sätt den på laddning så blir den ett relä.</td>
+</tr>
+<tr>
+<td>"Does not know this phone"</td>
+<td>Noden har glömt parkopplingen. Tryck på <strong>Pair again</strong>.</td>
+</tr>
+<tr>
+<td>"Needs an update" bredvid en nod</td>
+<td>Nodens programvara är för gammal för den här appen. Ge den den nya versionen över USB, som när du gjorde i ordning den.</td>
+</tr>
+<tr>
+<td>Ett skickat meddelande står kvar på klockan</td>
+<td>Ingen nod är inom räckhåll. Det går iväg när en är det.</td>
+</tr>
+<tr>
+<td>"Your home did not answer your last fetch"</td>
+<td>Hemmet är av eller utom räckhåll. Försök igen senare; svarar det aldrig, välj ett annat hem.</td>
+</tr>
+<tr>
+<td>En nod vill inte ta <code>TECHOBOOT</code>-steget</td>
+<td>Tryck två gånger på den övre knappen, snabbare.</td>
+</tr>
+</tbody>
+</table></div>
+<p>Appens meny har en skärm, <strong>Debug</strong>, med en logg över vad appen och
+noden har sagt till varandra. Den är det första att titta på, och att
+skicka med, när du rapporterar ett fel.</p>
+<h2 id="for-the-curious">För den nyfikne</h2>
+<p>Saker i projektet som de flesta aldrig behöver. Texterna de leder till
+är på engelska.</p>
+<ul>
+<li><strong><code>bark</code>, en telefon på kommandoraden.</strong> Allt appen gör över
+Bluetooth, från en Linuxdator (<a href="https://github.com/zond/bark/blob/main/bark-cli/README.md"><code>bark-cli/README.md</code></a>).</li>
+<li><strong>Simulatorn.</strong> Kör samma programvara som noderna för en hel stad på
+en gång, tiotusentals noder, för att pröva konstruktionen innan
+hårdvaran gör det (<a href="https://github.com/zond/bark/blob/main/docs/simulator-design.md"><code>docs/simulator-design.md</code></a>).</li>
+<li><strong>Laddaren.</strong> Ett litet program på varje nod som byter in en ny
+version och tillbaka till den gamla om den nya inte fungerar (<a href="https://github.com/zond/bark/blob/main/bark-fw/README.md"><code>bark-fw/README.md</code></a>, "Updates").</li>
+<li><strong>Bänkverktygen.</strong> Skript och särskilda byggen för att mäta radio
+och köra tester på riktiga kort (<a href="https://github.com/zond/bark/blob/main/bark-fw/README.md"><code>bark-fw/README.md</code></a>).</li>
+<li><strong>Specifikationen och besluten.</strong> Varje regel noderna följer står i
+<a href="https://github.com/zond/bark/blob/main/docs/protocol.md"><code>docs/protocol.md</code></a>, och varje val med sitt skäl i
+<a href="https://github.com/zond/bark/blob/main/docs/roadmap.md"><code>docs/roadmap.md</code></a>.</li>
+</ul>
+<p>Hur man bygger alltihop: <a href="https://github.com/zond/bark/blob/main/DEVELOPING.md"><code>DEVELOPING.md</code></a>.</p>
+<script src="../manual.js"></script>
+</main>
+<footer>
+  <a href="./">Förstasidan</a> ·
+  <a href="https://github.com/zond/bark">Källkoden och konstruktionen, på GitHub (på engelska)</a>
+</footer>
+</body>
+</html>

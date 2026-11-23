@@ -11,7 +11,7 @@ no server, no account and no SIM card: the nodes are the whole network.
 **[Read the manual](https://zond.github.io/bark/manual.html)** to set up
 a node and the app. The app itself is on the
 [project's page](https://zond.github.io/bark), which every node's screen
-shows as a QR code.
+shows as a QR code. Both pages are also in Swedish and Ukrainian.
 
 ## How it works, briefly
 

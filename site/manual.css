@@ -1,0 +1,26 @@
+:root { --text: #222; --muted: #666; --rule: #ddd; --red: #c62828; }
+body {
+  margin: 0; background: #fff; color: var(--text);
+  font: 17px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+main { max-width: 40rem; margin: 0 auto; padding: 2.5rem 1rem 1.5rem; }
+.home { display: inline-block; }
+svg { display: block; width: 3rem; height: 3rem; margin-bottom: 1rem; }
+h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+h2 { font-size: 1.25rem; margin: 2.5rem 0 .5rem; padding-top: 1rem; border-top: 1px solid var(--rule); }
+a { color: var(--red); }
+code { font-size: .9em; background: #f4f4f4; padding: .05em .3em; border-radius: .2em; }
+li { margin: .25rem 0; }
+.table { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: .95rem; }
+th, td { text-align: left; vertical-align: top; padding: .4rem .6rem .4rem 0; border-bottom: 1px solid var(--rule); }
+.anim { margin: 1.5rem 0; }
+.anim canvas { display: block; width: 100%; aspect-ratio: 2 / 1; }
+.anim figcaption { color: var(--muted); font-size: .9rem; margin-top: .5rem; }
+footer {
+  max-width: 40rem; margin: 0 auto; padding: 1rem 1rem 2rem;
+  border-top: 1px solid var(--rule); color: var(--muted); font-size: .9rem;
+}
+footer a { color: var(--muted); }
+.lang { float: right; margin: 0; color: var(--muted); font-size: .9rem; }
+.lang a { color: var(--muted); }

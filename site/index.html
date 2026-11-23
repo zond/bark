@@ -5,39 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>bark</title>
 <meta name="description" content="Text messages across a city by radio, when the phone network is down.">
-<style>
-  :root { --text: #222; --muted: #666; --rule: #ddd; --red: #c62828; }
-  body {
-    margin: 0; background: #fff; color: var(--text);
-    font: 17px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  }
-  main { max-width: 34rem; margin: 0 auto; padding: 2.5rem 1rem 1.5rem; }
-  svg { display: block; width: 4rem; height: 4rem; margin-bottom: 1rem; }
-  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
-  .lead { margin: 0 0 1.75rem; }
-  .get {
-    display: block; text-align: center; background: var(--red); color: #fff;
-    font-weight: 600; text-decoration: none; padding: .9rem 1rem; border-radius: .5rem;
-  }
-  .get:focus-visible { outline: 3px solid var(--text); outline-offset: 2px; }
-  .steps { color: var(--muted); font-size: .95rem; margin: .75rem 0 2rem; }
-  .steps p { margin: 0 0 .25rem; }
-  .steps a { color: var(--red); }
-  details { border-top: 1px solid var(--rule); padding-top: 1rem; }
-  summary { cursor: pointer; color: var(--text); font-weight: 600; }
-  details p { color: var(--muted); }
-  .mesh { margin: 2rem 0 0; }
-  .mesh canvas { display: block; width: 100%; aspect-ratio: 4 / 3; }
-  .mesh figcaption { color: var(--muted); font-size: .9rem; margin-top: .5rem; }
-  footer {
-    max-width: 34rem; margin: 0 auto; padding: 1rem 1rem 2rem;
-    border-top: 1px solid var(--rule); color: var(--muted); font-size: .9rem;
-  }
-  footer a { color: var(--muted); }
-</style>
+<link rel="stylesheet" href="front.css">
+<link rel="alternate" hreflang="en" href="https://zond.github.io/bark/">
+<link rel="alternate" hreflang="sv" href="https://zond.github.io/bark/sv/">
+<link rel="alternate" hreflang="uk" href="https://zond.github.io/bark/uk/">
+<script src="lang.js"></script>
 </head>
 <body>
 <main>
+  <nav class="lang" aria-label="Language"><span lang="en" aria-current="true">English</span> · <a lang="sv" hreflang="sv" href="sv/">Svenska</a> · <a lang="uk" hreflang="uk" href="uk/">Українська</a></nav>
   <svg viewBox="0 0 100 100" fill="none" stroke="#888" stroke-width="1.5" aria-hidden="true"><path d="M50 50L94.0 50.0 M50 50L88.1 28.0 M50 50L72.0 11.9 M50 50L50.0 6.0 M50 50L28.0 11.9 M50 50L11.9 28.0 M50 50L6.0 50.0 M50 50L11.9 72.0 M50 50L28.0 88.1 M50 50L50.0 94.0 M50 50L72.0 88.1 M50 50L88.1 72.0"/><path d="M58.0 50.0L57.4 45.8L54.5 42.2L50.0 40.5L45.0 41.3L40.9 44.8L39.0 50.0L40.0 55.8L44.0 60.4L50.0 62.5L56.5 61.3L61.7 56.8L64.0 50.0L62.6 42.8L57.5 37.0L50.0 34.5L42.0 36.1L35.7 41.8L33.0 50.0L34.8 58.7L41.0 65.6L50.0 68.5L59.5 66.5L66.9 59.8L70.0 50.0L67.8 39.8L60.5 31.8L50.0 28.5L39.0 30.9L30.5 38.8L27.0 50.0L29.6 61.7L38.0 70.8L50.0 74.5L62.5 71.7L72.1 62.8L76.0 50.0L72.9 36.8L63.5 26.6L50.0 22.5L36.0 25.8L25.3 35.8L21.0 50.0L24.5 64.7L35.0 76.0L50.0 80.5L65.5 76.8L77.3 65.8L82.0 50.0L78.1 33.8L66.5 21.4L50.0 16.5L33.0 20.6L20.1 32.8L15.0 50.0L19.3 67.7L32.0 81.2L50.0 86.5L68.5 82.0L82.5 68.8L88.0 50.0L83.3 30.8L69.5 16.2L50.0 10.5L30.0 15.4L14.9 29.8L9.0 50.0L14.1 70.7L29.0 86.4L50.0 92.5L71.5 87.2L87.7 71.8L94.0 50.0"/></svg>
   <h1>bark</h1>
   <p class="lead">Small radio nodes that carry text messages across a city when the phone network and the internet are down.</p>
@@ -63,102 +39,7 @@
     <canvas id="mesh" aria-label="A small mesh of relays and sleepy nodes passing messages"></canvas>
     <figcaption>Relays on power announce themselves often and pass messages hop by hop toward the recipient's place, each hop acknowledged. Sleepy nodes on battery beat seldom and speak through the relay they anchor to, where messages for them wait until their next beat.</figcaption>
   </figure>
-<script>
-(() => {
-// Six relays on power round an empty middle, and eight sleepy nodes, each anchored to the relay nearest it.
-const R = [[60,70],[190,45],[330,70],[350,215],[210,250],[65,205]];
-const S = [[20,25],[110,120],[250,10],[390,115],[285,160],[390,280],[150,285],[20,270]];
-const P = R.concat(S), N = R.length, RANGE = 150, RED = '#c62828';
-const c = document.getElementById('mesh'), g = c.getContext('2d');
-const d = (a, b) => Math.hypot(P[a][0] - P[b][0], P[a][1] - P[b][1]);
-const relays = R.map((_, i) => i);
-const nb = relays.map(i => relays.filter(j => j != i && d(i, j) < RANGE));
-const anchor = i => i < N ? i : relays.reduce((a, b) => d(i, a) < d(i, b) ? a : b);
-// A beat every 1 to 3 s for a relay, 6 to 9 s for a sleepy node: the spec's periods scaled.
-const beat = P.map((_, i) => { const e = i < N ? 1 + 2 * Math.random() : 6 + 3 * Math.random(); return { e, at: e * Math.random() }; });
-const nextBeat = (i, t) => { const b = beat[i]; return b.at + Math.ceil((t - b.at) / b.e) * b.e; };
-// Relay to relay: each hop to the untried neighbour nearest the destination, back to the parent at a dead end.
-function route(s, t) {
-  const hops = [], seen = new Set([s]), st = [s];
-  while (st.length) {
-    const u = st[st.length - 1];
-    if (u == t) return hops;
-    const n = nb[u].filter(v => !seen.has(v)).sort((a, b) => d(a, t) - d(b, t))[0];
-    if (n === undefined) { st.pop(); if (st.length) hops.push([u, st[st.length - 1]]); continue; }
-    seen.add(n); st.push(n); hops.push([u, n]);
-  }
-  return [];
-}
-// A sleepy sender hands its message to its anchor; the recipient's anchor holds it until the recipient beats.
-function message(a, b) {
-  const steps = [], A = anchor(a), B = anchor(b);
-  if (a != A) steps.push([a, A]);
-  steps.push(...route(A, B));
-  if (b != B) steps.push(B, [B, b]);
-  return steps;
-}
-let W, msg = null, next = 1, sleepyNext = false;
-function size() {
-  const r = devicePixelRatio || 1; W = c.clientWidth;
-  c.width = W * r; c.height = W * .75 * r; g.setTransform(r * W / 400, 0, 0, r * W / 400, 0, 0);
-}
-function pick(t) {
-  const pool = sleepyNext ? S.map((_, i) => N + i) : relays;
-  let a, b;
-  do { a = pool[Math.floor(Math.random() * pool.length)]; b = pool[Math.floor(Math.random() * pool.length)]; }
-  while (anchor(a) == anchor(b) || nb[anchor(a)].includes(anchor(b)) && !sleepyNext);
-  sleepyNext = !sleepyNext;
-  msg = { to: b, steps: message(a, b), i: 0, t0: t };
-}
-const HOP = .6, ACK = .3;
-const line = (a, b) => { g.beginPath(); g.moveTo(...P[a]); g.lineTo(...P[b]); g.stroke(); };
-function draw(t, still) {
-  g.clearRect(0, 0, 400, 300);
-  g.lineWidth = 1; g.strokeStyle = '#e2e2e2';
-  nb.forEach((n, i) => n.forEach(j => j > i && line(i, j)));
-  g.setLineDash([3, 3]); S.forEach((_, k) => line(N + k, anchor(N + k))); g.setLineDash([]);
-  if (!still) beat.forEach((b, i) => {
-    const age = (t - b.at) % b.e;
-    if (t > b.at && age < 1) { g.strokeStyle = `rgba(136,136,136,${(i < N ? 1 : .6) * (1 - age)})`; g.beginPath(); g.arc(...P[i], 6 + 30 * age, 0, 7); g.stroke(); }
-  });
-  let glow = -1;
-  while (msg) {
-    const s = msg.steps[msg.i], f = t - msg.t0;
-    if (s === undefined) { if (f < 1.5) glow = msg.to; else msg = null; break; }
-    if (typeof s == 'number') {
-      msg.until ??= nextBeat(msg.to, t);
-      if (t < msg.until) { g.fillStyle = '#888'; g.fillRect(P[s][0] + 6, P[s][1] - 10, 5, 5); break; }
-      msg.until = undefined; msg.i++; msg.t0 = t; continue;
-    }
-    if (f > HOP + ACK) { msg.i++; msg.t0 = t; continue; }
-    const [u, v] = s; g.strokeStyle = g.fillStyle = RED;
-    if (f < HOP) { const q = f / HOP; g.beginPath(); g.arc(P[u][0] + (P[v][0] - P[u][0]) * q, P[u][1] + (P[v][1] - P[u][1]) * q, 4, 0, 7); g.fill(); }
-    else { g.globalAlpha = 1 - (f - HOP) / ACK; g.lineWidth = 2; line(v, u); g.globalAlpha = 1; }
-    break;
-  }
-  P.forEach((p, i) => {
-    g.fillStyle = i == glow ? RED : i < N ? '#777' : '#c4c4c4';
-    g.beginPath(); g.arc(...p, i == glow ? 7 : i < N ? 5 : 4, 0, 7); g.fill();
-  });
-}
-function still() {
-  draw(0, true);
-  g.strokeStyle = RED; g.lineWidth = 2; g.setLineDash([4, 4]);
-  message(N + 1, N + 4).forEach(s => typeof s != 'number' && line(...s));
-  g.setLineDash([]);
-}
-const calm = matchMedia('(prefers-reduced-motion: reduce)');
-function frame(ms) {
-  const t = ms / 1000;
-  if (calm.matches) return still();
-  if (!msg && t > next) { pick(t); next = t + 2 + 2 * Math.random(); }
-  draw(t, false); requestAnimationFrame(frame);
-}
-addEventListener('resize', () => { size(); if (calm.matches) still(); });
-size(); calm.matches ? still() : requestAnimationFrame(frame);
-calm.addEventListener('change', () => calm.matches ? still() : requestAnimationFrame(frame));
-})();
-</script>
+<script src="mesh.js"></script>
 </main>
 <footer>
   <a href="https://github.com/zond/bark">The source code and the design, on GitHub</a>

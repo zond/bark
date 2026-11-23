@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bark</title>
+<meta name="description" content="Textmeddelanden genom en stad över radio, när mobilnätet ligger nere.">
+<link rel="stylesheet" href="../front.css">
+<link rel="alternate" hreflang="en" href="https://zond.github.io/bark/">
+<link rel="alternate" hreflang="sv" href="https://zond.github.io/bark/sv/">
+<link rel="alternate" hreflang="uk" href="https://zond.github.io/bark/uk/">
+<script src="../lang.js"></script>
+</head>
+<body>
+<main>
+  <nav class="lang" aria-label="Språk"><a lang="en" hreflang="en" href="../">English</a> · <span lang="sv" aria-current="true">Svenska</span> · <a lang="uk" hreflang="uk" href="../uk/">Українська</a></nav>
+  <svg viewBox="0 0 100 100" fill="none" stroke="#888" stroke-width="1.5" aria-hidden="true"><path d="M50 50L94.0 50.0 M50 50L88.1 28.0 M50 50L72.0 11.9 M50 50L50.0 6.0 M50 50L28.0 11.9 M50 50L11.9 28.0 M50 50L6.0 50.0 M50 50L11.9 72.0 M50 50L28.0 88.1 M50 50L50.0 94.0 M50 50L72.0 88.1 M50 50L88.1 72.0"/><path d="M58.0 50.0L57.4 45.8L54.5 42.2L50.0 40.5L45.0 41.3L40.9 44.8L39.0 50.0L40.0 55.8L44.0 60.4L50.0 62.5L56.5 61.3L61.7 56.8L64.0 50.0L62.6 42.8L57.5 37.0L50.0 34.5L42.0 36.1L35.7 41.8L33.0 50.0L34.8 58.7L41.0 65.6L50.0 68.5L59.5 66.5L66.9 59.8L70.0 50.0L67.8 39.8L60.5 31.8L50.0 28.5L39.0 30.9L30.5 38.8L27.0 50.0L29.6 61.7L38.0 70.8L50.0 74.5L62.5 71.7L72.1 62.8L76.0 50.0L72.9 36.8L63.5 26.6L50.0 22.5L36.0 25.8L25.3 35.8L21.0 50.0L24.5 64.7L35.0 76.0L50.0 80.5L65.5 76.8L77.3 65.8L82.0 50.0L78.1 33.8L66.5 21.4L50.0 16.5L33.0 20.6L20.1 32.8L15.0 50.0L19.3 67.7L32.0 81.2L50.0 86.5L68.5 82.0L82.5 68.8L88.0 50.0L83.3 30.8L69.5 16.2L50.0 10.5L30.0 15.4L14.9 29.8L9.0 50.0L14.1 70.7L29.0 86.4L50.0 92.5L71.5 87.2L87.7 71.8L94.0 50.0"/></svg>
+  <h1>bark</h1>
+  <p class="lead">Små radionoder som bär textmeddelanden genom en stad när mobilnätet och internet ligger nere.</p>
+
+  <a class="get" href="https://github.com/zond/bark/releases/latest/download/bark.apk">Hämta appen</a>
+  <div class="steps">
+    <p>Android frågar en gång om din webbläsare får installera appar.</p>
+    <p>Öppna sedan appen. För att parkoppla med din egen nod trycker du på din nod i appen; dess skärm visar då en kod. Eller använd en publik nod i närheten.</p>
+    <p>Många kommer att bära sin egen nod i fickan, parkopplad med telefonen, så att de alltid har en nod att skicka och hämta genom; en publik nod i närheten fungerar för alla andra.</p>
+    <p><a href="manual.html">Läs handboken</a>: hur du gör i ordning en nod, och allt appen gör.</p>
+  </div>
+
+  <details>
+    <summary>Läs mer</summary>
+    <p>Ett meddelande färdas mot en plats: varje nod lämnar det vidare till den granne som är närmast platsen där mottagarens nod står. Varje nod får veta var den står av sin GPS, så nätet behöver känna till en plats för varje person det levererar till.</p>
+    <p>Ett kafé, ett bibliotek eller en skola kan ha en publik nod. Vem som helst i närheten kan använda den med appen, utan att parkoppla, och nodens plats är dit meddelanden till dess gäster kommer. De läser dem vid nästa besök.</p>
+    <p>En adress är en nods plats och dess ID. Det finns inget att registrera och ingen lista som nätet för, så den som har en adress kan skriva till den så länge nätet står. Appen sätter en persons adress på deras kort, som de kan dela eller skriva ut där folk ser det.</p>
+    <p>Den som rör på sig har ingen fast plats, så de kan göra en nod till sitt hem: en nod hemma på en laddare, med platsen angiven i appen, vars adress hamnar på deras kort. Meddelanden till dem väntar där tills de kommer hem eller hämtar dem med appen varifrån som helst där nätet når.</p>
+    <p>På samma sätt nås en polisstation, en brandstation, ett sjukhus eller en annan räddningstjänst med en nod på fast plats på sin adress för gott.</p>
+    <p>Varje meddelande bär, krypterat med resten, adressen till noden avsändaren skriver från. Ett svar som skickas strax efter går kortaste vägen dit avsändaren är nu, inte dit de var eller till deras hemnod, så den som är på väg kan få svar var de än skrev ifrån senast.</p>
+  </details>
+  <figure class="mesh">
+    <canvas id="mesh" aria-label="Ett litet nät av reläer och sömniga noder som skickar meddelanden"></canvas>
+    <figcaption>Reläer med ström ger sig till känna ofta och skickar meddelanden hopp för hopp mot mottagarens plats, och varje hopp kvitteras. Sömniga noder på batteri hörs sällan och talar genom reläet de är förankrade vid, där meddelanden till dem väntar till nästa gång de hörs.</figcaption>
+  </figure>
+<script src="../mesh.js"></script>
+</main>
+<footer>
+  <a href="https://github.com/zond/bark">Källkoden och konstruktionen, på GitHub (på engelska)</a>
+</footer>
+</body>
+</html>

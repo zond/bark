@@ -1,0 +1,30 @@
+:root { --text: #222; --muted: #666; --rule: #ddd; --red: #c62828; }
+body {
+  margin: 0; background: #fff; color: var(--text);
+  font: 17px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+main { max-width: 34rem; margin: 0 auto; padding: 2.5rem 1rem 1.5rem; }
+svg { display: block; width: 4rem; height: 4rem; margin-bottom: 1rem; }
+h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+.lead { margin: 0 0 1.75rem; }
+.get {
+  display: block; text-align: center; background: var(--red); color: #fff;
+  font-weight: 600; text-decoration: none; padding: .9rem 1rem; border-radius: .5rem;
+}
+.get:focus-visible { outline: 3px solid var(--text); outline-offset: 2px; }
+.steps { color: var(--muted); font-size: .95rem; margin: .75rem 0 2rem; }
+.steps p { margin: 0 0 .25rem; }
+.steps a { color: var(--red); }
+details { border-top: 1px solid var(--rule); padding-top: 1rem; }
+summary { cursor: pointer; color: var(--text); font-weight: 600; }
+details p { color: var(--muted); }
+.mesh { margin: 2rem 0 0; }
+.mesh canvas { display: block; width: 100%; aspect-ratio: 4 / 3; }
+.mesh figcaption { color: var(--muted); font-size: .9rem; margin-top: .5rem; }
+footer {
+  max-width: 34rem; margin: 0 auto; padding: 1rem 1rem 2rem;
+  border-top: 1px solid var(--rule); color: var(--muted); font-size: .9rem;
+}
+footer a { color: var(--muted); }
+.lang { float: right; margin: 0; color: var(--muted); font-size: .9rem; }
+.lang a { color: var(--muted); }

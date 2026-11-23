@@ -14,7 +14,9 @@ Run `date` to know the day.
 
 Read `README.md` first, then `DEVELOPING.md` for the code's layout and how to build it.
 The manual for people who use bark is `site/manual.html`, a page of the project's site;
-keep it true when what a person sees or does changes. The protocol specification is `docs/protocol.md`; it is edited
+keep it true when what a person sees or does changes. The site's pages are translated by
+hand, each language in a folder of its own, `site/sv/` and `site/uk/`: change them with the
+English page. The protocol specification is `docs/protocol.md`; it is edited
 together with the code it describes. Decisions are numbered D1, D2, ... in
 `docs/roadmap.md` so they can be cited and revisited. The contract between the protocol core
 and its drivers is `docs/core-interface.md`.
