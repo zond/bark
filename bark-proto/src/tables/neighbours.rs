@@ -104,6 +104,13 @@ pub struct Neighbour {
     pub ask: bool,
     /// It asked for this node's status, and the answer has not gone.
     pub tell: bool,
+    /// How long, in whole seconds, its section had told the same image,
+    /// blocks and pieces when it was last heard: a holder that stands back
+    /// for a better one does not for a gatherer that shows no progress
+    /// (spec "Updates over the mesh"). A span before the section's own
+    /// time, it needs no aging; it stops at 18 h, far past any lease; it
+    /// fits the entry's padding.
+    pub(crate) still_s: u16,
 }
 
 impl Neighbour {
@@ -354,12 +361,25 @@ impl Neighbours {
         let Some(i) = self.slot_of(id) else {
             return;
         };
+        let Some(old) = self.slots[i].as_ref().map(|n| (n.update, self.section(n))) else {
+            return;
+        };
         // Its own image no longer counts as named while its new one is placed.
         if let Some(n) = &mut self.slots[i] {
             n.update = Told::NONE;
         }
         let image = section.image.map_or(NO_IMAGE, |m| self.place(m));
         if let Some(n) = &mut self.slots[i] {
+            // Rounded down, so that a gatherer is never taken for stalled
+            // before it is.
+            let same = old.1.is_some_and(|u| {
+                u.image == section.image && (u.complete, u.have) == (section.complete, section.have)
+            });
+            let since = (now.since(old.0.at).as_micros() / 1_000_000).min(u16::MAX.into()) as u16;
+            n.still_s = match same {
+                true => n.still_s.saturating_add(since),
+                false => 0,
+            };
             n.update = Told {
                 heard: true,
                 at: now,
@@ -419,6 +439,13 @@ impl Neighbours {
             complete: t.complete,
             have: t.have,
         })
+    }
+
+    /// How long `n`'s section has told the same image, blocks and pieces,
+    /// at `now`; none if none was heard since its entry was made.
+    pub fn section_still(n: &Neighbour, now: Instant) -> Option<crate::time::Duration> {
+        let told = crate::time::Duration::from_secs(n.still_s.into());
+        n.update.heard.then(|| told + now.since(n.update.at))
     }
 
     /// When `n`'s last heartbeat that carried a section was heard.
@@ -565,6 +592,7 @@ impl Neighbours {
             line_end: Instant::ZERO,
             unanswered: false,
             ask: false,
+            still_s: 0,
             tell: false,
         };
         if let Some(i) = self.slots.iter().position(Option::is_none) {
@@ -1019,6 +1047,7 @@ impl Neighbours {
             line_end: at(5).unwrap_or(Instant::ZERO),
             unanswered: flag(UNANSWERED),
             ask: false,
+            still_s: 0,
             tell: false,
         };
         if self.slot_of(n.id).is_some() || self.is_expired(&n, now) {
@@ -1602,5 +1631,51 @@ mod tests {
         t.section_heard(id(7), section(4), at(0));
         assert_eq!(named(&t, 7), Some(image(4)));
         assert_eq!(named(&t, 3), Some(image(8)));
+    }
+
+    /// How long a section has told the same: none before one is heard,
+    /// growing while it repeats itself, from nothing again once its image,
+    /// blocks or pieces change, at most 18 h, and from nothing for a new
+    /// entry in a slot (spec "Updates over the mesh").
+    #[test]
+    fn how_long_a_section_has_told_the_same() {
+        use crate::update::{Image, Section};
+        let section = |version: u32, complete: u8, have: u8| Section {
+            runs: 1,
+            image: Some(Image {
+                version,
+                blocks: 5,
+                last: 7,
+                key: 1,
+            }),
+            complete,
+            have,
+        };
+        let mut t = Neighbours::new(params());
+        hear(&mut t, 1, 1, -80, at(0));
+        let still = |t: &Neighbours, now| Neighbours::section_still(t.get(id(1)).unwrap(), now);
+        assert_eq!(still(&t, at(10)), None, "none heard");
+        t.section_heard(id(1), section(2, 1, 5), at(100));
+        assert_eq!(still(&t, at(100)), Some(Duration::ZERO));
+        assert_eq!(still(&t, at(150)), Some(Duration::from_secs(50)));
+        t.section_heard(id(1), section(2, 1, 5), at(300));
+        assert_eq!(still(&t, at(400)), Some(Duration::from_secs(300)));
+        for changed in [section(2, 1, 6), section(2, 2, 6), section(3, 2, 6)] {
+            t.section_heard(id(1), section(2, 1, 5), at(500));
+            t.section_heard(id(1), changed, at(600));
+            assert_eq!(still(&t, at(600)), Some(Duration::ZERO), "{changed:?}");
+        }
+        // It stops at 18 h, far past any lease.
+        let day = 24 * 3600;
+        for h in 1..=24 {
+            hear(&mut t, 1, 1, -80, at(600 + h * 3600));
+            t.section_heard(id(1), section(3, 2, 6), at(600 + h * 3600));
+        }
+        let held = still(&t, at(600 + day)).unwrap();
+        assert_eq!(held, Duration::from_secs(u16::MAX.into()));
+        // A new entry in the slot starts with none.
+        t.expire(at(10 * day));
+        hear(&mut t, 1, 1, -80, at(10 * day));
+        assert_eq!(still(&t, at(10 * day)), None);
     }
 }

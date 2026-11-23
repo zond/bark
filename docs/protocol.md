@@ -2652,20 +2652,23 @@ naming none.
    the image the relay holds or has proven and lacks a block the relay
    holds: it **streams** there, at the gap or the pace (below), from the
    blocks it holds, to each gatherer from the first block it lacks.
-   - To a sleepy gatherer only as its anchor (roadmap D215).
-   - To another gatherer on another channel only if it is the best holder
-     it hears for it: no relay it hears that is not at home there, holds
-     more than the gatherer and is no farther from it has more blocks from
-     the first, or as many and a lower ID. A relay elsewhere does not
-     stand back for one at home there (roadmap D196, D200).
-   - On at most two channels: its home, then those with the most
-     neighbours lacking. It stops on a channel when no neighbour there
-     lacks a block it streams there.
    - To a gatherer only on a **lease**: while it heard the gatherer's
      section within the gatherer's last two rotations and a heartbeat's
      lateness ([heartbeat](#heartbeat)), 2 × 13 × T + 872.8 ms, 391 s at
      the longest; for a sleepy gatherer two beat periods and the lateness,
      601 s ([beats](#beats)).
+   - To a sleepy gatherer only as its anchor (roadmap D215).
+   - To another gatherer on another channel only if it is the best holder
+     it hears for it: no relay it hears that is not at home there, holds
+     more than the gatherer and is no farther from it has more blocks from
+     the first, or as many and a lower ID. A relay elsewhere does not
+     stand back for one at home there (roadmap D196, D200), nor for any
+     while the gatherer's section has told the same image, blocks held and
+     pieces for longer than the gatherer's lease, 391 s at the longest; it
+     stands back again once the section tells more (roadmap D247).
+   - On at most two channels: its home, then those with the most
+     neighbours lacking. It stops on a channel when no neighbour there
+     lacks a block it streams there.
 4. A stream **sweeps** the blocks in order. Of the block at hand it sends
    fresh pieces, each block's index climbing from a random start and
    wrapping at 255, until it has sent what the neighbour there furthest
@@ -2752,7 +2755,7 @@ before then swaps the previous image back (roadmap D79).
 | the image back | keeps the failed image's version in a page of flash that no copy over USB erases, and never gathers an image of that version again. The page holds 1 024 versions; when full it is erased and starts again with the newest |
 
 **What a node keeps** for an update: 1 960 bytes beside the tables, and
-16 bytes in each neighbour's entry (`core-interface.md`, Memory).
+18 bytes in each neighbour's entry (`core-interface.md`, Memory).
 
 ## What the protocol omits
 
