@@ -9,6 +9,7 @@ import 'package:sodium/sodium.dart';
 import 'app_layer.dart';
 import 'card.dart';
 import 'contacts.dart';
+import 'l10n.dart';
 import 'link.dart';
 import 'me.dart';
 import 'session.dart';
@@ -26,6 +27,30 @@ class Messenger {
     session.recipient = (n) => recipientTag(sodium, me.identity, n.id);
     session.name = () => me.name;
     session.nextSent = me.nextSent;
+    session.foundNoWay = _noWay;
+  }
+
+  /// A message given back for no way that is not a text, which waits in
+  /// its thread: nothing sends it again by itself, as a search of every
+  /// relay in reach costs each airtime (roadmap D244), so the person is
+  /// told where they would look. A reaction or the card the person sends
+  /// again by choosing it again; a fetch by fetching.
+  void _noWay(Outgoing o) {
+    final name = contacts.byKey(o.to)?.name;
+    switch (o.kind) {
+      case OutKind.text:
+        return;
+      case OutKind.fetch:
+        if (isHome(o.dst.id)) session.fetchNews = tr.sendFetchNoWay;
+      case OutKind.reaction when name != null:
+        session.tellIn((w) => w.sendReactionNoWay(o.body ?? '', name));
+      case OutKind.card when name != null:
+        session.tellIn((w) => w.sendCardNoWay(name));
+      case OutKind.home when name != null:
+        session.tellIn((w) => w.sendHomeNoWay(name));
+      case OutKind.reaction || OutKind.card || OutKind.home:
+        return;
+    }
   }
 
   /// Whether the node of `id` is the person's home: a home is known by its
@@ -105,7 +130,14 @@ class Messenger {
   /// Sends a text to `c`, to the address `toward` names, by default the
   /// one the person need not choose; split into parts, queued in order,
   /// if one message does not hold it.
-  Future<void> sendText(Contact c, String text, {Toward? toward}) async {
+  /// `replaced`: the IDs of the parts of the text it is sent again in
+  /// place of ([sendAgain]).
+  Future<void> sendText(
+    Contact c,
+    String text, {
+    Toward? toward,
+    List<int> replaced = const [],
+  }) async {
     final t = toward ?? c.unasked(now());
     if (t == null) throw BadPayload.said((w) => w.sendNoAddress(c.name));
     final parts = partsOf(c, text);
@@ -129,9 +161,80 @@ class Messenger {
           toward: t,
           part: i + 1,
           of: n,
+          replaced: i == 0 ? replaced : const [],
         ),
       );
     }
+  }
+
+  /// Sends again, to `c` at the address `toward` names, a text whose parts
+  /// are `outs`, on the person's word, after its search found no way
+  /// (spec "Phone link", Given back). Each part given back so is sealed
+  /// anew with its own `sent`, so that a receiver who has it after all
+  /// drops the copy (spec "The payload"), where that makes another
+  /// message: a box is the same bytes for the same plaintext and address,
+  /// and the relays that searched keep their records of its ID. Where it
+  /// would be the same message, or a part no longer fits, the whole text
+  /// goes as a new one, with new `sent`, in its parts' place.
+  Future<void> sendAgain(Contact c, List<Outgoing> outs, Toward toward) async {
+    final dst = c.addressOf(toward);
+    final again = [
+      for (final o in outs)
+        if (o.noWay) o,
+    ];
+    if (again.isEmpty || outs.any((o) => o.state == OutState.writing)) return;
+    final sealed = <(Outgoing, Uint8List)>[];
+    for (final o in again) {
+      final Uint8List p;
+      try {
+        p = (await _seal(c, dst, [
+          TextRecord(o.body ?? '', o.part, o.of),
+        ], sent: o.sent)).$1;
+      } on BadPayload {
+        break;
+      }
+      if (msgId(dst, p) == o.id) break;
+      sealed.add((o, p));
+    }
+    if (sealed.length == again.length) {
+      for (final (o, p) in sealed) {
+        await session.replace(
+          o,
+          Outgoing(
+            dst,
+            p,
+            at: o.at,
+            kind: OutKind.text,
+            to: o.to,
+            sent: o.sent,
+            body: o.body,
+            toward: toward,
+            part: o.part,
+            of: o.of,
+            reaction: o.reaction,
+            reactionSent: o.reactionSent,
+          ),
+        );
+        session.note(
+          'Send ${msgIdHex(o.id)}: sent again as ${msgIdHex(msgId(dst, p))}',
+        );
+      }
+      return;
+    }
+    final text = outs.map((o) => o.body ?? '').join();
+    await sendText(
+      c,
+      text,
+      toward: toward,
+      replaced: [for (final o in outs) o.id],
+    );
+    for (final o in outs) {
+      await session.drop(o);
+    }
+    session.note(
+      'Send ${outs.map((o) => msgIdHex(o.id)).join(', ')}: sent again as a '
+      'new text',
+    );
   }
 
   /// Sends the person's reaction, one emoji, to the text of `r`, naming

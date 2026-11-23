@@ -145,9 +145,13 @@ String stateLabel(Session s, Outgoing o) => switch (o.state) {
   OutState.queued => tr.sentQueued,
   OutState.writing => tr.sentWriting,
   OutState.taken => tr.sentTaken,
-  OutState.givenBack => switch (s.waitLeftS(o)) {
-    0 => tr.sentBusyNow,
-    final w => tr.sentBusyIn(clock(w)),
+  OutState.givenBack => switch (o.why) {
+    Why.noNeighbour => tr.sentNoNeighbour,
+    Why.noWay => tr.sentNoWay,
+    Why.busy || null => switch (s.waitLeftS(o)) {
+      0 => tr.sentBusyNow,
+      final w => tr.sentBusyIn(clock(w)),
+    },
   },
   OutState.refused => tr.sentRefused,
 };
@@ -179,6 +183,12 @@ List<(IconData, String, String)> get sentStates => [
   (Icons.sync, capital(tr.sentWriting), tr.sentWritingHelp),
   (Icons.check, capital(tr.sentTaken), tr.sentTakenHelp),
   (Icons.hourglass_bottom, tr.sentBusy, tr.sentBusyHelp),
+  (
+    Icons.wifi_tethering_off,
+    capital(tr.sentNoNeighbour),
+    tr.sentNoNeighbourHelp,
+  ),
+  (Icons.wrong_location, capital(tr.sentNoWay), tr.sentNoWayHelp),
   (Icons.block, capital(tr.sentRefused), tr.sentRefusedHelp),
   (Icons.add_reaction_outlined, tr.sentReaction, tr.sentReactionHelp),
 ];
@@ -255,7 +265,7 @@ Future<void> explainMessage(
 /// Whether a sent text's parts are all in one state, so that one part's
 /// marks stand for them all.
 bool partsAgree(List<Outgoing> outs) =>
-    outs.every((o) => o.state == outs.first.state);
+    outs.every((o) => o.state == outs.first.state && o.why == outs.first.why);
 
 /// A sent text's parts' states in words when they differ: how many the
 /// node has taken and the first problem.

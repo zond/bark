@@ -275,6 +275,14 @@ arrival; you know it came when the person answers.</p>
 <p>If the network is busy it gives the message back, and the app says "The
 network is busy, sending again in …" and tries again by itself. Nothing
 the network has taken is thrown away for being old.</p>
+<p>If your node hears no other node it gives the message back, and the app
+says "Your node hears no other node, sending when it does" and sends it
+by itself once it does.</p>
+<p>If the network finds no way to the person's address, the message comes
+back, sometimes minutes later, and the app says "Found no way there".
+They may be out of reach, or their address old. The app does not try
+again by itself: tap <strong>Send again</strong> to try once more, or
+<strong>Cancel</strong> to remove it.</p>
 <p><strong>Long messages.</strong> A single message holds about 200 letters, fewer in
 scripts that take more room for each letter. A longer text is sent in
 parts, up to 16, and shown as one message. The app says how many parts
@@ -451,6 +459,10 @@ full, telling the app when to try again.</li>
 <tr>
 <td>A sent message stays on the clock</td>
 <td>No node is in reach. It goes when one is.</td>
+</tr>
+<tr>
+<td>"Found no way there" under a sent message</td>
+<td>The person is out of reach, or their node is off or has moved. Tap <strong>Send again</strong> later, or ask them for their new card.</td>
 </tr>
 <tr>
 <td>"Your home did not answer your last fetch"</td>

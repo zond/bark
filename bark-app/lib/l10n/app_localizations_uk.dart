@@ -207,6 +207,13 @@ class AppLocalizationsUk extends AppLocalizations {
   String get sentRefused => 'вузол відхилив';
 
   @override
+  String get sentNoNeighbour =>
+      'ваш вузол не чує жодного іншого вузла, надішлемо, щойно почує';
+
+  @override
+  String get sentNoWay => 'шляху туди не знайдено';
+
+  @override
   String sentPartsSent(int taken, int total) {
     return 'надіслано $taken з $total';
   }
@@ -232,7 +239,15 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get sentBusyHelp =>
-      'Мережа поки що повернула його. Застосунок сам надішле його знову, коли очікування мине.';
+      'Мережа поки що повернула його. Застосунок сам надішле його знову, коли очікування мине; швидше не вийде.';
+
+  @override
+  String get sentNoNeighbourHelp =>
+      'Ваш вузол зараз не чує жодного іншого вузла. Застосунок сам надішле його знову, щойно вузол почує інший; швидше не вийде.';
+
+  @override
+  String get sentNoWayHelp =>
+      'Мережа шукала шлях до їхньої адреси й не знайшла: вони можуть бути поза досяжністю або їхня адреса застаріла. «Надіслати знову» спробує ще раз; «Скасувати» прибирає його.';
 
   @override
   String get sentRefusedHelp =>
@@ -825,6 +840,9 @@ class AppLocalizationsUk extends AppLocalizations {
   String get threadToHome => 'До їхнього дому';
 
   @override
+  String get threadSendAgain => 'Надіслати знову';
+
+  @override
   String get threadTakenMark =>
       'Надіслано в мережу; вона не каже, коли воно дійде';
 
@@ -889,6 +907,24 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String get sendCharTooLong => 'символ задовгий для надсилання';
+
+  @override
+  String get sendFetchNoWay => 'Ваш дім недосяжний: шляху туди не знайдено';
+
+  @override
+  String sendReactionNoWay(String emoji, String name) {
+    return 'Ваша реакція $emoji не дійшла: шляху до контакту $name не знайдено.';
+  }
+
+  @override
+  String sendCardNoWay(String name) {
+    return 'Ваша картка не дійшла: шляху до контакту $name не знайдено.';
+  }
+
+  @override
+  String sendHomeNoWay(String name) {
+    return 'Дім, який ви дали контакту $name, не дійшов: шляху туди не знайдено.';
+  }
 
   @override
   String sessionBadValue(String error) {
@@ -1603,8 +1639,8 @@ class AppLocalizationsUk extends AppLocalizations {
   String get debugEmpty => 'порожньо';
 
   @override
-  String debugGivenBack(String id, int wait) {
-    return '$id, чекати $wait с';
+  String debugGivenBack(String id, String why, int wait) {
+    return '$id, $why, чекати $wait с';
   }
 
   @override

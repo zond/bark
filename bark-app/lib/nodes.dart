@@ -42,6 +42,12 @@ class NodeRecord {
   /// (spec "Phone link", Public).
   int ringAfter = 0;
 
+  /// The ID of the message in its Given back for this phone when last
+  /// read, until it takes another message from the phone: the node keeps
+  /// the value, so the app reads the same one at every connect and acts
+  /// on each once (spec "Phone link", Given back).
+  int? givenBackSeen;
+
   /// The node as a scan last heard it, by its device and signal, and
   /// when. Android names a bond by the device, which the app learns only
   /// by hearing the node.
@@ -87,6 +93,7 @@ class NodeRecord {
     'lost': lost,
     if (moved) 'moved': true,
     'ringAfter': ringAfter,
+    'givenBackSeen': ?givenBackSeen,
   };
 
   static NodeRecord fromJson(Map<String, dynamic> j) =>
@@ -94,7 +101,8 @@ class NodeRecord {
         ..paired = j['paired'] as bool
         ..lost = j['lost'] as bool
         ..moved = j['moved'] as bool? ?? false
-        ..ringAfter = j['ringAfter'] as int;
+        ..ringAfter = j['ringAfter'] as int
+        ..givenBackSeen = j['givenBackSeen'] as int?;
 }
 
 /// The records, by name, a paired node's moved to the end each time the

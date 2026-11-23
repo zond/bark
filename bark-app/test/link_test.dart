@@ -112,14 +112,28 @@ void main() {
     );
   });
 
-  test('given back', () {
-    expect(const GivenBack(0x357b6010, 200).encode(), [
-      0x35, 0x7b, 0x60, 0x10, 0, 200, //
+  test('given back: an ID, a wait and why', () {
+    expect(const GivenBack(0x357b6010, 200, Why.busy).encode(), [
+      0x35, 0x7b, 0x60, 0x10, 0, 200, 0, //
     ]);
-    final g = GivenBack.decode([0x35, 0x7b, 0x60, 0x10, 0, 200, 0xaa])!;
-    expect([g.msgId, g.waitS], [0x357b6010, 200]);
+    final g = GivenBack.decode([0x35, 0x7b, 0x60, 0x10, 0, 200, 0])!;
+    expect([g.msgId, g.waitS, g.why], [0x357b6010, 200, Why.busy]);
+    expect(GivenBack.decode([0, 0, 0, 1, 0, 0, 1])!.why, Why.noNeighbour);
+    expect(GivenBack.decode([0, 0, 0, 1, 0, 0, 2])!.why, Why.noWay);
     expect(GivenBack.decode([]), isNull);
+    // The 6 bytes it was before the node said why are not whole.
+    expect(
+      () => GivenBack.decode([0x35, 0x7b, 0x60, 0x10, 0, 200]),
+      throwsA(isA<Malformed>()),
+    );
     expect(() => GivenBack.decode([1, 2, 3]), throwsA(isA<Malformed>()));
+    // What a later version appends is not read.
+    final later = GivenBack.decode([0x35, 0x7b, 0x60, 0x10, 0, 200, 2, 0xaa])!;
+    expect([later.msgId, later.waitS, later.why], [0x357b6010, 200, Why.noWay]);
+    expect(
+      () => GivenBack.decode([0x35, 0x7b, 0x60, 0x10, 0, 0, 3]),
+      throwsA(isA<Malformed>()),
+    );
   });
 
   test('public and the unpairing', () {

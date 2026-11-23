@@ -204,6 +204,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sentRefused => 'refused by the node';
 
   @override
+  String get sentNoNeighbour =>
+      'your node hears no other node, sending when it does';
+
+  @override
+  String get sentNoWay => 'found no way there';
+
+  @override
   String sentPartsSent(int taken, int total) {
     return '$taken of $total sent';
   }
@@ -229,7 +236,15 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sentBusyHelp =>
-      'The network gave it back for now. The app sends it again by itself once the wait is over.';
+      'The network gave it back for now. The app sends it again by itself once the wait is over; nothing makes that sooner.';
+
+  @override
+  String get sentNoNeighbourHelp =>
+      'Your node hears no other node now. The app sends it again by itself once it does; nothing makes that sooner.';
+
+  @override
+  String get sentNoWayHelp =>
+      'The network looked for a way to their address and found none: they may be out of reach, or their address old. Send again tries once more; Cancel removes it.';
 
   @override
   String get sentRefusedHelp =>
@@ -804,6 +819,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get threadToHome => 'To their home';
 
   @override
+  String get threadSendAgain => 'Send again';
+
+  @override
   String get threadTakenMark =>
       'Sent into the network, which does not say when it arrives';
 
@@ -866,6 +884,25 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sendCharTooLong => 'a character too long to send';
+
+  @override
+  String get sendFetchNoWay =>
+      'Your home could not be reached: found no way there';
+
+  @override
+  String sendReactionNoWay(String emoji, String name) {
+    return 'Your reaction $emoji did not reach $name: found no way there.';
+  }
+
+  @override
+  String sendCardNoWay(String name) {
+    return 'Your card did not reach $name: found no way there.';
+  }
+
+  @override
+  String sendHomeNoWay(String name) {
+    return 'The home you gave $name did not reach them: found no way there.';
+  }
 
   @override
   String sessionBadValue(String error) {
@@ -1573,8 +1610,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get debugEmpty => 'empty';
 
   @override
-  String debugGivenBack(String id, int wait) {
-    return '$id, wait $wait s';
+  String debugGivenBack(String id, String why, int wait) {
+    return '$id, $why, wait $wait s';
   }
 
   @override

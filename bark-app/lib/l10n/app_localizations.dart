@@ -424,6 +424,18 @@ abstract class AppLocalizations {
   /// **'refused by the node'**
   String get sentRefused;
 
+  /// No description provided for @sentNoNeighbour.
+  ///
+  /// In en, this message translates to:
+  /// **'your node hears no other node, sending when it does'**
+  String get sentNoNeighbour;
+
+  /// No description provided for @sentNoWay.
+  ///
+  /// In en, this message translates to:
+  /// **'found no way there'**
+  String get sentNoWay;
+
   /// How many of a long text's parts the node has taken.
   ///
   /// In en, this message translates to:
@@ -463,8 +475,20 @@ abstract class AppLocalizations {
   /// No description provided for @sentBusyHelp.
   ///
   /// In en, this message translates to:
-  /// **'The network gave it back for now. The app sends it again by itself once the wait is over.'**
+  /// **'The network gave it back for now. The app sends it again by itself once the wait is over; nothing makes that sooner.'**
   String get sentBusyHelp;
+
+  /// No description provided for @sentNoNeighbourHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Your node hears no other node now. The app sends it again by itself once it does; nothing makes that sooner.'**
+  String get sentNoNeighbourHelp;
+
+  /// Send again and Cancel are the buttons under the text.
+  ///
+  /// In en, this message translates to:
+  /// **'The network looked for a way to their address and found none: they may be out of reach, or their address old. Send again tries once more; Cancel removes it.'**
+  String get sentNoWayHelp;
 
   /// Cancel is the button under the text; Debug is the screen of the app's log.
   ///
@@ -1306,6 +1330,12 @@ abstract class AppLocalizations {
   /// **'To their home'**
   String get threadToHome;
 
+  /// The button under a sent text whose search found no way: it sends the text once more.
+  ///
+  /// In en, this message translates to:
+  /// **'Send again'**
+  String get threadSendAgain;
+
   /// The mark on a sent text the node has taken.
   ///
   /// In en, this message translates to:
@@ -1407,6 +1437,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'a character too long to send'**
   String get sendCharTooLong;
+
+  /// What became of a fetch of the mail whose search for the home node found no way.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home could not be reached: found no way there'**
+  String get sendFetchNoWay;
+
+  /// No description provided for @sendReactionNoWay.
+  ///
+  /// In en, this message translates to:
+  /// **'Your reaction {emoji} did not reach {name}: found no way there.'**
+  String sendReactionNoWay(String emoji, String name);
+
+  /// No description provided for @sendCardNoWay.
+  ///
+  /// In en, this message translates to:
+  /// **'Your card did not reach {name}: found no way there.'**
+  String sendCardNoWay(String name);
+
+  /// No description provided for @sendHomeNoWay.
+  ///
+  /// In en, this message translates to:
+  /// **'The home you gave {name} did not reach them: found no way there.'**
+  String sendHomeNoWay(String name);
 
   /// No description provided for @sessionBadValue.
   ///
@@ -2523,11 +2577,11 @@ abstract class AppLocalizations {
   /// **'empty'**
   String get debugEmpty;
 
-  /// A message the node gave back, and the wait it asks before sending it again.
+  /// A message the node gave back, why, and the wait it asks before sending it again.
   ///
   /// In en, this message translates to:
-  /// **'{id}, wait {wait} s'**
-  String debugGivenBack(String id, int wait);
+  /// **'{id}, {why}, wait {wait} s'**
+  String debugGivenBack(String id, String why, int wait);
 
   /// A heading on the debug screen: the messages sent, as raw records that stay English.
   ///

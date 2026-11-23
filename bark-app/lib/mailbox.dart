@@ -278,9 +278,9 @@ class Mailbox extends ChangeNotifier {
     session.tellIn((w) => w.mailboxHomeGone);
   }
 
-  /// The last fetch to the home had no answer within its wait: the home
-  /// is off or out of reach, or has forgotten the person, and Settings
-  /// says what they can do.
+  /// The last fetch to the home had no answer within its wait, or its
+  /// search found no way there: the home is off or out of reach, or has
+  /// forgotten the person, and Settings says what they can do.
   bool get homeSilent {
     final h = me.home;
     if (h == null) return false;
@@ -289,8 +289,9 @@ class Mailbox extends ChangeNotifier {
         .lastOrNull;
     return o != null &&
         !o.answered &&
-        o.state == OutState.taken &&
-        now().difference(o.at) >= Session.fetchAnswerWait;
+        (o.noWay ||
+            o.state == OutState.taken &&
+                now().difference(o.at) >= Session.fetchAnswerWait);
   }
 
   /// Leaves the person's home, which is about to change: the app fetches

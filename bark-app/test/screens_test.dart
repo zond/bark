@@ -24,6 +24,7 @@ import 'package:bark_app/app.dart';
 import 'package:bark_app/links.dart' show Linking;
 import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
+import 'package:bark_app/conversations.dart' show thread;
 import 'package:bark_app/emojis.dart';
 
 import 'fake_ble.dart';
@@ -972,6 +973,105 @@ void main() {
     expect(find.textContaining('not yet here'), findsNothing);
     expect(find.text('one two three'), findsOneWidget);
     expect(find.byTooltip('You reacted: folded hands'), findsOneWidget);
+
+    await t.pumpWidget(const SizedBox());
+    app.disposeWithNode();
+  });
+
+  testWidgets('a text given back: its mark and words for each reason, the '
+      'sheet\'s help, and Send again for no way alone', (t) async {
+    final app = await model(t);
+    final there = Address(Position.fromDegrees(50.1, 30.1), [6, 5, 4, 3, 2, 1]);
+    final now = DateTime.now();
+    final olena = Contact(
+      PersonCard(List.filled(32, 5), null, 1, 'Olena'),
+      'Olena',
+      verified: true,
+    ).heard(sentOf(now), there, now);
+    await t.runAsync(() => app.contacts.put(olena));
+    await t.pumpWidget(MaterialApp(home: ThreadScreen(app, olena.key)));
+    await t.enterText(find.byType(TextField), 'hello');
+    await t.tap(find.byTooltip('Send'));
+    await t.pumpAndSettle();
+    final o = app.session.outbox.single;
+
+    Future<void> givenBack(Why why) async {
+      o
+        ..state = OutState.givenBack
+        ..why = why;
+      app.session.dismissNotice();
+      await t.pump();
+    }
+
+    const lonely = 'Your node hears no other node, sending when it does';
+    const noWay = 'Found no way there';
+    await givenBack(Why.noNeighbour);
+    expect(find.byTooltip(lonely), findsOneWidget);
+    expect(find.text(lonely), findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
+    expect(find.text('Send again'), findsNothing);
+    await givenBack(Why.noWay);
+    expect(find.byTooltip(noWay), findsOneWidget);
+    expect(find.text(noWay), findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
+    expect(find.text('Send again'), findsOneWidget);
+
+    // The conversation's last line says it too.
+    await t.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ConversationRow(
+            app,
+            thread(
+              olena.key,
+              app.contacts.list,
+              app.session.outbox,
+              app.session.received,
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.text('You: hello, found no way there'), findsOneWidget);
+
+    // The sheet explains every mark.
+    await t.pumpWidget(MaterialApp(home: ThreadScreen(app, olena.key)));
+    await t.tap(find.text('hello'));
+    await t.pumpAndSettle();
+    expect(find.text(lonely), findsOneWidget);
+    expect(
+      find.textContaining('once it does; nothing makes that sooner'),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'The network looked for a way to their address and found none: '
+        'they may be out of reach, or their address old. Send again tries '
+        'once more; Cancel removes it.',
+      ),
+      findsOneWidget,
+    );
+    await t.tapAt(const Offset(10, 10));
+    await t.pumpAndSettle();
+
+    // Send again: a new message in its place, to where a text goes now.
+    await t.tap(find.text('Send again'));
+    await t.pumpAndSettle();
+    final again = app.session.outbox.single;
+    expect(again.id, isNot(o.id));
+    expect(again.body, 'hello');
+    expect(find.text('Send again'), findsNothing);
+    expect(find.byTooltip('Waiting for a node'), findsOneWidget);
+
+    // Cancel removes one given back for no way.
+    again
+      ..state = OutState.givenBack
+      ..why = Why.noWay;
+    app.session.dismissNotice();
+    await t.pump();
+    await t.tap(find.text('Cancel'));
+    await t.pumpAndSettle();
+    expect(app.session.outbox, isEmpty);
 
     await t.pumpWidget(const SizedBox());
     app.disposeWithNode();
@@ -2019,7 +2119,8 @@ void main() {
     await t.pump(const Duration(seconds: 1));
     expect(idle, findsOneWidget);
 
-    // The fake gives every third message it takes back.
+    // The fake gives every third message it takes back busy: it goes
+    // again by itself, so the fetch still waits.
     await t.tap(idle);
     await t.pump();
     clock = clock.add(Session.fetchAnswerWait);
@@ -2031,6 +2132,27 @@ void main() {
     await t.pump();
     final fetches = app.session.outbox.where((o) => o.kind == OutKind.fetch);
     expect(fetches.last.state, OutState.givenBack);
+    expect(fetches.last.why, Why.busy);
+    expect(waiting, findsOneWidget);
+
+    // Given back for no way, it waits no more, and the news says why.
+    app.fakeNode!.noWayFor = (dst, _) => hex(dst.id) == hex(app.me.home!.id);
+    clock = clock.add(Session.fetchAnswerWait);
+    await t.pump(FakeNode.givenBackWait);
+    await t.tap(idle);
+    final news = find.text(
+      'Your home could not be reached: found no way there',
+    );
+    // Within the turn waits of the writes the fake answers not ready.
+    for (var i = 0; i < 60 && !fetches.last.noWay; i++) {
+      await t.pump(const Duration(seconds: 1));
+    }
+    expect(fetches.last.noWay, isTrue);
+    // After the lines said before it, each for a few seconds.
+    for (var i = 0; i < 40 && news.evaluate().isEmpty; i++) {
+      await t.pump(const Duration(seconds: 1));
+    }
+    expect(news, findsOneWidget);
     expect(idle, findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
