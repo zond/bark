@@ -380,7 +380,7 @@ with an update's section 26 bytes, 22.08 ms
 |---|---|
 | interval | fixed per node, from the last byte b of its ID: T = 5 s + 10 s × b / 256, mean 10 s (roadmap D47, D230) |
 | first heartbeat | at a random time within T after boot |
-| **burst** | the first 13 slots, a burst gap of 1.1 s apart, each with the anchorless flag; every slot after, T after the one before |
+| **burst** | the first 13 slots after boot, and after a sleepy node turns relay ([sleepy nodes](#sleepy-nodes)), a burst gap of 1.1 s apart, each with the anchorless flag; every slot after, T after the one before |
 | channel | `k ← (k + 1) mod 13` every slot, from a random start, whether the heartbeat went or not |
 | **rotation** | 13 heartbeats: ≈130 s, at most 13 × 15 s = 195 s |
 | lateness | none early; at most 872.8 ms after its slot: a full frame with the long preamble, 372.8 ms, the ACK timeout, 100 ms, and two backoffs of 200 ms. A check held for a reception in progress waits at most that frame |
@@ -424,15 +424,17 @@ flag. Burst gap: a backoff of 200 ms, the lateness 872.8 ms and the
 airtime 14.4 ms, 1087.2 ms.
 
 **Outside the slots.** A relay past its own first rotation, neither
-carried nor flushing to turn sleepy ([sleepy nodes](#sleepy-nodes)),
-answers a heartbeat with the anchorless flag with one of its own on the
+carried nor flushing to turn sleepy ([sleepy nodes](#sleepy-nodes)) nor
+in a burst of its own, answers a heartbeat with the anchorless flag with
+one of its own on the
 channel that heartbeat names, at a random time within 0–200 ms of it:
 
 - a relay's, of its burst: once, ordinary preamble;
 - a sleepy node's: as [sleepy nodes alone](#sleepy-nodes-alone) says,
   long preamble.
 
-A node in its first rotation does not answer.
+A node in its first rotation does not answer, nor one in its burst: the
+burst itself reaches the nodes that burst with it (roadmap D246).
 
 **A heartbeat at a change.** A node, sleepy or not, heartbeats once when
 its sleepy or carried flag changes or its map point is cleared; a relay
@@ -1329,8 +1331,11 @@ longer while nothing needs their place.
 - it leaves its anchor;
 - its address becomes its own position, or its first fix within a search's
   limit if that is far ([position](#position));
-- it heartbeats as a relay, the first at once ([heartbeat](#heartbeat)),
-  on its home channel, its anchor's until then.
+- it heartbeats as a relay, the first at once on its home channel, its
+  anchor's until then, and then a burst as at boot
+  ([heartbeat](#heartbeat)): as a sleepy node it heard its anchor alone,
+  and the relays that answer the burst are its neighbours within 13 s
+  (roadmap D246).
 
 | | |
 |---|---|
