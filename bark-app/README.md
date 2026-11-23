@@ -64,9 +64,49 @@ languages it has, else English.
   none (`settings`, `undo`). The English file says, under `@name`, what a
   value is and, where a translator could not tell, where the message
   shows.
+- **Plurals.** The generator keeps one text for `=1` and `one`, so a
+  message has one of them, never both. English and Swedish use `=1` or
+  `one` with `other`. Ukrainian has `one`, `few`, `many` and `other`,
+  and its `one` also serves 21, 31 and so on, so it carries the number.
+- **The log.** A notice is shown in the language spoken and logged in
+  English: `english`, in `lib/l10n.dart`, is the words for a log line.
 - **What stays English.** The debug screen's log, which is what a fault
   report carries; the words on the node's screen, which the app quotes
   as they are shown; and the twelve backup words.
+
+The words a translation keeps to, so that a thing has one name on every
+screen and in the manual (`site/sv/`, `site/uk/`):
+
+| English | Swedish | Ukrainian |
+|---|---|---|
+| node | nod | вузол |
+| relay | relä | ретранслятор |
+| sleepy node | sömnig nod | сонний вузол |
+| anchor | ankare | якір |
+| address | adress | адреса |
+| card | kort | картка |
+| home, home node | hem, hemnod | дім, домашній вузол |
+| Set home | Gör till hem | Зробити домом |
+| owner | ägare | власник |
+| public node | publik nod | публічний вузол |
+| paired, to pair | parkopplad, parkoppla | спарений, створити пару |
+| guest | gäst | гість |
+| mail | post | пошта |
+| Fetch my mail | Hämta min post | Забрати мою пошту |
+| text (a message) | meddelande | повідомлення |
+| firmware | programvara | прошивка |
+| contact | kontakt | контакт |
+| conversation | samtal | розмова |
+| Settings | Inställningar | Налаштування |
+| Debug (the screen) | Felsökning | Налагодження |
+| connected | ansluten | підключено |
+| reaction | reaktion | реакція |
+| carried, fixed | buren, stillastående | його носять, нерухомий |
+
+Swedish says "du", Ukrainian "ви" in lower case. A translation says a
+thing as its language does, not word for word: no passive with the doer
+in the instrumental in Ukrainian ("вузол відхилив", not "відхилено
+вузлом"), and the genitive of телефон is телефону.
 
 ## Screens
 
