@@ -19,8 +19,14 @@ import 'settings_screen.dart';
 import 'thread_screen.dart';
 import 'update_screen.dart';
 
-/// The manual, a page of the project's site (`site/manual.html`).
-const manualPage = 'https://zond.github.io/bark/manual.html';
+/// The manual, a page of the project's site (`site/manual.html`), in the
+/// language spoken: the page itself would choose by the browser's
+/// language, which need not be the app's.
+String get manualPage => switch (tr.localeName) {
+  'sv' => 'https://zond.github.io/bark/sv/manual.html',
+  'uk' => 'https://zond.github.io/bark/uk/manual.html',
+  _ => 'https://zond.github.io/bark/manual.html',
+};
 
 class ConversationsScreen extends StatefulWidget {
   final AppModel app;

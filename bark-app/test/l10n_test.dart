@@ -6,6 +6,7 @@ import 'dart:io';
 import 'dart:ui';
 
 import 'package:bark_app/l10n.dart';
+import 'package:bark_app/ui/conversations_screen.dart' show manualPage;
 import 'package:bark_app/l10n/app_localizations.dart';
 import 'package:bark_app/node_link.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -55,6 +56,10 @@ void main() {
     expect(tr.settings, 'Inställningar');
     speak(const Locale('uk'));
     expect(tr.conversationsArchived(3), '3 в архіві');
+    // The manual opens in the app's language, whatever the browser's.
+    expect(manualPage, endsWith('/bark/uk/manual.html'));
+    speak(const Locale('en'));
+    expect(manualPage, endsWith('/bark/manual.html'));
   });
 
   test(
