@@ -310,7 +310,7 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
   it runs or one staged after its signature passed, with its name, version, block
   count, the pieces of its last block and its key; at boot and after each change. The
   core tells it in its heartbeats' section and serves it.
-- `Action::Offered(image)`: a neighbour that holds blocks 0 and 1 of an image named it,
+- `Action::Offered(image)`: a relay that holds blocks 0 and 1 of an image named it,
   above the version the node runs, the image it holds and the one it has proven; once for
   each image, and not while the core holds the version off. The driver answers
   `AppCommand::Gather { image, from }` if its policy takes it, `from` the first block it

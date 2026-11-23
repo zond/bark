@@ -2604,8 +2604,9 @@ naming none.
 
 **Who sends what.**
 
-1. A section **offers** the image it names only if its sender holds the
-   image's proof, and to a sleepy node only if it is its anchor. A node
+1. A section **offers** the image it names only if its sender is a relay,
+   since a sleepy node serves nothing, and holds the image's proof, and to
+   a sleepy node only if it is its anchor. A node
    that hears an offer of a version above the one it runs and the image it
    holds asks its firmware, once, whether its policy takes the image, and
    if it does gathers it.

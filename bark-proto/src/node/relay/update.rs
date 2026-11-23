@@ -1284,17 +1284,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .gather(&self.config, image, from, &mut self.rng, now);
     }
 
-    /// A heartbeat of `from` carried `section`: the neighbour table keeps
-    /// it, and the spread hears it ([`Spread::section_heard`]).
+    /// A heartbeat of `from`, `sleepy` if its flag says so, carried
+    /// `section`: the neighbour table keeps it, and the spread hears it
+    /// ([`Spread::section_heard`]).
     pub(super) fn section_heard(
         &mut self,
         from: NodeId,
+        sleepy: bool,
         section: Section,
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) {
         self.neighbours.section_heard(from, section, now);
-        let streams_here = !self.sleepy() || self.anchor().is_some_and(|a| a.id == from);
+        // A sleepy node serves nothing, so it offers nothing.
+        let streams_here =
+            !sleepy && (!self.sleepy() || self.anchor().is_some_and(|a| a.id == from));
         let v = view!(self);
         self.spread
             .section_heard(&v, section, streams_here, now, emit);
@@ -1406,6 +1410,43 @@ mod tests {
             r.spread.pace_allows(&view!(r), c, x),
             x + PACE.mul(2),
             "another heard: shared"
+        );
+    }
+
+    /// A sleepy node streams nothing, so its section offers nothing, though
+    /// it holds the proof: a relay that took it would gather what no
+    /// neighbour may stream to it (spec "Updates over the mesh").
+    #[test]
+    fn a_sleepy_node_s_section_offers_nothing() {
+        let now = Instant::ZERO + Duration::from_secs(10);
+        let image = Image {
+            version: 9,
+            blocks: 3,
+            last: 7,
+            key: 1,
+        };
+        let section = Section {
+            runs: 1,
+            image: Some(image),
+            complete: 2,
+            have: 0,
+        };
+        let from = NodeId([1, 2, 3, 4, 5, 6]);
+        let offered = |sleepy| {
+            let mut r = crate::Relay::new(Config::default(), 1);
+            let mut got = None;
+            r.section_heard(from, sleepy, section, now, &mut |a| {
+                if let Action::Offered(i) = a {
+                    got = Some(i.version);
+                }
+            });
+            got
+        };
+        assert_eq!(offered(true), None, "a sleepy sender offers nothing");
+        assert_eq!(
+            offered(false),
+            Some(9),
+            "a relay that holds the proof offers"
         );
     }
 

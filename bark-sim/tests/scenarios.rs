@@ -1196,7 +1196,20 @@ fn a_forged_section_holds_no_node_and_spreads_no_further() {
 /// (spec "Updates over the mesh").
 #[test]
 fn a_release_that_follows_another_reaches_every_node() {
+    a_release_follows_another(1);
+}
+
+/// As above at seed 5, where a relay at a corner heard a sleepy node's
+/// section name the first release, which no neighbour then streamed, left
+/// its unfed gather of the second for it, and held the second off.
+#[test]
+fn a_release_that_follows_another_reaches_every_node_at_seed_5() {
+    a_release_follows_another(5);
+}
+
+fn a_release_follows_another(seed: u64) {
     let mut sc = scenario("mesh-spread.toml");
+    sc.seed = seed;
     sc.duration_s = 12.0 * 3600.0;
     sc.update = Some(bark_sim::scenario::UpdateSpec {
         image_bytes: 40_000,

@@ -807,7 +807,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.spread.beat_heard(now);
                 self.heard(hb, bytes.len(), rssi, now, emit);
                 if let Some(section) = crate::wire::decode_section(bytes) {
-                    self.section_heard(hb.id, section, now, emit);
+                    self.section_heard(hb.id, hb.sleepy, section, now, emit);
                 }
                 // After the section, which says what the anchor holds.
                 if self.spread.take_slot_heard() {
