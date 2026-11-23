@@ -586,11 +586,11 @@ abstract class AppLocalizations {
   /// **'Use it'**
   String get commonUseGift;
 
-  /// No description provided for @commonFailed.
+  /// No description provided for @failed.
   ///
   /// In en, this message translates to:
   /// **'Failed: {error}'**
-  String commonFailed(String error);
+  String failed(String error);
 
   /// No description provided for @commonHomeOffer.
   ///
@@ -598,11 +598,11 @@ abstract class AppLocalizations {
   /// **'No home node yet. Make this one your home? It keeps texts to you while you are away. You pair first, with the code on its screen.'**
   String get commonHomeOffer;
 
-  /// No description provided for @commonSetHome.
+  /// A button: make the node the person's home.
   ///
   /// In en, this message translates to:
   /// **'Set home'**
-  String get commonSetHome;
+  String get setHome;
 
   /// No description provided for @commonBluetoothSettings.
   ///
@@ -1150,7 +1150,7 @@ abstract class AppLocalizations {
   /// **'Their texts stay; to write again, add their card.'**
   String get threadRemoveHow;
 
-  /// A button that removes a contact or a phone's record, in the dialog that asks or on the phone's row.
+  /// A button that removes a contact, a phone's record or the person's home, in the dialog that asks or on the phone's row.
   ///
   /// In en, this message translates to:
   /// **'Remove'**
@@ -1498,19 +1498,19 @@ abstract class AppLocalizations {
   /// **'Or paste the card they sent you'**
   String get contactsPasteHelp;
 
-  /// A pasted card's home node, with its address under it.
+  /// A heading: the heading of Settings' section on the person's home, and a pasted card's home node, with its address under it.
   ///
   /// In en, this message translates to:
   /// **'Home node'**
-  String get contactsHomeNode;
+  String get homeNode;
 
-  /// Under contactsHomeNode: the card names no home node and no node at all. Lower case, as it follows that title.
+  /// Under homeNode: the card names no home node and no node at all. Lower case, as it follows that title.
   ///
   /// In en, this message translates to:
   /// **'none, and no node yet: ask them for a new card'**
   String get contactsNoHomeNoNode;
 
-  /// Under contactsHomeNode: the card names no home node. Lower case, as it follows that title.
+  /// Under homeNode: the card names no home node. Lower case, as it follows that title.
   ///
   /// In en, this message translates to:
   /// **'none: a temporary card'**
@@ -2733,6 +2733,486 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{node} not found: come nearer and try again'**
   String linkNotSeen(String node);
+
+  /// A node takes no more pairings; shown in Settings' sections on the home and on the node.
+  ///
+  /// In en, this message translates to:
+  /// **'This node is full: eight phones are paired with it.'**
+  String get fullNode;
+
+  /// Under the heading homeNode: the person has no home node.
+  ///
+  /// In en, this message translates to:
+  /// **'None: your card is temporary.'**
+  String get homeNone;
+
+  /// Under the heading homeNode: the home's address.
+  ///
+  /// In en, this message translates to:
+  /// **'At {address}.'**
+  String homeAt(String address);
+
+  /// The place is the node's position, from its GPS or set by hand under This node; not room for more.
+  ///
+  /// In en, this message translates to:
+  /// **'This node has no place yet, so it cannot be a home.'**
+  String get homeNoPlace;
+
+  /// As homeNoPlace, for the paired phone; This node is the section settingsThisNode below, where the place is set.
+  ///
+  /// In en, this message translates to:
+  /// **'This node has no place yet, so it cannot be a home. Set it under This node.'**
+  String get homeNoPlaceSetIt;
+
+  /// Why the node the phone is on cannot be a home: it is on battery, or carried.
+  ///
+  /// In en, this message translates to:
+  /// **'A home must stay on power in one place.'**
+  String get homeNeedsPower;
+
+  /// Shown while the phone is on its home node. 'It' is that node; 'another' is another node.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home no longer keeps your mail. Make it your home again, or choose another.'**
+  String get homeKeyGone;
+
+  /// No description provided for @homeSilent.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home did not answer your last fetch.'**
+  String get homeSilent;
+
+  /// No description provided for @homeHoldsOtherKey.
+  ///
+  /// In en, this message translates to:
+  /// **'This node keeps mail for this phone, and is not your home.'**
+  String get homeHoldsOtherKey;
+
+  /// No description provided for @homeOthers.
+  ///
+  /// In en, this message translates to:
+  /// **'This node is someone else\'s home.'**
+  String get homeOthers;
+
+  /// A button: the person has no home node any more. Also named in homeHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove home'**
+  String get homeRemove;
+
+  /// A button: the node the phone is on, which is not the home, stops keeping the person's mail.
+  ///
+  /// In en, this message translates to:
+  /// **'Forget me here'**
+  String get homeForgetMe;
+
+  /// A button: after a restore from the 12 words, the person gives their home's address to use it again. Also named in homeHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Use my existing home'**
+  String get homeUseExisting;
+
+  /// The home the person named with homeUseExisting did not answer.
+  ///
+  /// In en, this message translates to:
+  /// **'{node} did not answer. Nothing changed.'**
+  String homeNoAnswer(String node);
+
+  /// While the home named with homeUseExisting has not answered.
+  ///
+  /// In en, this message translates to:
+  /// **'Asking {node} for your mail…'**
+  String homeAsking(String node);
+
+  /// The person's old home, being left; 'it' is that node.
+  ///
+  /// In en, this message translates to:
+  /// **'Leaving {node}: it sends you its mail, then forgets you.'**
+  String homeLeaving(String node);
+
+  /// A heading, and the title of its help (homePeopleHelp): the people whose home is the person's home node.
+  ///
+  /// In en, this message translates to:
+  /// **'People with a home here'**
+  String get homePeople;
+
+  /// Under homePeople: the person owns their home node.
+  ///
+  /// In en, this message translates to:
+  /// **'You are its owner.'**
+  String get homeYouOwner;
+
+  /// A button: ask the home for the list of homePeople.
+  ///
+  /// In en, this message translates to:
+  /// **'Show them'**
+  String get homeShowThem;
+
+  /// The button homeShowThem once a list has come.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask again'**
+  String get homeAskAgain;
+
+  /// No description provided for @homeAskFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Asking failed: {error}'**
+  String homeAskFailed(String error);
+
+  /// Making a node the home, or having none, failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Setting the home failed: {error}'**
+  String homeSetFailed(String error);
+
+  /// No description provided for @homeRemoveTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove home?'**
+  String get homeRemoveTitle;
+
+  /// No description provided for @homeSetTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Set this node as home?'**
+  String get homeSetTitle;
+
+  /// The first sentence of the dialog homeSetTitle, for a node the phone uses as a guest; one of homeCardWaits to homeCardGoes follows. 'Its' is the node's.
+  ///
+  /// In en, this message translates to:
+  /// **'First you pair: type the code on its screen.'**
+  String get homePairFirst;
+
+  /// In the dialogs homeSetTitle and homeRemoveTitle. Send my card is the button commonSendCard.
+  ///
+  /// In en, this message translates to:
+  /// **'Your card stays; its last change still waits for Send my card.'**
+  String get homeCardWaits;
+
+  /// No description provided for @homeCardSame.
+  ///
+  /// In en, this message translates to:
+  /// **'Your card stays the same.'**
+  String get homeCardSame;
+
+  /// The person has no contacts to send the new card to.
+  ///
+  /// In en, this message translates to:
+  /// **'Your card changes.'**
+  String get homeCardChanges;
+
+  /// Who gets the new card; count is how many contacts, one or more.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Your new card goes to your contact.} other{Your new card goes to your {count} contacts.}}'**
+  String homeCardGoes(int count);
+
+  /// The button that confirms the dialog homeSetTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Set'**
+  String get homeSet;
+
+  /// The help on the home node. Fetch my mail, Remove home and Use my existing home are the buttons commonFetch, homeRemove and homeUseExisting.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home is a node that stays on power in one place. It keeps texts to you while your phone is away, and your card carries its address, so the card stays good wherever you go. The inbox button on the first screen, Fetch my mail, brings them to the node you are on.\n\nWithout a home your card is temporary: it names the node you use now, which keeps your mail only while you come back to it.\n\nTo make a node your home, the phone pairs with it. A friend who owns a home node can also give you a home there from afar.\n\nWhen you choose another home, or none, your old home sends you the mail it keeps, then forgets you.\n\nA home that stops answering may be off or out of reach, or may have lost your place there. Fetch again later; if it still does not answer, make another node your home, or choose Remove home.\n\nUse my existing home is for a phone that got your identity back from your 12 words: give your home\'s address, and once your home answers it is your home again.'**
+  String get homeHelp;
+
+  /// The help of homePeople. 'Each' is each of those changes.
+  ///
+  /// In en, this message translates to:
+  /// **'As the owner you choose who has a home here, from anywhere: give a contact a home here from their conversation\'s menu, remove a person\'s home, or make someone else the owner.\n\nEach goes to your home with a fetch of your mail, and its answer comes back with it.'**
+  String get homePeopleHelp;
+
+  /// The title of the dialog opened by homeUseExisting.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home\'s address'**
+  String get homeAddressTitle;
+
+  /// In the dialog homeAddressTitle: 'it' is the home's address.
+  ///
+  /// In en, this message translates to:
+  /// **'Its 26 hex digits, or a card of yours that names it.'**
+  String get homeAddressHow;
+
+  /// No description provided for @homeAddressLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Address or card'**
+  String get homeAddressLabel;
+
+  /// No description provided for @homeCardNoHome.
+  ///
+  /// In en, this message translates to:
+  /// **'That card names no home'**
+  String get homeCardNoHome;
+
+  /// No description provided for @homeNotAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Not an address or a card'**
+  String get homeNotAddress;
+
+  /// A button in the dialog homeAddressTitle that opens the camera.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan a card'**
+  String get homeScanCard;
+
+  /// The button that ends the dialog homeAddressTitle: ask the home node for the person's mail.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask it'**
+  String get homeAskIt;
+
+  /// No description provided for @mailboxNoHomeToFetch.
+  ///
+  /// In en, this message translates to:
+  /// **'No home node to fetch from'**
+  String get mailboxNoHomeToFetch;
+
+  /// After Fetch my mail, with no node connected: it goes once there is one.
+  ///
+  /// In en, this message translates to:
+  /// **'The fetch waits for a node'**
+  String get mailboxFetchQueued;
+
+  /// After Fetch my mail, on the home node itself.
+  ///
+  /// In en, this message translates to:
+  /// **'At your home, your mail comes by itself'**
+  String get mailboxAtHome;
+
+  /// No description provided for @mailboxStillWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Still waiting for the last fetch'**
+  String get mailboxStillWaiting;
+
+  /// No description provided for @mailboxNoPlace.
+  ///
+  /// In en, this message translates to:
+  /// **'This node has no place yet, so mail cannot come back to it'**
+  String get mailboxNoPlace;
+
+  /// No description provided for @mailboxFetching.
+  ///
+  /// In en, this message translates to:
+  /// **'Fetching your mail'**
+  String get mailboxFetching;
+
+  /// No description provided for @mailboxNotConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Not connected to a node'**
+  String get mailboxNotConnected;
+
+  /// No description provided for @mailboxRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'The node refused. Nothing changed.'**
+  String get mailboxRefused;
+
+  /// No description provided for @mailboxIsHome.
+  ///
+  /// In en, this message translates to:
+  /// **'This node is your home'**
+  String get mailboxIsHome;
+
+  /// No description provided for @mailboxIsHomeLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'This node is your home. Your old home sends you its mail, then forgets you.'**
+  String get mailboxIsHomeLeft;
+
+  /// After Remove home: there was no home to remove.
+  ///
+  /// In en, this message translates to:
+  /// **'No home'**
+  String get mailboxNoHome;
+
+  /// No description provided for @mailboxRefusedStillHome.
+  ///
+  /// In en, this message translates to:
+  /// **'The node refused. It is still your home.'**
+  String get mailboxRefusedStillHome;
+
+  /// No description provided for @mailboxHomeRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'Home removed'**
+  String get mailboxHomeRemoved;
+
+  /// No description provided for @mailboxHomeRemovedLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Home removed. Your old home sends you its mail, then forgets you.'**
+  String get mailboxHomeRemovedLeft;
+
+  /// After the button commonUseGift: the home given is no longer there.
+  ///
+  /// In en, this message translates to:
+  /// **'No home to use'**
+  String get mailboxNoGift;
+
+  /// No description provided for @mailboxNodeIsHome.
+  ///
+  /// In en, this message translates to:
+  /// **'{node} is your home'**
+  String mailboxNodeIsHome(String node);
+
+  /// No description provided for @mailboxNodeIsHomeLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'{node} is your home. Your old home sends you its mail, then forgets you.'**
+  String mailboxNodeIsHomeLeft(String node);
+
+  /// No description provided for @mailboxHasHome.
+  ///
+  /// In en, this message translates to:
+  /// **'You have a home already'**
+  String get mailboxHasHome;
+
+  /// No description provided for @mailboxConnectFirst.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect to a node first'**
+  String get mailboxConnectFirst;
+
+  /// No description provided for @mailboxAsking.
+  ///
+  /// In en, this message translates to:
+  /// **'Asking {node} for your mail'**
+  String mailboxAsking(String node);
+
+  /// A node the person named as their home answered that it keeps no mail of theirs.
+  ///
+  /// In en, this message translates to:
+  /// **'{node} does not keep your mail. Nothing changed.'**
+  String mailboxKeepsNot(String node);
+
+  /// No description provided for @mailboxHomeGone.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home no longer keeps your mail. Choose a new home in Settings.'**
+  String get mailboxHomeGone;
+
+  /// No description provided for @mailboxRefusedStillKeeps.
+  ///
+  /// In en, this message translates to:
+  /// **'The node refused. It still keeps your mail.'**
+  String get mailboxRefusedStillKeeps;
+
+  /// After Forget me here: the node, which is not the home, no longer keeps the person's mail.
+  ///
+  /// In en, this message translates to:
+  /// **'It forgot you'**
+  String get mailboxForgotYou;
+
+  /// No description provided for @mailboxNotPaired.
+  ///
+  /// In en, this message translates to:
+  /// **'Not paired, so not your home'**
+  String get mailboxNotPaired;
+
+  /// No description provided for @mailboxNeedsPower.
+  ///
+  /// In en, this message translates to:
+  /// **'Paired, but a home must stay on power in one place'**
+  String get mailboxNeedsPower;
+
+  /// No description provided for @mailboxNoHomeNode.
+  ///
+  /// In en, this message translates to:
+  /// **'No home node'**
+  String get mailboxNoHomeNode;
+
+  /// The owner's request went to the home node with a fetch of the mail.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent to your home; its answer comes with your mail'**
+  String get mailboxSentHome;
+
+  /// Why the person cannot become owner: the phone is not connected to their home node.
+  ///
+  /// In en, this message translates to:
+  /// **'Not at your home'**
+  String get mailboxNotAtHome;
+
+  /// After Become owner: the person now owns their home node.
+  ///
+  /// In en, this message translates to:
+  /// **'You are its owner'**
+  String get mailboxYouOwner;
+
+  /// After Become owner: the node did not make the person its owner.
+  ///
+  /// In en, this message translates to:
+  /// **'The node did not take it'**
+  String get mailboxNotTaken;
+
+  /// No description provided for @mailboxOnlyOwner.
+  ///
+  /// In en, this message translates to:
+  /// **'Only your home\'s owner can share it'**
+  String get mailboxOnlyOwner;
+
+  /// No description provided for @mailboxNotOwner.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home says you are not its owner'**
+  String get mailboxNotOwner;
+
+  /// The owner gave a contact a home at their home node, and the app sends the contact the home. {name} is the contact's name.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} has a home at yours now. They are told'**
+  String mailboxShared(String name);
+
+  /// No description provided for @mailboxHomeFull.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home is full: it keeps eight people'**
+  String get mailboxHomeFull;
+
+  /// The owner removed a person's home at their home node.
+  ///
+  /// In en, this message translates to:
+  /// **'Removed from your home'**
+  String get mailboxRemoved;
+
+  /// No description provided for @mailboxNewOwner.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home has a new owner'**
+  String get mailboxNewOwner;
+
+  /// {name} is the name the new owner's person gave.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} is your home\'s owner now'**
+  String mailboxIsOwner(String name);
+
+  /// The person's home that the owner removed or handed on was gone already.
+  ///
+  /// In en, this message translates to:
+  /// **'Already gone'**
+  String get mailboxGone;
+
+  /// The phone's location was asked for, to set a node's place or to show the phone on the map, and the person did not allow it.
+  ///
+  /// In en, this message translates to:
+  /// **'Location permission denied'**
+  String get placeDenied;
+
+  /// The phone could not tell where it is. {error} is the phone's own reason, in English.
+  ///
+  /// In en, this message translates to:
+  /// **'No location: {error}'**
+  String placeNone(String error);
 }
 
 class _AppLocalizationsDelegate

@@ -296,7 +296,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     onPressed: () => trySay(context, () async {
                       final r = await app.mailbox.becomeOwner();
                       if (mounted) say(context, r);
-                    }, tr.commonFailed),
+                    }, tr.failed),
                     child: Text(tr.settingsBecomeOwner),
                   )
                 : null,

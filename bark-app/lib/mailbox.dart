@@ -11,15 +11,12 @@ import 'package:sodium/sodium.dart';
 import 'app_layer.dart';
 import 'ble_link.dart';
 import 'contacts.dart';
+import 'l10n.dart';
 import 'link.dart';
 import 'me.dart';
 import 'messenger.dart';
 import 'nodes.dart';
 import 'session.dart';
-
-/// What a person reads of a node that keeps as many phones as it can and
-/// so takes no more pairings (spec "Phone link", Pairing).
-const String fullNode = 'This node is full: eight phones are paired with it.';
 
 class Mailbox extends ChangeNotifier {
   final Sodium sodium;
@@ -125,24 +122,18 @@ class Mailbox extends ChangeNotifier {
   /// the person's word fetches, as fetched mail crosses the city twice
   /// (roadmap D128).
   Future<String> fetchNow() async {
-    if (me.home == null) return 'No home node to fetch from';
+    if (me.home == null) return tr.mailboxNoHomeToFetch;
     if (!session.connected) {
       await me.setFetchQueued(true);
-      return 'The fetch waits for a node';
+      return tr.mailboxFetchQueued;
     }
-    if (atHome) {
-      return 'At your home, your mail comes by itself';
-    }
-    if (session.fetchWaiting != null) {
-      return 'Still waiting for the last fetch';
-    }
+    if (atHome) return tr.mailboxAtHome;
+    if (session.fetchWaiting != null) return tr.mailboxStillWaiting;
     final here = session.address;
-    if (here == null) {
-      return 'This node has no place yet, so mail cannot come back to it';
-    }
+    if (here == null) return tr.mailboxNoPlace;
     session.fetchNews = null;
     await messenger.fetch(here);
-    return 'Fetching your mail';
+    return tr.mailboxFetching;
   }
 
   /// Sends the queued fetch once a node is linked and has an address,
@@ -170,40 +161,31 @@ class Mailbox extends ChangeNotifier {
   /// The queued fetch being sent, which a guest's errand waits for.
   Future<void>? _fetchSend;
 
-  static const _oldHomeLets =
-      'Your old home sends you its mail, then forgets you.';
-
   /// Makes the connected node, at `a`, the person's home: it is given the
   /// mailbox key and is the home only if it then says it holds one. The
   /// home before is left ([_leave]). The new card goes to every contact
   /// if its address changed. Returns what to tell the person.
   Future<String> makeHome(Address a) async {
     final n = session.node;
-    if (n == null) return 'Not connected to a node';
+    if (n == null) return tr.mailboxNotConnected;
     final h = await session.writeHome(me.keys.mailbox.extractBytes());
-    if (!h.mine) {
-      return 'The node refused. Nothing changed.';
-    }
+    if (!h.mine) return tr.mailboxRefused;
     final left = !atHome && await _leave();
     if (await me.setHome(a)) await messenger.sendCardToAll();
     _ownerSeen();
-    return left
-        ? 'This node is your home. $_oldHomeLets'
-        : 'This node is your home';
+    return left ? tr.mailboxIsHomeLeft : tr.mailboxIsHome;
   }
 
   /// Removes the home. Connected to the home, it forgets the mailbox key;
   /// elsewhere the home is left ([_leave]).
   Future<String> noHome() async {
-    if (me.home == null) return 'No home';
+    if (me.home == null) return tr.mailboxNoHome;
     final at = atHome;
     final h = at ? await session.writeHome(null) : null;
-    if (h != null && h.mine) {
-      return 'The node refused. It is still your home.';
-    }
+    if (h != null && h.mine) return tr.mailboxRefusedStillHome;
     final left = !at && await _leave();
     if (await me.setHome(null)) await messenger.sendCardToAll();
-    return left ? 'Home removed. $_oldHomeLets' : 'Home removed';
+    return left ? tr.mailboxHomeRemovedLeft : tr.mailboxHomeRemoved;
   }
 
   /// Makes the home that `c`, its owner, gave the person theirs, with the
@@ -213,7 +195,7 @@ class Mailbox extends ChangeNotifier {
   Future<String> useGift(Contact was) async {
     final c = contacts.byKey(was.key) ?? was;
     final g = c.gift;
-    if (g == null) return 'No home to use';
+    if (g == null) return tr.mailboxNoGift;
     final left =
         me.home != null && hex(me.home!.id) != hex(g.home.id) && await _leave();
     if (await me.setHome(g.home, key: g.key)) await messenger.sendCardToAll();
@@ -225,8 +207,8 @@ class Mailbox extends ChangeNotifier {
       session.fetchNews = null;
       await messenger.fetch(here);
     }
-    final home = '${nodeLabel(g.home.id)} is your home';
-    return left ? '$home. $_oldHomeLets' : home;
+    final home = nodeLabel(g.home.id);
+    return left ? tr.mailboxNodeIsHomeLeft(home) : tr.mailboxNodeIsHome(home);
   }
 
   /// The person declines the home `c` gave them.
@@ -237,12 +219,12 @@ class Mailbox extends ChangeNotifier {
   /// from the node the phone is on, makes it the home once its summary
   /// comes ([_answered]); without one nothing changes.
   Future<String> tryHome(Address a) async {
-    if (me.home != null) return 'You have a home already';
+    if (me.home != null) return tr.mailboxHasHome;
     final here = session.connected ? session.address : null;
-    if (here == null) return 'Connect to a node first';
+    if (here == null) return tr.mailboxConnectFirst;
     session.fetchNews = null;
     await messenger.fetch(here, to: a);
-    return 'Asking ${nodeLabel(a.id)} for your mail';
+    return tr.mailboxAsking(nodeLabel(a.id));
   }
 
   /// The home the person named last ([tryHome]) while it has not
@@ -274,7 +256,7 @@ class Mailbox extends ChangeNotifier {
       // reads.
       await me.gotSummary(round, s);
       session.note('Home: ${nodeName(o.dst.id)} answered, now the home');
-      session.fetchNews = '${nodeLabel(o.dst.id)} is your home';
+      session.fetchNews = tr.mailboxNodeIsHome(nodeLabel(o.dst.id));
       notifyListeners();
       return;
     }
@@ -289,15 +271,11 @@ class Mailbox extends ChangeNotifier {
     final h = me.home;
     session.note('Home: ${nodeName(o.dst.id)} says the home was removed');
     if (h == null || hex(h.id) != hex(o.dst.id)) {
-      session.tell(
-        '${nodeLabel(o.dst.id)} does not keep your mail. Nothing changed.',
-      );
+      session.tellIn((w) => w.mailboxKeepsNot(nodeLabel(o.dst.id)));
       return;
     }
     if (await me.setHome(null)) await messenger.sendCardToAll();
-    session.tell(
-      'Your home no longer keeps your mail. Choose a new home in Settings.',
-    );
+    session.tellIn((w) => w.mailboxHomeGone);
   }
 
   /// The last fetch to the home had no answer within its wait: the home
@@ -478,9 +456,7 @@ class Mailbox extends ChangeNotifier {
   /// on the person's word ([holdsOtherKey]).
   Future<String> clearKey() async {
     final h = await session.writeHome(null);
-    return h.mine
-        ? 'The node refused. It still keeps your mail.'
-        : 'It forgot you';
+    return h.mine ? tr.mailboxRefusedStillKeeps : tr.mailboxForgotYou;
   }
 
   /// The node the phone uses as a guest is the person's home, as after
@@ -517,16 +493,12 @@ class Mailbox extends ChangeNotifier {
   /// to tell the person.
   Future<String> homeHere() async {
     final g = guestHere();
-    if (g != null && g.asGuest!.room == 0) return fullNode;
+    if (g != null && g.asGuest!.room == 0) return tr.fullNode;
     if (g != null) await connect(g.heard!);
     final s = session;
     final a = s.address;
-    if (!s.connected || s.guest || a == null) {
-      return 'Not paired, so not your home';
-    }
-    if (!canBeHome(s.status)) {
-      return 'Paired, but a home must stay on power in one place';
-    }
+    if (!s.connected || s.guest || a == null) return tr.mailboxNotPaired;
+    if (!canBeHome(s.status)) return tr.mailboxNeedsPower;
     return makeHome(a);
   }
 
@@ -565,22 +537,20 @@ class Mailbox extends ChangeNotifier {
   /// Sends `c` to the home on a fetch, from the node the phone is on, its
   /// answer coming with the mail; what to tell the person.
   Future<String> _command(Command c, {String? about}) async {
-    if (me.home == null) return 'No home node';
+    if (me.home == null) return tr.mailboxNoHomeNode;
     final here = session.address;
-    if (!session.connected || here == null) {
-      return 'Connect to a node first';
-    }
+    if (!session.connected || here == null) return tr.mailboxConnectFirst;
     session.fetchNews = null;
     await messenger.fetch(here, command: c, about: about);
-    return 'Sent to your home; its answer comes with your mail';
+    return tr.mailboxSentHome;
   }
 
   /// At the home, with no owner, takes the seat: the key written to Home
   /// again takes an empty one (spec "Phone link", Settings).
   Future<String> becomeOwner() async {
-    if (!atHome) return 'Not at your home';
+    if (!atHome) return tr.mailboxNotAtHome;
     await session.writeHome(me.mailboxKey.extractBytes());
-    return isOwner ? 'You are its owner' : 'The node did not take it';
+    return isOwner ? tr.mailboxYouOwner : tr.mailboxNotTaken;
   }
 
   /// Asks the home for the people whose home it is.
@@ -599,8 +569,8 @@ class Mailbox extends ChangeNotifier {
   Future<String> shareHome(Contact was) async {
     final c = contacts.byKey(was.key) ?? was;
     final h = me.home;
-    if (h == null) return 'No home node';
-    if (!isOwner) return 'Only your home\'s owner can share it';
+    if (h == null) return tr.mailboxNoHomeNode;
+    if (!isOwner) return tr.mailboxOnlyOwner;
     var share = c.share;
     if (share == null || hex(share.home.id) != hex(h.id)) {
       share = (home: h, key: sodium.randombytes.buf(keyLen));
@@ -634,7 +604,7 @@ class Mailbox extends ChangeNotifier {
     final String? news;
     switch ((c, outcome)) {
       case (_, Outcome.notAllowed):
-        news = 'Your home says you are not its owner';
+        news = tr.mailboxNotOwner;
       case (AddCommand(), Outcome.ok || Outcome.already):
         final to = contacts.byKey(o.to);
         final share = to?.share;
@@ -642,28 +612,28 @@ class Mailbox extends ChangeNotifier {
           news = null;
         } else {
           await messenger.sendHome(to, share);
-          news = '${to.name} has a home at yours now. They are told';
+          news = tr.mailboxShared(to.name);
         }
       case (AddCommand(), Outcome.full):
-        news = 'Your home is full: it keeps eight people';
+        news = tr.mailboxHomeFull;
       case (ListCommand(), Outcome.ok):
         _list(o, s.list ?? const []);
         news = null;
       case (RemoveCommand(:final number), Outcome.ok):
-        news = 'Removed from your home';
+        news = tr.mailboxRemoved;
         if (listed case final l?) {
           _list(o, [...l.where((r) => r.number != number)]);
         }
       case (HandOverCommand(:final number), Outcome.ok):
         news = switch (name(number)) {
-          null => 'Your home has a new owner',
-          final n => '$n is your home\'s owner now',
+          null => tr.mailboxNewOwner,
+          final n => tr.mailboxIsOwner(n),
         };
         if (listed case final l?) {
           _list(o, [for (final r in l) r.copyWith(owner: r.number == number)]);
         }
       case (RemoveCommand() || HandOverCommand(), Outcome.noSuchHome):
-        news = 'Already gone';
+        news = tr.mailboxGone;
       default:
         news = null;
     }

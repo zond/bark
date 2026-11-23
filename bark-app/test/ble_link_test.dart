@@ -25,10 +25,10 @@ import 'package:bark_app/app_layer.dart' show Form, formatByte, recipientTag;
 import 'package:bark_app/app.dart';
 import 'package:bark_app/links.dart' show Linking;
 import 'package:bark_app/installs.dart' show updatedShown;
-import 'package:bark_app/mailbox.dart' show fullNode;
 import 'package:bark_app/ble_link.dart';
 import 'package:bark_app/contacts.dart';
 import 'package:bark_app/decision.dart';
+import 'package:bark_app/l10n.dart';
 
 import 'fake_ble.dart';
 import 'fake_node.dart';
@@ -1453,7 +1453,7 @@ void main() {
         String? told;
         app.mailbox.homeHere().then((r) => told = r);
         async.elapse(round);
-        expect(told, fullNode);
+        expect(told, english.fullNode);
         expect(ble.pairings, 0);
         // Pairing anyway, from a scan's tap, the node refuses it.
         Object? failed;

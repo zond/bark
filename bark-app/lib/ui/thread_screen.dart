@@ -219,7 +219,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                           if (context.mounted) say(context, r);
                         } catch (e) {
                           if (context.mounted) {
-                            say(context, tr.commonFailed(said(e)));
+                            say(context, tr.failed(said(e)));
                           }
                         }
                       },

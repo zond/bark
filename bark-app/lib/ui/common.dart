@@ -383,7 +383,7 @@ class GiftLines extends StatelessWidget {
                             if (context.mounted) say(context, r);
                           } catch (e) {
                             if (context.mounted) {
-                              say(context, tr.commonFailed(said(e)));
+                              say(context, tr.failed(said(e)));
                             }
                           }
                         },
@@ -431,7 +431,7 @@ class HomeOfferLine extends StatelessWidget {
                             if (context.mounted) say(context, notPairedLine(e));
                           }
                         },
-                  child: Text(tr.commonSetHome),
+                  child: Text(tr.setHome),
                 ),
               ],
             ),

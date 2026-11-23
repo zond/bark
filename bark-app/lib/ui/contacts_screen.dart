@@ -211,7 +211,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
           if (card != null)
             ListTile(
               contentPadding: EdgeInsets.zero,
-              title: Text(tr.contactsHomeNode),
+              title: Text(tr.homeNode),
               subtitle: Text(
                 card!.home?.toString() ??
                     (card!.now == null

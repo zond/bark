@@ -306,7 +306,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get commonUseGift => 'Use it';
 
   @override
-  String commonFailed(String error) {
+  String failed(String error) {
     return 'Failed: $error';
   }
 
@@ -315,7 +315,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'No home node yet. Make this one your home? It keeps texts to you while you are away. You pair first, with the code on its screen.';
 
   @override
-  String get commonSetHome => 'Set home';
+  String get setHome => 'Set home';
 
   @override
   String get commonBluetoothSettings => 'Bluetooth settings';
@@ -932,7 +932,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get contactsPasteHelp => 'Or paste the card they sent you';
 
   @override
-  String get contactsHomeNode => 'Home node';
+  String get homeNode => 'Home node';
 
   @override
   String get contactsNoHomeNoNode =>
@@ -1668,5 +1668,295 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String linkNotSeen(String node) {
     return '$node not found: come nearer and try again';
+  }
+
+  @override
+  String get fullNode => 'This node is full: eight phones are paired with it.';
+
+  @override
+  String get homeNone => 'None: your card is temporary.';
+
+  @override
+  String homeAt(String address) {
+    return 'At $address.';
+  }
+
+  @override
+  String get homeNoPlace =>
+      'This node has no place yet, so it cannot be a home.';
+
+  @override
+  String get homeNoPlaceSetIt =>
+      'This node has no place yet, so it cannot be a home. Set it under This node.';
+
+  @override
+  String get homeNeedsPower => 'A home must stay on power in one place.';
+
+  @override
+  String get homeKeyGone =>
+      'Your home no longer keeps your mail. Make it your home again, or choose another.';
+
+  @override
+  String get homeSilent => 'Your home did not answer your last fetch.';
+
+  @override
+  String get homeHoldsOtherKey =>
+      'This node keeps mail for this phone, and is not your home.';
+
+  @override
+  String get homeOthers => 'This node is someone else\'s home.';
+
+  @override
+  String get homeRemove => 'Remove home';
+
+  @override
+  String get homeForgetMe => 'Forget me here';
+
+  @override
+  String get homeUseExisting => 'Use my existing home';
+
+  @override
+  String homeNoAnswer(String node) {
+    return '$node did not answer. Nothing changed.';
+  }
+
+  @override
+  String homeAsking(String node) {
+    return 'Asking $node for your mail…';
+  }
+
+  @override
+  String homeLeaving(String node) {
+    return 'Leaving $node: it sends you its mail, then forgets you.';
+  }
+
+  @override
+  String get homePeople => 'People with a home here';
+
+  @override
+  String get homeYouOwner => 'You are its owner.';
+
+  @override
+  String get homeShowThem => 'Show them';
+
+  @override
+  String get homeAskAgain => 'Ask again';
+
+  @override
+  String homeAskFailed(String error) {
+    return 'Asking failed: $error';
+  }
+
+  @override
+  String homeSetFailed(String error) {
+    return 'Setting the home failed: $error';
+  }
+
+  @override
+  String get homeRemoveTitle => 'Remove home?';
+
+  @override
+  String get homeSetTitle => 'Set this node as home?';
+
+  @override
+  String get homePairFirst => 'First you pair: type the code on its screen.';
+
+  @override
+  String get homeCardWaits =>
+      'Your card stays; its last change still waits for Send my card.';
+
+  @override
+  String get homeCardSame => 'Your card stays the same.';
+
+  @override
+  String get homeCardChanges => 'Your card changes.';
+
+  @override
+  String homeCardGoes(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Your new card goes to your $count contacts.',
+      one: 'Your new card goes to your contact.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get homeSet => 'Set';
+
+  @override
+  String get homeHelp =>
+      'Your home is a node that stays on power in one place. It keeps texts to you while your phone is away, and your card carries its address, so the card stays good wherever you go. The inbox button on the first screen, Fetch my mail, brings them to the node you are on.\n\nWithout a home your card is temporary: it names the node you use now, which keeps your mail only while you come back to it.\n\nTo make a node your home, the phone pairs with it. A friend who owns a home node can also give you a home there from afar.\n\nWhen you choose another home, or none, your old home sends you the mail it keeps, then forgets you.\n\nA home that stops answering may be off or out of reach, or may have lost your place there. Fetch again later; if it still does not answer, make another node your home, or choose Remove home.\n\nUse my existing home is for a phone that got your identity back from your 12 words: give your home\'s address, and once your home answers it is your home again.';
+
+  @override
+  String get homePeopleHelp =>
+      'As the owner you choose who has a home here, from anywhere: give a contact a home here from their conversation\'s menu, remove a person\'s home, or make someone else the owner.\n\nEach goes to your home with a fetch of your mail, and its answer comes back with it.';
+
+  @override
+  String get homeAddressTitle => 'Your home\'s address';
+
+  @override
+  String get homeAddressHow =>
+      'Its 26 hex digits, or a card of yours that names it.';
+
+  @override
+  String get homeAddressLabel => 'Address or card';
+
+  @override
+  String get homeCardNoHome => 'That card names no home';
+
+  @override
+  String get homeNotAddress => 'Not an address or a card';
+
+  @override
+  String get homeScanCard => 'Scan a card';
+
+  @override
+  String get homeAskIt => 'Ask it';
+
+  @override
+  String get mailboxNoHomeToFetch => 'No home node to fetch from';
+
+  @override
+  String get mailboxFetchQueued => 'The fetch waits for a node';
+
+  @override
+  String get mailboxAtHome => 'At your home, your mail comes by itself';
+
+  @override
+  String get mailboxStillWaiting => 'Still waiting for the last fetch';
+
+  @override
+  String get mailboxNoPlace =>
+      'This node has no place yet, so mail cannot come back to it';
+
+  @override
+  String get mailboxFetching => 'Fetching your mail';
+
+  @override
+  String get mailboxNotConnected => 'Not connected to a node';
+
+  @override
+  String get mailboxRefused => 'The node refused. Nothing changed.';
+
+  @override
+  String get mailboxIsHome => 'This node is your home';
+
+  @override
+  String get mailboxIsHomeLeft =>
+      'This node is your home. Your old home sends you its mail, then forgets you.';
+
+  @override
+  String get mailboxNoHome => 'No home';
+
+  @override
+  String get mailboxRefusedStillHome =>
+      'The node refused. It is still your home.';
+
+  @override
+  String get mailboxHomeRemoved => 'Home removed';
+
+  @override
+  String get mailboxHomeRemovedLeft =>
+      'Home removed. Your old home sends you its mail, then forgets you.';
+
+  @override
+  String get mailboxNoGift => 'No home to use';
+
+  @override
+  String mailboxNodeIsHome(String node) {
+    return '$node is your home';
+  }
+
+  @override
+  String mailboxNodeIsHomeLeft(String node) {
+    return '$node is your home. Your old home sends you its mail, then forgets you.';
+  }
+
+  @override
+  String get mailboxHasHome => 'You have a home already';
+
+  @override
+  String get mailboxConnectFirst => 'Connect to a node first';
+
+  @override
+  String mailboxAsking(String node) {
+    return 'Asking $node for your mail';
+  }
+
+  @override
+  String mailboxKeepsNot(String node) {
+    return '$node does not keep your mail. Nothing changed.';
+  }
+
+  @override
+  String get mailboxHomeGone =>
+      'Your home no longer keeps your mail. Choose a new home in Settings.';
+
+  @override
+  String get mailboxRefusedStillKeeps =>
+      'The node refused. It still keeps your mail.';
+
+  @override
+  String get mailboxForgotYou => 'It forgot you';
+
+  @override
+  String get mailboxNotPaired => 'Not paired, so not your home';
+
+  @override
+  String get mailboxNeedsPower =>
+      'Paired, but a home must stay on power in one place';
+
+  @override
+  String get mailboxNoHomeNode => 'No home node';
+
+  @override
+  String get mailboxSentHome =>
+      'Sent to your home; its answer comes with your mail';
+
+  @override
+  String get mailboxNotAtHome => 'Not at your home';
+
+  @override
+  String get mailboxYouOwner => 'You are its owner';
+
+  @override
+  String get mailboxNotTaken => 'The node did not take it';
+
+  @override
+  String get mailboxOnlyOwner => 'Only your home\'s owner can share it';
+
+  @override
+  String get mailboxNotOwner => 'Your home says you are not its owner';
+
+  @override
+  String mailboxShared(String name) {
+    return '$name has a home at yours now. They are told';
+  }
+
+  @override
+  String get mailboxHomeFull => 'Your home is full: it keeps eight people';
+
+  @override
+  String get mailboxRemoved => 'Removed from your home';
+
+  @override
+  String get mailboxNewOwner => 'Your home has a new owner';
+
+  @override
+  String mailboxIsOwner(String name) {
+    return '$name is your home\'s owner now';
+  }
+
+  @override
+  String get mailboxGone => 'Already gone';
+
+  @override
+  String get placeDenied => 'Location permission denied';
+
+  @override
+  String placeNone(String error) {
+    return 'No location: $error';
   }
 }

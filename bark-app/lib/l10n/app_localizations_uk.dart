@@ -309,7 +309,7 @@ class AppLocalizationsUk extends AppLocalizations {
   String get commonUseGift => 'Прийняти';
 
   @override
-  String commonFailed(String error) {
+  String failed(String error) {
     return 'Не вдалося: $error';
   }
 
@@ -318,7 +318,7 @@ class AppLocalizationsUk extends AppLocalizations {
       'Домашнього вузла ще немає. Зробити цей вузол вашим домом? Він зберігає повідомлення для вас, поки вас немає. Спершу створіть пару за кодом на його екрані.';
 
   @override
-  String get commonSetHome => 'Зробити домом';
+  String get setHome => 'Зробити домом';
 
   @override
   String get commonBluetoothSettings => 'Налаштування Bluetooth';
@@ -329,7 +329,8 @@ class AppLocalizationsUk extends AppLocalizations {
   }
 
   @override
-  String get commonFetchQueued => 'Пошту заберемо, коли буде вузол';
+  String get commonFetchQueued =>
+      'Пошту заберемо, щойно телефон підключиться до вузла';
 
   @override
   String commonFetchWaiting(String wait) {
@@ -956,7 +957,7 @@ class AppLocalizationsUk extends AppLocalizations {
   String get contactsPasteHelp => 'Або вставте картку, яку вам надіслали';
 
   @override
-  String get contactsHomeNode => 'Домашній вузол';
+  String get homeNode => 'Домашній вузол';
 
   @override
   String get contactsNoHomeNoNode => 'немає, як і вузла: попросіть нову картку';
@@ -1700,5 +1701,306 @@ class AppLocalizationsUk extends AppLocalizations {
   @override
   String linkNotSeen(String node) {
     return '$node не знайдено: підійдіть ближче й спробуйте знову';
+  }
+
+  @override
+  String get fullNode =>
+      'На цьому вузлі немає місць: з ним спарено вісім телефонів.';
+
+  @override
+  String get homeNone => 'Немає: ваша картка тимчасова.';
+
+  @override
+  String homeAt(String address) {
+    return 'Адреса: $address.';
+  }
+
+  @override
+  String get homeNoPlace =>
+      'Цей вузол ще не має місця, тож не може бути домом.';
+
+  @override
+  String get homeNoPlaceSetIt =>
+      'Цей вузол ще не має місця, тож не може бути домом. Задайте місце в розділі «Цей вузол».';
+
+  @override
+  String get homeNeedsPower =>
+      'Дім повинен мати постійне живлення й стояти на одному місці.';
+
+  @override
+  String get homeKeyGone =>
+      'Ваш дім більше не зберігає вашу пошту. Зробіть вузол знову своїм домом або виберіть інший.';
+
+  @override
+  String get homeSilent =>
+      'Ваш дім не відповів, коли ви востаннє забирали пошту.';
+
+  @override
+  String get homeHoldsOtherKey =>
+      'Цей вузол зберігає пошту для цього телефону, але не є вашим домом.';
+
+  @override
+  String get homeOthers => 'Цей вузол — чужий дім.';
+
+  @override
+  String get homeRemove => 'Видалити дім';
+
+  @override
+  String get homeForgetMe => 'Забути мене тут';
+
+  @override
+  String get homeUseExisting => 'Використати мій наявний дім';
+
+  @override
+  String homeNoAnswer(String node) {
+    return 'Вузол $node не відповів. Нічого не змінилося.';
+  }
+
+  @override
+  String homeAsking(String node) {
+    return 'Запитуємо пошту у вузла $node…';
+  }
+
+  @override
+  String homeLeaving(String node) {
+    return 'Ви залишаєте вузол $node: він надішле вам пошту, а потім забуде вас.';
+  }
+
+  @override
+  String get homePeople => 'Люди, що мають тут дім';
+
+  @override
+  String get homeYouOwner => 'Ви власник цього дому.';
+
+  @override
+  String get homeShowThem => 'Показати список';
+
+  @override
+  String get homeAskAgain => 'Запитати знову';
+
+  @override
+  String homeAskFailed(String error) {
+    return 'Не вдалося запитати: $error';
+  }
+
+  @override
+  String homeSetFailed(String error) {
+    return 'Не вдалося змінити дім: $error';
+  }
+
+  @override
+  String get homeRemoveTitle => 'Видалити дім?';
+
+  @override
+  String get homeSetTitle => 'Зробити цей вузол домом?';
+
+  @override
+  String get homePairFirst =>
+      'Спершу створіть пару: введіть код з екрана вузла.';
+
+  @override
+  String get homeCardWaits =>
+      'Ваша картка не зміниться, але її остання зміна ще чекає на «Надіслати мою картку».';
+
+  @override
+  String get homeCardSame => 'Ваша картка не зміниться.';
+
+  @override
+  String get homeCardChanges => 'Ваша картка зміниться.';
+
+  @override
+  String homeCardGoes(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Вашу нову картку отримають $count ваших контактів.',
+      many: 'Вашу нову картку отримають $count ваших контактів.',
+      few: 'Вашу нову картку отримають $count ваші контакти.',
+      one: 'Вашу нову картку отримає $count ваш контакт.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get homeSet => 'Зробити домом';
+
+  @override
+  String get homeHelp =>
+      'Ваш дім — це вузол, що має постійне живлення й стоїть на одному місці. Він зберігає повідомлення для вас, поки ваш телефон далеко, а ваша картка містить його адресу, тож картка діє, хоч би де ви були. Кнопка «Забрати мою пошту» на першому екрані доставляє ці повідомлення на вузол, до якого ви підключені.\n\nБез дому ваша картка тимчасова: вона вказує на вузол, яким ви користуєтеся зараз, а той зберігає вашу пошту, лише поки ви до нього повертаєтеся.\n\nЩоб зробити вузол своїм домом, телефон створює з ним пару. Власник домашнього вузла може також здалеку дати вам там дім.\n\nКоли ви вибираєте інший дім або жодного, старий дім надсилає вам пошту, яку зберігає, а потім забуває вас.\n\nДім, що перестав відповідати, може бути вимкнений чи задалеко або міг утратити запис про вас. Спробуйте забрати пошту пізніше; якщо відповіді й далі немає, зробіть домом інший вузол або виберіть «Видалити дім».\n\n«Використати мій наявний дім» — для телефону, що повернув вашу особу з ваших 12 слів: введіть адресу свого дому, і щойно вузол відповість, він знову стане вашим домом.';
+
+  @override
+  String get homePeopleHelp =>
+      'Як власник ви вирішуєте, хто має тут дім, хоч би де ви були: дайте контакту дім тут через меню розмови з ним, видаліть чийсь дім або зробіть власником когось іншого.\n\nКожна така дія йде до вашого дому разом із запитом пошти, а відповідь приходить разом із поштою.';
+
+  @override
+  String get homeAddressTitle => 'Адреса вашого дому';
+
+  @override
+  String get homeAddressHow =>
+      '26 шістнадцяткових цифр адреси або ваша картка, де вона вказана.';
+
+  @override
+  String get homeAddressLabel => 'Адреса або картка';
+
+  @override
+  String get homeCardNoHome => 'У цій картці не вказано дому';
+
+  @override
+  String get homeNotAddress => 'Це не адреса й не картка';
+
+  @override
+  String get homeScanCard => 'Сканувати картку';
+
+  @override
+  String get homeAskIt => 'Запитати вузол';
+
+  @override
+  String get mailboxNoHomeToFetch =>
+      'Немає домашнього вузла, звідки забрати пошту';
+
+  @override
+  String get mailboxFetchQueued =>
+      'Пошту заберемо, щойно телефон підключиться до вузла';
+
+  @override
+  String get mailboxAtHome => 'Удома пошта приходить сама';
+
+  @override
+  String get mailboxStillWaiting =>
+      'Ще чекаємо відповіді на попередній запит пошти';
+
+  @override
+  String get mailboxNoPlace =>
+      'Цей вузол ще не має місця, тож пошта не зможе сюди повернутися';
+
+  @override
+  String get mailboxFetching => 'Забираємо вашу пошту';
+
+  @override
+  String get mailboxNotConnected => 'Немає підключення до вузла';
+
+  @override
+  String get mailboxRefused => 'Вузол відмовив. Нічого не змінилося.';
+
+  @override
+  String get mailboxIsHome => 'Цей вузол тепер ваш дім';
+
+  @override
+  String get mailboxIsHomeLeft =>
+      'Цей вузол тепер ваш дім. Старий дім надішле вам пошту, а потім забуде вас.';
+
+  @override
+  String get mailboxNoHome => 'Дому немає';
+
+  @override
+  String get mailboxRefusedStillHome =>
+      'Вузол відмовив і лишається вашим домом.';
+
+  @override
+  String get mailboxHomeRemoved => 'Дім видалено';
+
+  @override
+  String get mailboxHomeRemovedLeft =>
+      'Дім видалено. Старий дім надішле вам пошту, а потім забуде вас.';
+
+  @override
+  String get mailboxNoGift => 'Немає дому, який можна прийняти';
+
+  @override
+  String mailboxNodeIsHome(String node) {
+    return 'Вузол $node тепер ваш дім';
+  }
+
+  @override
+  String mailboxNodeIsHomeLeft(String node) {
+    return 'Вузол $node тепер ваш дім. Старий дім надішле вам пошту, а потім забуде вас.';
+  }
+
+  @override
+  String get mailboxHasHome => 'У вас уже є дім';
+
+  @override
+  String get mailboxConnectFirst => 'Спершу підключіться до вузла';
+
+  @override
+  String mailboxAsking(String node) {
+    return 'Запитуємо пошту у вузла $node';
+  }
+
+  @override
+  String mailboxKeepsNot(String node) {
+    return 'Вузол $node не зберігає вашу пошту. Нічого не змінилося.';
+  }
+
+  @override
+  String get mailboxHomeGone =>
+      'Ваш дім більше не зберігає вашу пошту. Виберіть новий дім у Налаштуваннях.';
+
+  @override
+  String get mailboxRefusedStillKeeps =>
+      'Вузол відмовив і далі зберігає вашу пошту.';
+
+  @override
+  String get mailboxForgotYou => 'Вузол забув вас';
+
+  @override
+  String get mailboxNotPaired =>
+      'Пару не створено, тож вузол не став вашим домом';
+
+  @override
+  String get mailboxNeedsPower =>
+      'Пару створено, але дім повинен мати постійне живлення й стояти на одному місці';
+
+  @override
+  String get mailboxNoHomeNode => 'Немає домашнього вузла';
+
+  @override
+  String get mailboxSentHome =>
+      'Надіслано до вашого дому; відповідь прийде разом із поштою';
+
+  @override
+  String get mailboxNotAtHome => 'Телефон не підключено до вашого дому';
+
+  @override
+  String get mailboxYouOwner => 'Тепер ви власник';
+
+  @override
+  String get mailboxNotTaken => 'Вузол не зробив вас власником';
+
+  @override
+  String get mailboxOnlyOwner => 'Ділитися домом може лише його власник';
+
+  @override
+  String get mailboxNotOwner => 'Ваш дім каже, що ви не його власник';
+
+  @override
+  String mailboxShared(String name) {
+    return 'Контакт $name тепер має дім на вашому домашньому вузлі й дізнається про це';
+  }
+
+  @override
+  String get mailboxHomeFull =>
+      'У вашому домі немає місць: там уже вісім людей';
+
+  @override
+  String get mailboxRemoved => 'Видалено з вашого дому';
+
+  @override
+  String get mailboxNewOwner => 'Ваш дім має нового власника';
+
+  @override
+  String mailboxIsOwner(String name) {
+    return 'Тепер власник вашого дому: $name';
+  }
+
+  @override
+  String get mailboxGone => 'Уже видалено';
+
+  @override
+  String get placeDenied => 'Немає дозволу на доступ до місцезнаходження';
+
+  @override
+  String placeNone(String error) {
+    return 'Не вдалося визначити місцезнаходження: $error';
   }
 }

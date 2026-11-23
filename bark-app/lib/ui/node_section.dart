@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import '../app.dart';
 import '../l10n.dart';
 import '../links.dart' show Linking;
-import '../mailbox.dart' show fullNode;
 import '../ble_link.dart';
 import '../link.dart';
 import 'common.dart';
@@ -244,7 +243,7 @@ class NodeSection extends StatelessWidget {
   /// person has read what pairing gives; the home is set apart.
   Future<void> _askPair(BuildContext context, FoundNode n) async {
     if (app.session.nodes[n.name]?.asGuest?.room == 0) {
-      say(context, fullNode);
+      say(context, tr.fullNode);
       return;
     }
     final ok = await showDialog<bool>(

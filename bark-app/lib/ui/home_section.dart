@@ -5,8 +5,8 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
-import '../mailbox.dart' show fullNode;
 import '../card.dart';
+import '../l10n.dart';
 import '../link.dart';
 import '../nodes.dart';
 import 'common.dart';
@@ -38,48 +38,43 @@ class HomeSection extends StatelessWidget {
     final homeable = paired ? canBeHome(st) : guest?.homeable ?? false;
     final full = guest?.room == 0;
     return [
-      SettingsHeading('Home node', help: _homeHelp),
-      Text(home == null ? 'None: your card is temporary.' : 'At $home.'),
+      SettingsHeading(tr.homeNode, help: tr.homeHelp),
+      Text(home == null ? tr.homeNone : tr.homeAt('$home')),
       if (here == null && (paired ? st != null : guest != null))
         Padding(
           padding: const EdgeInsets.only(top: 8),
-          child: Text(
-            'This node has no place yet, so it cannot be a home.'
-            '${paired ? ' Set it under This node.' : ''}',
-          ),
+          child: Text(paired ? tr.homeNoPlaceSetIt : tr.homeNoPlace),
         ),
       if (here != null && !atHome && !homeable)
-        const Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: Text('A home must stay on power in one place.'),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(tr.homeNeedsPower),
         ),
       if (app.mailbox.homeKeyGone)
-        const Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: Text(
-            'Your home no longer keeps your mail. Make it your home again, '
-            'or choose another.',
-          ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(tr.homeKeyGone),
         ),
       if (app.mailbox.homeSilent)
-        const Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: Text('Your home did not answer your last fetch.'),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(tr.homeSilent),
         ),
       if (app.mailbox.holdsOtherKey)
         Padding(
           padding: const EdgeInsets.only(top: 8),
-          child: const Text(
-            'This node keeps mail for this phone, and is not your home.',
-          ),
+          child: Text(tr.homeHoldsOtherKey),
         ),
       if (app.mailbox.othersHome)
-        const Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: Text('This node is someone else\'s home.'),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(tr.homeOthers),
         ),
       if (full)
-        const Padding(padding: EdgeInsets.only(top: 8), child: Text(fullNode)),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(tr.fullNode),
+        ),
       const SizedBox(height: 8),
       Wrap(
         spacing: 8,
@@ -91,25 +86,25 @@ class HomeSection extends StatelessWidget {
               onPressed: homeable && !app.links.connecting && (paired || !full)
                   ? () => _setHome(context, here, pair: !paired)
                   : null,
-              child: const Text('Set home'),
+              child: Text(tr.setHome),
             ),
           if (home != null)
             OutlinedButton(
               onPressed: () => _setHome(context, null),
-              child: const Text('Remove home'),
+              child: Text(tr.homeRemove),
             ),
           if (paired && app.mailbox.holdsOtherKey)
             OutlinedButton(
               onPressed: () => trySay(context, () async {
                 final r = await app.mailbox.clearKey();
                 if (context.mounted) say(context, r);
-              }, (e) => 'Failed: $e'),
-              child: const Text('Forget me here'),
+              }, tr.failed),
+              child: Text(tr.homeForgetMe),
             ),
           if (home == null && app.mailbox.tried?.over != false)
             OutlinedButton(
               onPressed: () => _tryHome(context),
-              child: const Text('Use my existing home'),
+              child: Text(tr.homeUseExisting),
             ),
         ],
       ),
@@ -118,17 +113,14 @@ class HomeSection extends StatelessWidget {
           padding: const EdgeInsets.only(top: 8),
           child: Text(
             t.over
-                ? '${nodeLabel(t.home.id)} did not answer. Nothing changed.'
-                : 'Asking ${nodeLabel(t.home.id)} for your mail…',
+                ? tr.homeNoAnswer(nodeLabel(t.home.id))
+                : tr.homeAsking(nodeLabel(t.home.id)),
           ),
         ),
       if (app.me.leaving case final l?)
         Padding(
           padding: const EdgeInsets.only(top: 8),
-          child: Text(
-            'Leaving ${nodeLabel(l.home.id)}: it sends you its mail, then '
-            'forgets you.',
-          ),
+          child: Text(tr.homeLeaving(nodeLabel(l.home.id))),
         ),
       SendCardLine(app, padding: EdgeInsets.zero),
       ..._people(context, atHome: atHome && paired),
@@ -147,15 +139,15 @@ class HomeSection extends StatelessWidget {
           children: [
             Flexible(
               child: Text(
-                'People with a home here',
+                tr.homePeople,
                 style: Theme.of(context).textTheme.titleSmall,
               ),
             ),
-            const HelpButton('People with a home here', _peopleHelp),
+            HelpButton(tr.homePeople, tr.homePeopleHelp),
           ],
         ),
       ),
-      const Text('You are its owner.'),
+      Text(tr.homeYouOwner),
       for (final r in rs ?? const <PhoneRecord>[])
         RecordRow(app, r, home: true, atNode: false),
       Align(
@@ -164,8 +156,8 @@ class HomeSection extends StatelessWidget {
           onPressed: () => trySay(context, () async {
             final r = await app.mailbox.askList();
             if (context.mounted) say(context, r);
-          }, (e) => 'Asking failed: $e'),
-          child: Text(rs == null ? 'Show them' : 'Ask again'),
+          }, tr.homeAskFailed),
+          child: Text(rs == null ? tr.homeShowThem : tr.homeAskAgain),
         ),
       ),
     ];
@@ -181,7 +173,7 @@ class HomeSection extends StatelessWidget {
     await trySay(context, () async {
       final r = await app.mailbox.tryHome(a);
       if (context.mounted) say(context, r);
-    }, (e) => 'Asking failed: $e');
+    }, tr.homeAskFailed);
   }
 
   /// Makes the node at `a` the home, or none; `pair` for a node the phone
@@ -198,28 +190,28 @@ class HomeSection extends StatelessWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(a == null ? 'Remove home?' : 'Set this node as home?'),
+        title: Text(a == null ? tr.homeRemoveTitle : tr.homeSetTitle),
+        // Whole sentences, joined where one ends.
         content: Text(
-          (pair ? 'First you pair: type the code on its screen. ' : '') +
-              (!changes && app.cardUnsent
-                  ? 'Your card stays; its last change still waits for Send '
-                        'my card.'
-                  : !changes
-                  ? 'Your card stays the same.'
-                  : n == 0
-                  ? 'Your card changes.'
-                  : n == 1
-                  ? 'Your new card goes to your contact.'
-                  : 'Your new card goes to your $n contacts.'),
+          [
+            if (pair) tr.homePairFirst,
+            !changes && app.cardUnsent
+                ? tr.homeCardWaits
+                : !changes
+                ? tr.homeCardSame
+                : n == 0
+                ? tr.homeCardChanges
+                : tr.homeCardGoes(n),
+          ].join(' '),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text(tr.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text(a == null ? 'Remove' : 'Set'),
+            child: Text(a == null ? tr.remove : tr.homeSet),
           ),
         ],
       ),
@@ -242,34 +234,8 @@ class HomeSection extends StatelessWidget {
           ? app.mailbox.noHome()
           : app.mailbox.makeHome(a));
       if (context.mounted) say(context, r);
-    }, (e) => 'Setting the home failed: $e');
+    }, tr.homeSetFailed);
   }
-
-  /// What a home is, for whoever asks.
-  static const _homeHelp =
-      'Your home is a node that stays on power in one place. It keeps texts '
-      'to you while your phone is away, and your card carries its address, '
-      'so the card stays good wherever you go. The inbox button on the '
-      'first screen, Fetch my mail, brings them to the node you are on.\n\n'
-      'Without a home your card is temporary: it names the node you use '
-      'now, which keeps your mail only while you come back to it.\n\n'
-      'To make a node your home, the phone pairs with it. A friend who owns '
-      'a home node can also give you a home there from afar.\n\n'
-      'When you choose another home, or none, your old home sends you the '
-      'mail it keeps, then forgets you.\n\n'
-      'A home that stops answering may be off or out of reach, or may have '
-      'lost your place there. Fetch again later; if it still does not '
-      'answer, make another node your home, or choose Remove home.\n\n'
-      'Use my existing home is for a phone that got your identity back from '
-      'your 12 words: give your home\'s address, and once your home answers '
-      'it is your home again.';
-
-  static const _peopleHelp =
-      'As the owner you choose who has a home here, from anywhere: give a '
-      'contact a home here from their conversation\'s menu, remove a '
-      'person\'s home, or make someone else the owner.\n\n'
-      'Each goes to your home with a fetch of your mail, and its answer '
-      'comes back with it.';
 }
 
 /// Takes the home's address: its 26 hex digits, or a card of the person's
@@ -299,9 +265,9 @@ class _HomeAddressDialogState extends State<_HomeAddressDialog> {
     if (_home != null || t.isEmpty) return;
     try {
       _home = PersonCard.parse(t).home;
-      if (_home == null) _error = 'That card names no home';
+      if (_home == null) _error = tr.homeCardNoHome;
     } on BadCard {
-      _error = 'Not an address or a card';
+      _error = tr.homeNotAddress;
     }
   });
 
@@ -311,7 +277,7 @@ class _HomeAddressDialogState extends State<_HomeAddressDialog> {
     setState(() {
       _text.text = c.toText();
       _home = c.home;
-      _error = c.home == null ? 'That card names no home' : null;
+      _error = c.home == null ? tr.homeCardNoHome : null;
     });
   }
 
@@ -319,19 +285,19 @@ class _HomeAddressDialogState extends State<_HomeAddressDialog> {
   Widget build(BuildContext context) => AlertDialog(
     // Its field stays in reach above the keyboard on a phone held sideways.
     scrollable: true,
-    title: const Text('Your home\'s address'),
+    title: Text(tr.homeAddressTitle),
     content: Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Its 26 hex digits, or a card of yours that names it.'),
+        Text(tr.homeAddressHow),
         TextField(
           key: const Key('home address'),
           controller: _text,
           maxLines: null,
           onChanged: _read,
           decoration: InputDecoration(
-            labelText: 'Address or card',
+            labelText: tr.homeAddressLabel,
             errorText: _error,
             helperText: _home == null ? null : nodeLabel(_home!.id),
           ),
@@ -339,7 +305,7 @@ class _HomeAddressDialogState extends State<_HomeAddressDialog> {
         const SizedBox(height: 8),
         OutlinedButton.icon(
           icon: const Icon(Icons.qr_code_scanner),
-          label: const Text('Scan a card'),
+          label: Text(tr.homeScanCard),
           onPressed: _scan,
         ),
       ],
@@ -347,11 +313,11 @@ class _HomeAddressDialogState extends State<_HomeAddressDialog> {
     actions: [
       TextButton(
         onPressed: () => Navigator.pop(context),
-        child: const Text('Cancel'),
+        child: Text(tr.cancel),
       ),
       FilledButton(
         onPressed: _home == null ? null : () => Navigator.pop(context, _home),
-        child: const Text('Ask it'),
+        child: Text(tr.homeAskIt),
       ),
     ],
   );

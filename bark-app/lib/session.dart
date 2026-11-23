@@ -700,7 +700,7 @@ class Session extends ChangeNotifier {
     await save(state: true);
   }
 
-  void _badValue(Object e) => _tell((w) => w.sessionBadValue(said(e, w)));
+  void _badValue(Object e) => tellIn((w) => w.sessionBadValue(said(e, w)));
 
   /// Tells the person `s` in the notice, and logs it, or `log` in its
   /// place: the log stays English, as a fault report carries it.
@@ -712,7 +712,7 @@ class Session extends ChangeNotifier {
 
   /// Tells the person `words` in the language spoken, and logs them in
   /// English.
-  void _tell(String Function(AppLocalizations) words) =>
+  void tellIn(String Function(AppLocalizations) words) =>
       tell(words(tr), log: words(english));
 
   void dismissNotice() {
@@ -774,7 +774,7 @@ class Session extends ChangeNotifier {
       _onStatus(await link.readStatus());
       _onGivenBack(await link.readGivenBack());
     } catch (e) {
-      _tell((w) => w.sessionReadFailed(said(e, w)));
+      tellIn((w) => w.sessionReadFailed(said(e, w)));
     }
     if (guest) {
       guestRead = await _readGuest(link, n);
@@ -1008,7 +1008,7 @@ class Session extends ChangeNotifier {
 
   void _homeTaken() {
     homeRemoved = true;
-    _tell((w) => w.sessionHomeTaken);
+    tellIn((w) => w.sessionHomeTaken);
   }
 
   /// Reads the node's records, page by page, once the read under way, if
@@ -1346,7 +1346,7 @@ class Session extends ChangeNotifier {
     if (g == null) return notifyListeners();
     final o = outbox.where((o) => o.id == g.msgId).firstOrNull;
     if (o == null) {
-      _tell((w) => w.sessionGivenBackUnknown(msgIdHex(g.msgId)));
+      tellIn((w) => w.sessionGivenBackUnknown(msgIdHex(g.msgId)));
       return;
     }
     // The value stays until the node takes another message, so it is
@@ -1573,7 +1573,7 @@ class Session extends ChangeNotifier {
     } catch (e) {
       o.state = OutState.queued;
       again = false;
-      _tell((w) => w.sendFailed(said(e, w)));
+      tellIn((w) => w.sendFailed(said(e, w)));
     } finally {
       _writing = false;
     }
@@ -1599,12 +1599,12 @@ class Session extends ChangeNotifier {
         } on AttException catch (e) {
           // The oldest is the one just read, so the node should not
           // refuse its ID; stop rather than read it in a loop.
-          _tell((w) => w.sessionConfirmRefused(said(e, w)));
+          tellIn((w) => w.sessionConfirmRefused(said(e, w)));
           break;
         }
       }
     } catch (e) {
-      _tell((w) => w.sessionInboxFailed(said(e, w)));
+      tellIn((w) => w.sessionInboxFailed(said(e, w)));
     } finally {
       _draining = false;
       notifyListeners();
@@ -1630,7 +1630,7 @@ class Session extends ChangeNotifier {
       await link.setMapPoint(p);
       note('Map point: ${p ?? 'cleared'}');
     } catch (e) {
-      _tell((w) => w.sessionPlaceFailed(said(e, w)));
+      tellIn((w) => w.sessionPlaceFailed(said(e, w)));
     }
   }
 

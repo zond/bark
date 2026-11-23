@@ -164,12 +164,15 @@
   "@commonUseGift": {
     "description": "The button that takes a home another person gave."
   },
-  "commonFailed": "Failed: {error}",
-  "@commonFailed": {
+  "failed": "Failed: {error}",
+  "@failed": {
     "placeholders": {"error": {"type": "String"}}
   },
   "commonHomeOffer": "No home node yet. Make this one your home? It keeps texts to you while you are away. You pair first, with the code on its screen.",
-  "commonSetHome": "Set home",
+  "setHome": "Set home",
+  "@setHome": {
+    "description": "A button: make the node the person's home."
+  },
   "commonBluetoothSettings": "Bluetooth settings",
   "commonBluetoothSettingsFailed": "Opening Bluetooth settings failed: {error}",
   "@commonBluetoothSettingsFailed": {
@@ -439,7 +442,7 @@
   "threadRemoveHow": "Their texts stay; to write again, add their card.",
   "remove": "Remove",
   "@remove": {
-    "description": "A button that removes a contact or a phone's record, in the dialog that asks or on the phone's row."
+    "description": "A button that removes a contact, a phone's record or the person's home, in the dialog that asks or on the phone's row."
   },
   "threadRemoveContact": "Remove contact",
   "threadNotVerified": "Not verified yet: their first reply proves it is them.",
@@ -644,17 +647,17 @@
   "@contactsPasteHelp": {
     "description": "Under the field where a card's text is pasted, below the button scanTheirCard."
   },
-  "contactsHomeNode": "Home node",
-  "@contactsHomeNode": {
-    "description": "A pasted card's home node, with its address under it."
+  "homeNode": "Home node",
+  "@homeNode": {
+    "description": "A heading: the heading of Settings' section on the person's home, and a pasted card's home node, with its address under it."
   },
   "contactsNoHomeNoNode": "none, and no node yet: ask them for a new card",
   "@contactsNoHomeNoNode": {
-    "description": "Under contactsHomeNode: the card names no home node and no node at all. Lower case, as it follows that title."
+    "description": "Under homeNode: the card names no home node and no node at all. Lower case, as it follows that title."
   },
   "contactsNoHomeTemporary": "none: a temporary card",
   "@contactsNoHomeTemporary": {
-    "description": "Under contactsHomeNode: the card names no home node. Lower case, as it follows that title."
+    "description": "Under homeNode: the card names no home node. Lower case, as it follows that title."
   },
   "contactsBadPaste": "{error}. Paste a card: it starts with {prefix}",
   "@contactsBadPaste": {
@@ -1304,5 +1307,246 @@
   "@linkNotSeen": {
     "description": "A sentence without its full stop, which the app adds.",
     "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+
+  "fullNode": "This node is full: eight phones are paired with it.",
+  "@fullNode": {
+    "description": "A node takes no more pairings; shown in Settings' sections on the home and on the node."
+  },
+
+  "homeNone": "None: your card is temporary.",
+  "@homeNone": {
+    "description": "Under the heading homeNode: the person has no home node."
+  },
+  "homeAt": "At {address}.",
+  "@homeAt": {
+    "description": "Under the heading homeNode: the home's address.",
+    "placeholders": {"address": {"type": "String", "example": "0a1b2c3d4e5f60718293a4b5c6", "description": "The home's address, 26 hex digits."}}
+  },
+  "homeNoPlace": "This node has no place yet, so it cannot be a home.",
+  "@homeNoPlace": {
+    "description": "The place is the node's position, from its GPS or set by hand under This node; not room for more."
+  },
+  "homeNoPlaceSetIt": "This node has no place yet, so it cannot be a home. Set it under This node.",
+  "@homeNoPlaceSetIt": {
+    "description": "As homeNoPlace, for the paired phone; This node is the section settingsThisNode below, where the place is set."
+  },
+  "homeNeedsPower": "A home must stay on power in one place.",
+  "@homeNeedsPower": {
+    "description": "Why the node the phone is on cannot be a home: it is on battery, or carried."
+  },
+  "homeKeyGone": "Your home no longer keeps your mail. Make it your home again, or choose another.",
+  "@homeKeyGone": {
+    "description": "Shown while the phone is on its home node. 'It' is that node; 'another' is another node."
+  },
+  "homeSilent": "Your home did not answer your last fetch.",
+  "homeHoldsOtherKey": "This node keeps mail for this phone, and is not your home.",
+  "homeOthers": "This node is someone else's home.",
+  "homeRemove": "Remove home",
+  "@homeRemove": {
+    "description": "A button: the person has no home node any more. Also named in homeHelp."
+  },
+  "homeForgetMe": "Forget me here",
+  "@homeForgetMe": {
+    "description": "A button: the node the phone is on, which is not the home, stops keeping the person's mail."
+  },
+  "homeUseExisting": "Use my existing home",
+  "@homeUseExisting": {
+    "description": "A button: after a restore from the 12 words, the person gives their home's address to use it again. Also named in homeHelp."
+  },
+  "homeNoAnswer": "{node} did not answer. Nothing changed.",
+  "@homeNoAnswer": {
+    "description": "The home the person named with homeUseExisting did not answer.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "homeAsking": "Asking {node} for your mail…",
+  "@homeAsking": {
+    "description": "While the home named with homeUseExisting has not answered.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "homeLeaving": "Leaving {node}: it sends you its mail, then forgets you.",
+  "@homeLeaving": {
+    "description": "The person's old home, being left; 'it' is that node.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "homePeople": "People with a home here",
+  "@homePeople": {
+    "description": "A heading, and the title of its help (homePeopleHelp): the people whose home is the person's home node."
+  },
+  "homeYouOwner": "You are its owner.",
+  "@homeYouOwner": {
+    "description": "Under homePeople: the person owns their home node."
+  },
+  "homeShowThem": "Show them",
+  "@homeShowThem": {
+    "description": "A button: ask the home for the list of homePeople."
+  },
+  "homeAskAgain": "Ask again",
+  "@homeAskAgain": {
+    "description": "The button homeShowThem once a list has come."
+  },
+  "homeAskFailed": "Asking failed: {error}",
+  "@homeAskFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "homeSetFailed": "Setting the home failed: {error}",
+  "@homeSetFailed": {
+    "description": "Making a node the home, or having none, failed.",
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "homeRemoveTitle": "Remove home?",
+  "homeSetTitle": "Set this node as home?",
+  "homePairFirst": "First you pair: type the code on its screen.",
+  "@homePairFirst": {
+    "description": "The first sentence of the dialog homeSetTitle, for a node the phone uses as a guest; one of homeCardWaits to homeCardGoes follows. 'Its' is the node's."
+  },
+  "homeCardWaits": "Your card stays; its last change still waits for Send my card.",
+  "@homeCardWaits": {
+    "description": "In the dialogs homeSetTitle and homeRemoveTitle. Send my card is the button commonSendCard."
+  },
+  "homeCardSame": "Your card stays the same.",
+  "homeCardChanges": "Your card changes.",
+  "@homeCardChanges": {
+    "description": "The person has no contacts to send the new card to."
+  },
+  "homeCardGoes": "{count, plural, =1{Your new card goes to your contact.} other{Your new card goes to your {count} contacts.}}",
+  "@homeCardGoes": {
+    "description": "Who gets the new card; count is how many contacts, one or more.",
+    "placeholders": {"count": {"type": "int"}}
+  },
+  "homeSet": "Set",
+  "@homeSet": {
+    "description": "The button that confirms the dialog homeSetTitle."
+  },
+  "homeHelp": "Your home is a node that stays on power in one place. It keeps texts to you while your phone is away, and your card carries its address, so the card stays good wherever you go. The inbox button on the first screen, Fetch my mail, brings them to the node you are on.\n\nWithout a home your card is temporary: it names the node you use now, which keeps your mail only while you come back to it.\n\nTo make a node your home, the phone pairs with it. A friend who owns a home node can also give you a home there from afar.\n\nWhen you choose another home, or none, your old home sends you the mail it keeps, then forgets you.\n\nA home that stops answering may be off or out of reach, or may have lost your place there. Fetch again later; if it still does not answer, make another node your home, or choose Remove home.\n\nUse my existing home is for a phone that got your identity back from your 12 words: give your home's address, and once your home answers it is your home again.",
+  "@homeHelp": {
+    "description": "The help on the home node. Fetch my mail, Remove home and Use my existing home are the buttons commonFetch, homeRemove and homeUseExisting."
+  },
+  "homePeopleHelp": "As the owner you choose who has a home here, from anywhere: give a contact a home here from their conversation's menu, remove a person's home, or make someone else the owner.\n\nEach goes to your home with a fetch of your mail, and its answer comes back with it.",
+  "@homePeopleHelp": {
+    "description": "The help of homePeople. 'Each' is each of those changes."
+  },
+  "homeAddressTitle": "Your home's address",
+  "@homeAddressTitle": {
+    "description": "The title of the dialog opened by homeUseExisting."
+  },
+  "homeAddressHow": "Its 26 hex digits, or a card of yours that names it.",
+  "@homeAddressHow": {
+    "description": "In the dialog homeAddressTitle: 'it' is the home's address."
+  },
+  "homeAddressLabel": "Address or card",
+  "homeCardNoHome": "That card names no home",
+  "homeNotAddress": "Not an address or a card",
+  "homeScanCard": "Scan a card",
+  "@homeScanCard": {
+    "description": "A button in the dialog homeAddressTitle that opens the camera."
+  },
+  "homeAskIt": "Ask it",
+  "@homeAskIt": {
+    "description": "The button that ends the dialog homeAddressTitle: ask the home node for the person's mail."
+  },
+
+  "mailboxNoHomeToFetch": "No home node to fetch from",
+  "mailboxFetchQueued": "The fetch waits for a node",
+  "@mailboxFetchQueued": {
+    "description": "After Fetch my mail, with no node connected: it goes once there is one."
+  },
+  "mailboxAtHome": "At your home, your mail comes by itself",
+  "@mailboxAtHome": {
+    "description": "After Fetch my mail, on the home node itself."
+  },
+  "mailboxStillWaiting": "Still waiting for the last fetch",
+  "mailboxNoPlace": "This node has no place yet, so mail cannot come back to it",
+  "mailboxFetching": "Fetching your mail",
+  "mailboxNotConnected": "Not connected to a node",
+  "mailboxRefused": "The node refused. Nothing changed.",
+  "mailboxIsHome": "This node is your home",
+  "mailboxIsHomeLeft": "This node is your home. Your old home sends you its mail, then forgets you.",
+  "mailboxNoHome": "No home",
+  "@mailboxNoHome": {
+    "description": "After Remove home: there was no home to remove."
+  },
+  "mailboxRefusedStillHome": "The node refused. It is still your home.",
+  "mailboxHomeRemoved": "Home removed",
+  "mailboxHomeRemovedLeft": "Home removed. Your old home sends you its mail, then forgets you.",
+  "mailboxNoGift": "No home to use",
+  "@mailboxNoGift": {
+    "description": "After the button commonUseGift: the home given is no longer there."
+  },
+  "mailboxNodeIsHome": "{node} is your home",
+  "@mailboxNodeIsHome": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "mailboxNodeIsHomeLeft": "{node} is your home. Your old home sends you its mail, then forgets you.",
+  "@mailboxNodeIsHomeLeft": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "mailboxHasHome": "You have a home already",
+  "mailboxConnectFirst": "Connect to a node first",
+  "mailboxAsking": "Asking {node} for your mail",
+  "@mailboxAsking": {
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "mailboxKeepsNot": "{node} does not keep your mail. Nothing changed.",
+  "@mailboxKeepsNot": {
+    "description": "A node the person named as their home answered that it keeps no mail of theirs.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "mailboxHomeGone": "Your home no longer keeps your mail. Choose a new home in Settings.",
+  "mailboxRefusedStillKeeps": "The node refused. It still keeps your mail.",
+  "mailboxForgotYou": "It forgot you",
+  "@mailboxForgotYou": {
+    "description": "After Forget me here: the node, which is not the home, no longer keeps the person's mail."
+  },
+  "mailboxNotPaired": "Not paired, so not your home",
+  "mailboxNeedsPower": "Paired, but a home must stay on power in one place",
+  "mailboxNoHomeNode": "No home node",
+  "mailboxSentHome": "Sent to your home; its answer comes with your mail",
+  "@mailboxSentHome": {
+    "description": "The owner's request went to the home node with a fetch of the mail."
+  },
+  "mailboxNotAtHome": "Not at your home",
+  "@mailboxNotAtHome": {
+    "description": "Why the person cannot become owner: the phone is not connected to their home node."
+  },
+  "mailboxYouOwner": "You are its owner",
+  "@mailboxYouOwner": {
+    "description": "After Become owner: the person now owns their home node."
+  },
+  "mailboxNotTaken": "The node did not take it",
+  "@mailboxNotTaken": {
+    "description": "After Become owner: the node did not make the person its owner."
+  },
+  "mailboxOnlyOwner": "Only your home's owner can share it",
+  "mailboxNotOwner": "Your home says you are not its owner",
+  "mailboxShared": "{name} has a home at yours now. They are told",
+  "@mailboxShared": {
+    "description": "The owner gave a contact a home at their home node, and the app sends the contact the home. {name} is the contact's name.",
+    "placeholders": {"name": {"type": "String"}}
+  },
+  "mailboxHomeFull": "Your home is full: it keeps eight people",
+  "mailboxRemoved": "Removed from your home",
+  "@mailboxRemoved": {
+    "description": "The owner removed a person's home at their home node."
+  },
+  "mailboxNewOwner": "Your home has a new owner",
+  "mailboxIsOwner": "{name} is your home's owner now",
+  "@mailboxIsOwner": {
+    "description": "{name} is the name the new owner's person gave.",
+    "placeholders": {"name": {"type": "String"}}
+  },
+  "mailboxGone": "Already gone",
+  "@mailboxGone": {
+    "description": "The person's home that the owner removed or handed on was gone already."
+  },
+
+  "placeDenied": "Location permission denied",
+  "@placeDenied": {
+    "description": "The phone's location was asked for, to set a node's place or to show the phone on the map, and the person did not allow it."
+  },
+  "placeNone": "No location: {error}",
+  "@placeNone": {
+    "description": "The phone could not tell where it is. {error} is the phone's own reason, in English.",
+    "placeholders": {"error": {"type": "String"}}
   }
 }

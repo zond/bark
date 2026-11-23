@@ -6,14 +6,17 @@
 import 'package:geolocator_platform_interface/geolocator_platform_interface.dart'
     show GeolocatorPlatform, LocationPermission;
 
+import 'l10n.dart';
 import 'link.dart';
 
-/// No position: why, in a few words.
-class NoPlace implements Exception {
-  final String why;
-  const NoPlace(this.why);
+/// No position: why, in a few words, which a screen says.
+class NoPlace implements Exception, Spoken {
+  final String Function(AppLocalizations) _why;
+  const NoPlace(this._why);
   @override
-  String toString() => why;
+  String words(AppLocalizations w) => _why(w);
+  @override
+  String toString() => words(english);
 }
 
 abstract class PhonePlace {
@@ -36,14 +39,15 @@ class AndroidPlace implements PhonePlace {
       if (p == LocationPermission.denied) p = await g.requestPermission();
       if (p == LocationPermission.denied ||
           p == LocationPermission.deniedForever) {
-        throw const NoPlace('Location permission denied');
+        throw NoPlace((w) => w.placeDenied);
       }
       final here = await g.getCurrentPosition();
       return Position.fromDegrees(here.latitude, here.longitude);
     } on NoPlace {
       rethrow;
     } catch (e) {
-      throw NoPlace('No location: $e');
+      // The plugin's reason is the phone's own words, in English.
+      throw NoPlace((w) => w.placeNone('$e'));
     }
   }
 }

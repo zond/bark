@@ -16,6 +16,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../app.dart';
 import '../asks.dart';
+import '../l10n.dart';
 import '../link.dart';
 import '../session.dart';
 import '../phone_place.dart';
@@ -836,7 +837,7 @@ class _MapScreenState extends State<MapScreen> {
       final p = await widget.app.place.here();
       if (mounted) setState(() => _you = _at(p));
     } on NoPlace catch (e) {
-      if (mounted) say(context, '$e');
+      if (mounted) say(context, said(e));
     }
   }
 }

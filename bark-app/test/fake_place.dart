@@ -14,7 +14,7 @@ class FakePlace implements PhonePlace {
   @override
   Future<Position> here() async {
     asked++;
-    return at ?? (throw const NoPlace('Location permission denied'));
+    return at ?? (throw NoPlace((w) => w.placeDenied));
   }
 }
 

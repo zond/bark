@@ -312,7 +312,7 @@ class AppLocalizationsSv extends AppLocalizations {
   String get commonUseGift => 'Använd det';
 
   @override
-  String commonFailed(String error) {
+  String failed(String error) {
     return 'Misslyckades: $error';
   }
 
@@ -321,7 +321,7 @@ class AppLocalizationsSv extends AppLocalizations {
       'Ingen hemnod än. Göra den här till ditt hem? Den sparar meddelanden till dig medan du är borta. Först parkopplar du med koden på dess skärm.';
 
   @override
-  String get commonSetHome => 'Gör till hem';
+  String get setHome => 'Gör till hem';
 
   @override
   String get commonBluetoothSettings => 'Bluetooth-inställningar';
@@ -949,7 +949,7 @@ class AppLocalizationsSv extends AppLocalizations {
   String get contactsPasteHelp => 'Eller klistra in kortet de skickade dig';
 
   @override
-  String get contactsHomeNode => 'Hemnod';
+  String get homeNode => 'Hemnod';
 
   @override
   String get contactsNoHomeNoNode =>
@@ -1690,5 +1690,299 @@ class AppLocalizationsSv extends AppLocalizations {
   @override
   String linkNotSeen(String node) {
     return '$node hittades inte: gå närmare och försök igen';
+  }
+
+  @override
+  String get fullNode =>
+      'Den här noden är full: åtta telefoner är parkopplade med den.';
+
+  @override
+  String get homeNone => 'Ingen: ditt kort är tillfälligt.';
+
+  @override
+  String homeAt(String address) {
+    return 'Adress: $address.';
+  }
+
+  @override
+  String get homeNoPlace =>
+      'Den här noden har ingen plats än, så den kan inte bli ett hem.';
+
+  @override
+  String get homeNoPlaceSetIt =>
+      'Den här noden har ingen plats än, så den kan inte bli ett hem. Ange platsen under Den här noden.';
+
+  @override
+  String get homeNeedsPower =>
+      'Ett hem måste ha ström hela tiden och stå på ett ställe.';
+
+  @override
+  String get homeKeyGone =>
+      'Ditt hem sparar inte längre din post. Gör noden till ditt hem igen eller välj ett annat.';
+
+  @override
+  String get homeSilent => 'Ditt hem svarade inte på din senaste hämtning.';
+
+  @override
+  String get homeHoldsOtherKey =>
+      'Den här noden sparar post åt den här telefonen men är inte ditt hem.';
+
+  @override
+  String get homeOthers => 'Den här noden är någon annans hem.';
+
+  @override
+  String get homeRemove => 'Ta bort hemmet';
+
+  @override
+  String get homeForgetMe => 'Glöm mig här';
+
+  @override
+  String get homeUseExisting => 'Använd mitt befintliga hem';
+
+  @override
+  String homeNoAnswer(String node) {
+    return '$node svarade inte. Inget ändrades.';
+  }
+
+  @override
+  String homeAsking(String node) {
+    return 'Frågar $node efter din post…';
+  }
+
+  @override
+  String homeLeaving(String node) {
+    return 'Lämnar $node: noden skickar dig din post och glömmer sedan bort dig.';
+  }
+
+  @override
+  String get homePeople => 'Personer med hem här';
+
+  @override
+  String get homeYouOwner => 'Du är ägare till hemmet.';
+
+  @override
+  String get homeShowThem => 'Visa listan';
+
+  @override
+  String get homeAskAgain => 'Fråga igen';
+
+  @override
+  String homeAskFailed(String error) {
+    return 'Det gick inte att fråga: $error';
+  }
+
+  @override
+  String homeSetFailed(String error) {
+    return 'Det gick inte att ändra hemmet: $error';
+  }
+
+  @override
+  String get homeRemoveTitle => 'Ta bort hemmet?';
+
+  @override
+  String get homeSetTitle => 'Göra den här noden till hem?';
+
+  @override
+  String get homePairFirst =>
+      'Först parkopplar du: skriv koden från nodens skärm.';
+
+  @override
+  String get homeCardWaits =>
+      'Ditt kort ändras inte, men den senaste ändringen väntar fortfarande på Skicka mitt kort.';
+
+  @override
+  String get homeCardSame => 'Ditt kort förblir detsamma.';
+
+  @override
+  String get homeCardChanges => 'Ditt kort ändras.';
+
+  @override
+  String homeCardGoes(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Ditt nya kort går till dina $count kontakter.',
+      one: 'Ditt nya kort går till din kontakt.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get homeSet => 'Gör till hem';
+
+  @override
+  String get homeHelp =>
+      'Ditt hem är en nod som har ström hela tiden och står på ett ställe. Noden sparar meddelanden till dig medan telefonen är borta, och ditt kort anger nodens adress, så kortet fungerar var du än är. Inkorgsknappen på första skärmen, Hämta min post, hämtar meddelandena till noden du är på.\n\nUtan hem är ditt kort tillfälligt: kortet anger noden du använder nu, som sparar din post bara så länge du kommer tillbaka till den.\n\nFör att göra en nod till ditt hem parkopplas telefonen med noden. En vän som äger en hemnod kan också ge dig ett hem där på distans.\n\nNär du väljer ett annat hem eller inget skickar ditt gamla hem dig posten som finns kvar och glömmer sedan bort dig.\n\nEtt hem som slutar svara kan vara avstängt, vara utom räckhåll eller ha glömt bort dig. Hämta igen senare. Svarar hemmet fortfarande inte, gör en annan nod till ditt hem eller välj Ta bort hemmet.\n\nAnvänd mitt befintliga hem är till för en telefon som har fått tillbaka din identitet från dina 12 ord: ange adressen till ditt hem, så blir noden ditt hem igen när den svarar.';
+
+  @override
+  String get homePeopleHelp =>
+      'Som ägare väljer du, var du än är, vem som har ett hem här: ge en kontakt ett hem här från menyn i samtalet med kontakten, ta bort en persons hem eller gör någon annan till ägare.\n\nVarje ändring går till ditt hem med en hämtning av din post, och svaret kommer tillbaka med posten.';
+
+  @override
+  String get homeAddressTitle => 'Adressen till ditt hem';
+
+  @override
+  String get homeAddressHow =>
+      'De 26 hexadecimala siffrorna i adressen eller ett av dina kort som anger den.';
+
+  @override
+  String get homeAddressLabel => 'Adress eller kort';
+
+  @override
+  String get homeCardNoHome => 'Det kortet anger inget hem';
+
+  @override
+  String get homeNotAddress => 'Varken adress eller kort';
+
+  @override
+  String get homeScanCard => 'Skanna ett kort';
+
+  @override
+  String get homeAskIt => 'Fråga noden';
+
+  @override
+  String get mailboxNoHomeToFetch => 'Ingen hemnod att hämta från';
+
+  @override
+  String get mailboxFetchQueued => 'Hämtningen väntar på en nod';
+
+  @override
+  String get mailboxAtHome => 'Hemma kommer posten av sig själv';
+
+  @override
+  String get mailboxStillWaiting =>
+      'Väntar fortfarande på svar på förra hämtningen';
+
+  @override
+  String get mailboxNoPlace =>
+      'Den här noden har ingen plats än, så posten kan inte komma tillbaka hit';
+
+  @override
+  String get mailboxFetching => 'Hämtar din post';
+
+  @override
+  String get mailboxNotConnected => 'Inte ansluten till en nod';
+
+  @override
+  String get mailboxRefused => 'Noden sa nej. Inget ändrades.';
+
+  @override
+  String get mailboxIsHome => 'Den här noden är ditt hem';
+
+  @override
+  String get mailboxIsHomeLeft =>
+      'Den här noden är ditt hem. Ditt gamla hem skickar dig din post och glömmer sedan bort dig.';
+
+  @override
+  String get mailboxNoHome => 'Inget hem';
+
+  @override
+  String get mailboxRefusedStillHome =>
+      'Noden sa nej och är fortfarande ditt hem.';
+
+  @override
+  String get mailboxHomeRemoved => 'Hemmet har tagits bort';
+
+  @override
+  String get mailboxHomeRemovedLeft =>
+      'Hemmet har tagits bort. Ditt gamla hem skickar dig din post och glömmer sedan bort dig.';
+
+  @override
+  String get mailboxNoGift => 'Inget hem att använda';
+
+  @override
+  String mailboxNodeIsHome(String node) {
+    return '$node är ditt hem';
+  }
+
+  @override
+  String mailboxNodeIsHomeLeft(String node) {
+    return '$node är ditt hem. Ditt gamla hem skickar dig din post och glömmer sedan bort dig.';
+  }
+
+  @override
+  String get mailboxHasHome => 'Du har redan ett hem';
+
+  @override
+  String get mailboxConnectFirst => 'Anslut till en nod först';
+
+  @override
+  String mailboxAsking(String node) {
+    return 'Frågar $node efter din post';
+  }
+
+  @override
+  String mailboxKeepsNot(String node) {
+    return '$node sparar inte din post. Inget ändrades.';
+  }
+
+  @override
+  String get mailboxHomeGone =>
+      'Ditt hem sparar inte längre din post. Välj ett nytt hem i Inställningar.';
+
+  @override
+  String get mailboxRefusedStillKeeps =>
+      'Noden sa nej och sparar fortfarande din post.';
+
+  @override
+  String get mailboxForgotYou => 'Noden glömde bort dig';
+
+  @override
+  String get mailboxNotPaired => 'Inte parkopplad, så noden blev inte ditt hem';
+
+  @override
+  String get mailboxNeedsPower =>
+      'Parkopplad, men ett hem måste ha ström hela tiden och stå på ett ställe';
+
+  @override
+  String get mailboxNoHomeNode => 'Ingen hemnod';
+
+  @override
+  String get mailboxSentHome =>
+      'Skickat till ditt hem; svaret kommer med din post';
+
+  @override
+  String get mailboxNotAtHome => 'Inte ansluten till ditt hem';
+
+  @override
+  String get mailboxYouOwner => 'Du är nu ägare';
+
+  @override
+  String get mailboxNotTaken => 'Noden gjorde dig inte till ägare';
+
+  @override
+  String get mailboxOnlyOwner => 'Bara ägaren till ditt hem kan dela det';
+
+  @override
+  String get mailboxNotOwner => 'Enligt ditt hem är du inte ägare';
+
+  @override
+  String mailboxShared(String name) {
+    return '$name har nu ett hem på din hemnod och får besked om det';
+  }
+
+  @override
+  String get mailboxHomeFull => 'Ditt hem är fullt: det rymmer åtta personer';
+
+  @override
+  String get mailboxRemoved => 'Togs bort från ditt hem';
+
+  @override
+  String get mailboxNewOwner => 'Ditt hem har en ny ägare';
+
+  @override
+  String mailboxIsOwner(String name) {
+    return '$name är nu ägare till ditt hem';
+  }
+
+  @override
+  String get mailboxGone => 'Redan borta';
+
+  @override
+  String get placeDenied => 'Appen får inte använda platsen';
+
+  @override
+  String placeNone(String error) {
+    return 'Ingen plats: $error';
   }
 }
