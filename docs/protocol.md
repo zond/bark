@@ -1078,7 +1078,9 @@ depends on what the packet gives it to do:
     takes one while it holds none, is not draining
     ([send queue](#send-queue), Before a reboot), has a live neighbour,
     in its first rotation a relay among them
-    ([channel at boot](#channel-at-boot)), has room in its send queue and
+    ([channel at boot](#channel-at-boot)), has been anchorless a delivery
+    TTL if it is ([sleepy nodes alone](#sleepy-nodes-alone)), has room in
+    its send queue and
     bucket for a full frame on top of what they hold, and not every
     neighbour is banned; for a sleepy node with a
     live anchor, not the anchor
@@ -1669,6 +1671,12 @@ the next channel of the rotation each time ([heartbeat](#heartbeat)),
 naming its home channel in its first byte. The period is the delivery TTL
 over the 13 channels, 600 / 13 = 46.2 s; mean interval 34.6 s, 26 s of
 airtime an hour.
+
+For the delivery TTL, 600 s, after it turns anchorless a node takes no
+message from its application ([receiving DATA](#receiving-data)): in 13
+beats of at most a period each, every neighbour in anchorless mode has
+beaten once on the node's home channel, and until then a search from here
+would find few of them (roadmap D244).
 
 Nodes in anchorless mode route among themselves and are a next hop like
 any other ([next hop](#next-hop)), each DATA to one with the long
