@@ -120,6 +120,7 @@ class AppModel {
       requestBluetooth: requestBluetooth,
     );
     alerts = Alerts(notifier, contacts);
+    messenger.onScreen = alerts.showing;
     session.kept = (r) =>
         alerts.kept(r, session.partsOf(r)).catchError(_unnotified);
     // The link's notification says what each of them says of the link.

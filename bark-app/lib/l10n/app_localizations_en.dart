@@ -204,8 +204,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sentRefused => 'refused by the node';
 
   @override
-  String get sentNoNeighbour =>
-      'your node hears no other node, sending when it does';
+  String get sentNoNeighbour => 'the node hears no other, sending when it does';
 
   @override
   String get sentNoWay => 'found no way there';
@@ -229,22 +228,22 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sentTakenHelp =>
-      'The node has it and passes it on. The network gives no further news: it does not say when it arrives.';
+      'The node has it and passes it on. The network does not say when it arrives; it gives it back if it finds no way there.';
 
   @override
   String get sentBusy => 'The network is busy';
 
   @override
   String get sentBusyHelp =>
-      'The network gave it back for now. The app sends it again by itself once the wait is over; nothing makes that sooner.';
+      'The network gave it back for now. The app sends it again by itself once the wait is over.';
 
   @override
   String get sentNoNeighbourHelp =>
-      'Your node hears no other node now. The app sends it again by itself once it does; nothing makes that sooner.';
+      'The node hears no other node now. The app sends it again by itself once it does.';
 
   @override
   String get sentNoWayHelp =>
-      'The network looked for a way to their address and found none: they may be out of reach, or their address old. Send again tries once more; Cancel removes it.';
+      'The network found no way to their address: their node may be off or gone, or their address old. Send again tries once more, as a new message; Cancel removes it.';
 
   @override
   String get sentRefusedHelp =>
@@ -886,22 +885,23 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sendCharTooLong => 'a character too long to send';
 
   @override
-  String get sendFetchNoWay =>
-      'Your home could not be reached: found no way there';
+  String sendTextNoWay(String name) {
+    return 'Your text to $name found no way there.';
+  }
 
   @override
   String sendReactionNoWay(String emoji, String name) {
-    return 'Your reaction $emoji did not reach $name: found no way there.';
+    return 'Your reaction $emoji found no way to $name.';
   }
 
   @override
   String sendCardNoWay(String name) {
-    return 'Your card did not reach $name: found no way there.';
+    return 'Your card found no way to $name.';
   }
 
   @override
   String sendHomeNoWay(String name) {
-    return 'The home you gave $name did not reach them: found no way there.';
+    return 'The home you gave $name found no way to them.';
   }
 
   @override
@@ -2390,6 +2390,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String homeNoAnswer(String node) {
     return '$node did not answer. Nothing changed.';
   }
+
+  @override
+  String homeNoWay(String node) {
+    return 'No way found to $node. Nothing changed.';
+  }
+
+  @override
+  String get mailboxFetchNoWay => 'No way found to your home';
 
   @override
   String homeAsking(String node) {

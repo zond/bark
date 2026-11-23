@@ -112,7 +112,9 @@ class HomeSection extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.only(top: 8),
           child: Text(
-            t.over
+            t.noWay
+                ? tr.homeNoWay(nodeLabel(t.home.id))
+                : t.over
                 ? tr.homeNoAnswer(nodeLabel(t.home.id))
                 : tr.homeAsking(nodeLabel(t.home.id)),
           ),

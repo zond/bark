@@ -155,8 +155,7 @@ in the instrumental in Ukrainian ("вузол відхилив", not "відхи
   the home's answer and how long at most (32 minutes, the spec's
   bounds on the way there and back), until a reply comes, "No new mail"
   if the home has nothing new, or the network finds no way to the
-  home, which says "Your home could not be reached: found no way
-  there"; a fetch given back busy or with no neighbour goes again by
+  home, which says "No way found to your home"; a fetch given back busy or with no neighbour goes again by
   itself and the button goes on waiting. With
   no node connected the fetch waits, the button saying "Fetch waits for
   a node", and goes from the next node the phone links to, addressed to
@@ -182,32 +181,38 @@ in the instrumental in Ukrainian ("вузол відхилив", not "відхи
   card; a mailbox, from your mailbox. A sent text's states: a clock,
   waiting for a node, on this phone; two arrows, being handed to the node; a
   check, sent into the network, whose tooltip says the network does not
-  say when it arrives, as it sends no such news (spec "Addresses"). A
+  say when it arrives, as it sends no such news; it only gives back
+  what it cannot send (spec "Addresses"). A
   text the node gives back shows why, with Cancel under it (spec
   "Phone link", Given back): busy, an hourglass and "The network is
   busy, sending again in m:ss", sent again by itself once the wait is
   over, also after a restart; no neighbour, a beacon struck through and
-  "Your node hears no other node, sending when it does", sent again by
-  itself once a node says it is ready or hears a neighbour, with no
+  "The node hears no other, sending when it does", sent again by
+  itself once Status says ready or counts a neighbour heard, with no
   timer of the app's; no way, a pin struck through and "Found no way
   there", which waits for the person, with **Send again** beside
-  Cancel. No way can come minutes after the check, and for a text
-  before the last. The node keeps its Given back until it takes another
-  message from the phone, and the app reads it at every link, so it
-  keeps the last one it read from each node and acts on a value once:
-  one for a text cancelled or sent again changes nothing, and a
-  message it never sent is told once. Send again sends it to where a new text would go
-  now, asking where as a new text does, as a new message, since the
-  relays that searched keep their record of the first: each part given
-  back so is sealed again with its own `sent`, so that a receiver who
-  had it drops the copy, where the seal then differs, because the
-  address or the node written from changed or it is a first message;
-  where it would be the same bytes, or a part no longer fits, the whole
-  text goes as a new one, with new `sent`, in its place. Nothing offers
+  Cancel, and a notice "Your text to Ann found no way there." unless
+  the thread is on the screen. No way can come minutes after the
+  check, and for a text before the last. The app reads Given back at
+  every link before it writes anything, as the node empties it when it
+  takes the next message, and acts on a give-back for a text it has
+  as taken or queued, the latter a write whose answer was lost. The
+  node keeps the value until then, so the app keeps the last one it
+  read from each node and acts on a value once: one for a text
+  cancelled or sent again changes nothing, and a message it never sent
+  is told once.
+  Send again sends the whole text as a new one, with new `sent` and so
+  new IDs, as the relays that searched keep their record of the first;
+  a receiver that did get the first shows both. The old parts leave the
+  queue at once, whatever their state, and the new text goes at the end
+  of the thread, with the reaction the old one had, to where a new text
+  would go now, asking where as a new text does. Nothing offers
   to send a busy or no-neighbour text sooner: the node decides when. A
   card, a reaction or a home given back for no way is not sent again
-  by itself either: a notice says it did not reach the contact, and
-  the person sends it again by choosing it again. A text the node
+  by itself either: a notice says it found no way to the contact, and
+  the person sends it again by choosing it again. A text cancelled
+  with some of its parts taken says how many of all its parts went,
+  "1 of 3 sent". A text the node
   refuses says "Refused by the node", and Debug gives the node's
   answer. A tap
   anywhere on a sent text's bubble, its words too, opens a sheet that
@@ -995,8 +1000,12 @@ answered not ready for one ban, 1.58 s. A test may have it give back
 any message the phone sent, at any time, for any reason, have a
 message's search come back with no way in place of arriving, and lose
 its last neighbour, giving back the message it holds and taking none
-until it hears one again; its Given back stays across the phone's
-links until it takes another message, as a node's does. Behind it is one person, the **fake friend**, with an identity
+until it hears one again, or give one back for no neighbour while it
+still hears some; it may take a message and end the link before the
+phone hears the answer. Its Given back stays across the phone's links
+until it takes another message, which empties it without a
+notification, as a node's does; and the same ID again after a no way
+is taken and goes nowhere, as the relays that searched have it. Behind it is one person, the **fake friend**, with an identity
 of their own: they start with two first messages to you in the inbox,
 with their card, and answer each text you send them with a sealed
 "Echo: " of it 5 s later; a text in parts once every part has come,

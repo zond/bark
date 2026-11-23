@@ -672,7 +672,26 @@ class FakeNode implements NodeLink {
   });
 
   @override
-  Future<void> send(Uint8List value) => _answer(() => _send(this, value));
+  Future<void> send(Uint8List value) => _answer(() {
+    _send(this, value);
+    if (!loseNextAnswer) return;
+    // Taken, and the link ends before its answer reaches the phone.
+    loseNextAnswer = false;
+    close();
+    throw StateError('the link ended before the answer');
+  });
+
+  /// The next message the paired phone writes is taken, and the link ends
+  /// before the phone hears so; a test may set it.
+  bool loseNextAnswer = false;
+
+  /// How many times each message ID was written, taken or not.
+  final Map<int, int> writesOf = {};
+
+  /// The IDs whose search came back with no way: the relays that searched
+  /// keep their records, so the same ID again is taken and goes nowhere,
+  /// and nothing comes back of it.
+  final Set<int> _searched = {};
 
   /// A Send from the phone `p`, this fake for the paired phone or a guest.
   void _send(Object p, Uint8List value) {
@@ -696,6 +715,7 @@ class FakeNode implements NodeLink {
     );
     final payload = value.sublist(Address.len);
     final id = msgId(dst, payload);
+    writesOf[id] = (writesOf[id] ?? 0) + 1;
     _writes++;
     if (_alone || !_ready || _writes % notReadyEvery == 0) {
       // As when the bucket empties between the status the app read and
@@ -711,13 +731,13 @@ class FakeNode implements NodeLink {
     _taken++;
     _ready = false;
     _since = null;
-    if (phone.givenBack != null) {
-      phone.givenBack = null;
-      if (phone.connected) phone.given.add(null);
-    }
+    // Emptied without a notification, as the firmware does.
+    phone.givenBack = null;
     _passTurn();
     _notify();
-    if (noWayFor(dst, p == this ? _textTo(payload)?.$2 : null)) {
+    if (_searched.contains(id)) {
+      _freeAfter(handOver);
+    } else if (noWayFor(dst, p == this ? _textTo(payload)?.$2 : null)) {
       _freeAfter(handOver);
       _after(handOver, () => _giveBack(phone, id, Duration.zero, Why.noWay));
     } else if (busyEvery > 0 && _taken % busyEvery == 0) {
@@ -741,6 +761,7 @@ class FakeNode implements NodeLink {
   _Phone _phoneOf(Object p) => p is FakeGuest ? p._phone : _pairedPhone;
 
   void _giveBack(_Phone phone, int id, Duration wait, Why why) {
+    if (why == Why.noWay) _searched.add(id);
     phone.givenBack = (id, now().add(wait), why);
     if (phone.connected) phone.given.add(_givenBackNow(phone));
   }
@@ -761,8 +782,27 @@ class FakeNode implements NodeLink {
     _alone = true;
     _heard = 0;
     _relays = 0;
-    if (held != null) giveBack(held, Why.noNeighbour);
     _notify();
+    if (held != null) giveBack(held, Why.noNeighbour);
+  }
+
+  /// Gives the guest `g` its message `id` back for `why`, while its link
+  /// is up.
+  void giveBackTo(FakeGuest g, int id, Why why) => _giveBack(
+    g._phone,
+    id,
+    why == Why.busy ? givenBackWait : Duration.zero,
+    why,
+  );
+
+  /// It gives back the message `held` for no neighbour though it still
+  /// hears some, none of which took it, and takes nothing for `wait`.
+  void noneTookIt(int held, Duration wait) {
+    giveBack(held, Why.noNeighbour);
+    _ready = false;
+    _since = null;
+    _notify();
+    _freeAfter(wait);
   }
 
   /// It hears a neighbour again, and takes messages.

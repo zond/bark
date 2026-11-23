@@ -654,7 +654,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
           _stateMark([o], Icons.check, tr.threadTakenMark, small, color),
         ],
         OutState.givenBack => [
-          switch (o.why) {
+          switch (o.why!) {
             Why.noNeighbour => _stateMark(
               [o],
               Icons.wifi_tethering_off,
@@ -669,7 +669,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
               small,
               color,
             ),
-            Why.busy || null => _stateMark(
+            Why.busy => _stateMark(
               [o],
               Icons.hourglass_bottom,
               tr.sentBusy,

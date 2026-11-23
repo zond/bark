@@ -153,7 +153,7 @@ class DebugScreen extends StatelessWidget {
   }
 
   String _wait(Session s, Outgoing o) => switch ((o.state, o.why)) {
-    (OutState.givenBack, Why.busy || null) => ' busy, ${s.waitLeftS(o)} s left',
+    (OutState.givenBack, Why.busy) => ' busy, ${s.waitLeftS(o)} s left',
     (OutState.givenBack, final Why w) => ' ${w.name}',
     _ => '',
   };

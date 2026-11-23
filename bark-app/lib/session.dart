@@ -465,6 +465,9 @@ class Session extends ChangeNotifier {
 
   bool _writing = false;
   bool _draining = false;
+
+  /// Given back was read on this link; nothing is written before.
+  bool _givenBackRead = false;
   final List<StreamSubscription<dynamic>> _subs = [];
 
   bool get connected => _link != null;
@@ -800,8 +803,16 @@ class Session extends ChangeNotifier {
     unawaited(link.closed.then((_) => _detach(link)));
     if (!await _setRecipient(link, n)) return false;
     try {
+      // Before anything is written: the node empties Given back when it
+      // takes the next message, and a queued one may be the one it names.
+      try {
+        _onGivenBack(await link.readGivenBack());
+      } finally {
+        if (_link == link) _givenBackRead = true;
+      }
       await link.subscribe();
       _onStatus(await link.readStatus());
+      // Changed before the subscription, it was not notified.
       _onGivenBack(await link.readGivenBack());
     } catch (e) {
       tellIn((w) => w.sessionReadFailed(said(e, w)));
@@ -1329,6 +1340,7 @@ class Session extends ChangeNotifier {
     status = null;
     node = null;
     givenBack = null;
+    _givenBackRead = false;
     nodeTime = null;
     nodeHome = null;
     homeRemoved = false;
@@ -1375,8 +1387,7 @@ class Session extends ChangeNotifier {
   /// Takes the node's Given back. The value stays until the node takes
   /// another message from this phone and is read again at every connect,
   /// so the last one handled from each node is kept ([NodeRecord]) and a
-  /// value is new only when it differs; and only a message the node has
-  /// can come back.
+  /// value is new only when it differs.
   void _onGivenBack(GivenBack? g) {
     givenBack = g;
     note(
@@ -1389,26 +1400,34 @@ class Session extends ChangeNotifier {
     final r = n == null ? null : nodes.of(nodeName(n.id));
     final seen = r?.givenBackSeen;
     r?.givenBackSeen = g?.msgId;
-    if (g == null || seen == g.msgId) {
-      notifyListeners();
-      if (seen != g?.msgId) unawaited(save(state: true));
-      return;
+    if (g != null && seen == g.msgId) {
+      note('Given back: ${msgIdHex(g.msgId)} read before');
     }
+    final o = g == null || seen == g.msgId ? null : _givenBack(g);
+    notifyListeners();
+    if (seen != g?.msgId || o != null) {
+      unawaited(save(out: [?o], state: seen != g?.msgId));
+    }
+  }
+
+  /// Acts on `g`, read for the first time: the message it names, if the
+  /// node had it, given back. Queued counts as had: a write whose answer
+  /// was lost was put back in the queue, and the give-back proves the
+  /// node took it.
+  Outgoing? _givenBack(GivenBack g) {
+    final id = msgIdHex(g.msgId);
     final o = outbox.where((o) => o.id == g.msgId).firstOrNull;
     if (o == null) {
       if (outbox.any((o) => o.replaced.contains(g.msgId))) {
-        note('Given back: ${msgIdHex(g.msgId)} was sent again already');
-        notifyListeners();
+        note('Given back: $id was sent again already');
       } else {
-        tellIn((w) => w.sessionGivenBackUnknown(msgIdHex(g.msgId)));
+        tellIn((w) => w.sessionGivenBackUnknown(id));
       }
-      unawaited(save(state: true));
-      return;
+      return null;
     }
-    if (o.state != OutState.taken) {
-      notifyListeners();
-      unawaited(save(state: true));
-      return;
+    if (o.state != OutState.taken && o.state != OutState.queued) {
+      note('Given back: $id is ${o.state.name} here');
+      return null;
     }
     o.state = OutState.givenBack;
     o.why = g.why;
@@ -1417,34 +1436,33 @@ class Session extends ChangeNotifier {
         o.retryAt = now().add(Duration(seconds: g.waitS));
         _retryWhenDue();
       case Why.noNeighbour:
-        // Status may have been notified before this; read it now, as the
-        // node may hear a neighbour again already.
-        final link = _link;
-        if (link != null) {
-          unawaited(link.readStatus().then(_onStatus, onError: (_) {}));
-        }
+        // Status may have said so before this came.
+        if (status case final s?) _neighbourBack(s);
       case Why.noWay:
         foundNoWay?.call(o);
     }
-    notifyListeners();
-    unawaited(save(out: [o], state: true));
+    return o;
   }
 
   /// Offers again each message given back for no neighbour once the node
   /// is ready, or hears a neighbour: ready is the turn, which may be
   /// another phone's until this one asks for it by a write (spec "Phone
-  /// link", Sending).
+  /// link", Sending). A write answered not ready then waits for ready as
+  /// any message does.
   void _neighbourBack(Status s) {
     if (!s.ready && s.heard == 0) return;
     final again = [
       for (final o in outbox)
         if (o.state == OutState.givenBack && o.why == Why.noNeighbour) o,
     ];
+    if (again.isEmpty) return;
     for (final o in again) {
       o.requeue();
       note('Send ${msgIdHex(o.id)}: the node hears a neighbour, sent again');
     }
-    if (again.isNotEmpty) unawaited(save(out: again));
+    notifyListeners();
+    unawaited(save(out: again));
+    _pump();
   }
 
   /// Sends again, by itself, each message given back once the wait the
@@ -1608,18 +1626,44 @@ class Session extends ChangeNotifier {
     ]);
   }
 
-  /// Puts `by` in the place of `was` in the queue, in one change, as the
-  /// same text sent again; the node takes it when ready.
-  Future<void> replace(Outgoing was, Outgoing by) async {
-    final i = outbox.indexOf(was);
-    if (i < 0 || was.state == OutState.writing) return;
-    outbox[i] = by;
+  /// Sends the text whose parts are `old`, one given back for no way, again
+  /// as a new text, the parts `make` seals given the IDs it replaces: the
+  /// old parts leave the queue at once, before anything waits, so none of
+  /// them is offered to the node again and a second ask finds nothing;
+  /// they come back if `make` fails. Whether it was sent again.
+  Future<bool> sendAgain(
+    List<Outgoing> old,
+    Future<List<Outgoing>> Function(List<int> replaced) make,
+  ) async {
+    if (!old.any((o) => o.noWay) ||
+        old.any((o) => o.state == OutState.writing) ||
+        !old.every(outbox.contains)) {
+      return false;
+    }
+    final places = [for (final o in old) outbox.indexOf(o)]..sort();
+    final kept = [for (final i in places) outbox[i]];
+    outbox.removeWhere(old.contains);
+    notifyListeners();
+    final List<Outgoing> parts;
+    try {
+      parts = await make([
+        for (final o in old) ...[o.id, ...o.replaced],
+      ]);
+    } catch (_) {
+      for (final (i, at) in places.indexed) {
+        outbox.insert(at, kept[i]);
+      }
+      notifyListeners();
+      rethrow;
+    }
+    outbox.addAll(parts);
     notifyListeners();
     await _save([
-      {'out': _key(was)},
-      _outChange(by),
+      for (final o in old) {'out': _key(o)},
+      for (final o in parts) _outChange(o),
     ]);
     _pump();
+    return true;
   }
 
   /// How long the app waits for Ready after asking for the turn before it
@@ -1636,7 +1680,7 @@ class Session extends ChangeNotifier {
   Future<void> _pump() async {
     final link = _link;
     final n = node;
-    if (_writing || link == null || n == null) return;
+    if (_writing || link == null || n == null || !_givenBackRead) return;
     final o = outbox.where((o) => o.state == OutState.queued).firstOrNull;
     if (o == null) return;
     // Out of turn, the write asks for it, unless it asked lately.
@@ -1672,7 +1716,11 @@ class Session extends ChangeNotifier {
         _askedAt = now();
         _askAgain?.cancel();
         _askAgain = Timer(turnWait, _pump);
-        unawaited(link.readStatus().then(_onStatus, onError: (_) {}));
+        unawaited(
+          link.readStatus().then((s) {
+            if (_link == link) _onStatus(s);
+          }, onError: (_) {}),
+        );
       } else {
         o.state = OutState.refused;
         o.error = '$e';

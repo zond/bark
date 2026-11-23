@@ -277,7 +277,7 @@ void main() {
     expect(find.text('Their reaction'), findsOneWidget);
     expect(find.text('Confirmed by the recipient'), findsNothing);
     expect(
-      find.textContaining('The network gives no further news'),
+      find.textContaining('it gives it back if it finds no way there'),
       findsOneWidget,
     );
     // Above them, what the bubble does not say: the node it went to.
@@ -1003,7 +1003,7 @@ void main() {
       await t.pump();
     }
 
-    const lonely = 'Your node hears no other node, sending when it does';
+    const lonely = 'The node hears no other, sending when it does';
     const noWay = 'Found no way there';
     await givenBack(Why.noNeighbour);
     expect(find.byTooltip(lonely), findsOneWidget);
@@ -1040,14 +1040,17 @@ void main() {
     await t.pumpAndSettle();
     expect(find.text(lonely), findsOneWidget);
     expect(
-      find.textContaining('once it does; nothing makes that sooner'),
+      find.text(
+        'The node hears no other node now. The app sends it again by '
+        'itself once it does.',
+      ),
       findsOneWidget,
     );
     expect(
       find.text(
-        'The network looked for a way to their address and found none: '
-        'they may be out of reach, or their address old. Send again tries '
-        'once more; Cancel removes it.',
+        'The network found no way to their address: their node may be off '
+        'or gone, or their address old. Send again tries once more, as a '
+        'new message; Cancel removes it.',
       ),
       findsOneWidget,
     );
@@ -2140,9 +2143,7 @@ void main() {
     clock = clock.add(Session.fetchAnswerWait);
     await t.pump(FakeNode.givenBackWait);
     await t.tap(idle);
-    final news = find.text(
-      'Your home could not be reached: found no way there',
-    );
+    final news = find.text('No way found to your home');
     // Within the turn waits of the writes the fake answers not ready.
     for (var i = 0; i < 60 && !fetches.last.noWay; i++) {
       await t.pump(const Duration(seconds: 1));

@@ -427,7 +427,7 @@ abstract class AppLocalizations {
   /// No description provided for @sentNoNeighbour.
   ///
   /// In en, this message translates to:
-  /// **'your node hears no other node, sending when it does'**
+  /// **'the node hears no other, sending when it does'**
   String get sentNoNeighbour;
 
   /// No description provided for @sentNoWay.
@@ -463,7 +463,7 @@ abstract class AppLocalizations {
   /// No description provided for @sentTakenHelp.
   ///
   /// In en, this message translates to:
-  /// **'The node has it and passes it on. The network gives no further news: it does not say when it arrives.'**
+  /// **'The node has it and passes it on. The network does not say when it arrives; it gives it back if it finds no way there.'**
   String get sentTakenHelp;
 
   /// No description provided for @sentBusy.
@@ -475,19 +475,19 @@ abstract class AppLocalizations {
   /// No description provided for @sentBusyHelp.
   ///
   /// In en, this message translates to:
-  /// **'The network gave it back for now. The app sends it again by itself once the wait is over; nothing makes that sooner.'**
+  /// **'The network gave it back for now. The app sends it again by itself once the wait is over.'**
   String get sentBusyHelp;
 
   /// No description provided for @sentNoNeighbourHelp.
   ///
   /// In en, this message translates to:
-  /// **'Your node hears no other node now. The app sends it again by itself once it does; nothing makes that sooner.'**
+  /// **'The node hears no other node now. The app sends it again by itself once it does.'**
   String get sentNoNeighbourHelp;
 
   /// Send again and Cancel are the buttons under the text.
   ///
   /// In en, this message translates to:
-  /// **'The network looked for a way to their address and found none: they may be out of reach, or their address old. Send again tries once more; Cancel removes it.'**
+  /// **'The network found no way to their address: their node may be off or gone, or their address old. Send again tries once more, as a new message; Cancel removes it.'**
   String get sentNoWayHelp;
 
   /// Cancel is the button under the text; Debug is the screen of the app's log.
@@ -1438,28 +1438,28 @@ abstract class AppLocalizations {
   /// **'a character too long to send'**
   String get sendCharTooLong;
 
-  /// What became of a fetch of the mail whose search for the home node found no way.
+  /// A notice: the network found no way to a contact's address for a text, which waits in its thread for Send again or Cancel.
   ///
   /// In en, this message translates to:
-  /// **'Your home could not be reached: found no way there'**
-  String get sendFetchNoWay;
+  /// **'Your text to {name} found no way there.'**
+  String sendTextNoWay(String name);
 
-  /// No description provided for @sendReactionNoWay.
+  /// A notice: the network found no way to a contact's address for the person's reaction; it is not sent again by itself.
   ///
   /// In en, this message translates to:
-  /// **'Your reaction {emoji} did not reach {name}: found no way there.'**
+  /// **'Your reaction {emoji} found no way to {name}.'**
   String sendReactionNoWay(String emoji, String name);
 
-  /// No description provided for @sendCardNoWay.
+  /// A notice: the network found no way to a contact's address for the person's card; it is not sent again by itself.
   ///
   /// In en, this message translates to:
-  /// **'Your card did not reach {name}: found no way there.'**
+  /// **'Your card found no way to {name}.'**
   String sendCardNoWay(String name);
 
-  /// No description provided for @sendHomeNoWay.
+  /// A notice: the network found no way to a contact's address for the home the person gave them; it is not sent again by itself.
   ///
   /// In en, this message translates to:
-  /// **'The home you gave {name} did not reach them: found no way there.'**
+  /// **'The home you gave {name} found no way to them.'**
   String sendHomeNoWay(String name);
 
   /// No description provided for @sessionBadValue.
@@ -3926,6 +3926,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{node} did not answer. Nothing changed.'**
   String homeNoAnswer(String node);
+
+  /// The network found no way to the home the person named with homeUseExisting.
+  ///
+  /// In en, this message translates to:
+  /// **'No way found to {node}. Nothing changed.'**
+  String homeNoWay(String node);
+
+  /// What became of a fetch of the mail whose search for the home node found no way.
+  ///
+  /// In en, this message translates to:
+  /// **'No way found to your home'**
+  String get mailboxFetchNoWay;
 
   /// While the home named with homeUseExisting has not answered.
   ///

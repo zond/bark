@@ -212,7 +212,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get sentNoNeighbour =>
-      'din nod hör ingen annan nod, skickas när den gör det';
+      'noden hör ingen annan, skickar när den gör det';
 
   @override
   String get sentNoWay => 'hittade ingen väg dit';
@@ -236,22 +236,22 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get sentTakenHelp =>
-      'Noden har det och skickar det vidare. Nätet säger inget mer, inte heller när det kommer fram.';
+      'Noden har det och skickar det vidare. Nätet säger inte när det kommer fram; det ger tillbaka det om det inte hittar någon väg dit.';
 
   @override
   String get sentBusy => 'Nätet är upptaget';
 
   @override
   String get sentBusyHelp =>
-      'Nätet gav tillbaka det tills vidare. Appen skickar det igen av sig själv när väntan är över; inget får det att gå fortare.';
+      'Nätet gav tillbaka det tills vidare. Appen skickar det igen av sig själv när väntan är över.';
 
   @override
   String get sentNoNeighbourHelp =>
-      'Din nod hör ingen annan nod just nu. Appen skickar det igen av sig själv när den gör det; inget får det att gå fortare.';
+      'Noden hör ingen annan nod just nu. Appen skickar det igen av sig själv när den gör det.';
 
   @override
   String get sentNoWayHelp =>
-      'Nätet letade efter en väg till deras adress och hittade ingen: de kan vara utom räckhåll, eller adressen gammal. Skicka igen försöker en gång till; Avbryt tar bort det.';
+      'Nätet hittade ingen väg till deras adress: deras nod kan vara av eller borta, eller adressen gammal. Skicka igen försöker en gång till, som ett nytt meddelande; Avbryt tar bort det.';
 
   @override
   String get sentRefusedHelp =>
@@ -897,22 +897,23 @@ class AppLocalizationsSv extends AppLocalizations {
   String get sendCharTooLong => 'ett tecken är för långt för att skickas';
 
   @override
-  String get sendFetchNoWay =>
-      'Ditt hem gick inte att nå: hittade ingen väg dit';
+  String sendTextNoWay(String name) {
+    return 'Ditt meddelande till $name hittade ingen väg dit.';
+  }
 
   @override
   String sendReactionNoWay(String emoji, String name) {
-    return 'Din reaktion $emoji nådde inte $name: hittade ingen väg dit.';
+    return 'Din reaktion $emoji hittade ingen väg till $name.';
   }
 
   @override
   String sendCardNoWay(String name) {
-    return 'Ditt kort nådde inte $name: hittade ingen väg dit.';
+    return 'Ditt kort hittade ingen väg till $name.';
   }
 
   @override
   String sendHomeNoWay(String name) {
-    return 'Hemmet du gav $name nådde inte fram: hittade ingen väg dit.';
+    return 'Hemmet du gav $name hittade ingen väg fram.';
   }
 
   @override
@@ -2415,6 +2416,14 @@ class AppLocalizationsSv extends AppLocalizations {
   String homeNoAnswer(String node) {
     return '$node svarade inte. Inget ändrades.';
   }
+
+  @override
+  String homeNoWay(String node) {
+    return 'Ingen väg hittades till $node. Inget ändrades.';
+  }
+
+  @override
+  String get mailboxFetchNoWay => 'Ingen väg hittades till ditt hem';
 
   @override
   String homeAsking(String node) {

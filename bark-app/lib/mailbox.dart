@@ -228,14 +228,15 @@ class Mailbox extends ChangeNotifier {
   }
 
   /// The home the person named last ([tryHome]) while it has not
-  /// answered, and whether its wait is over: it did not answer.
-  ({Address home, bool over})? get tried {
+  /// answered, whether its wait is over: it did not answer, and whether
+  /// that is for the network finding no way there.
+  ({Address home, bool over, bool noWay})? get tried {
     if (me.home != null) return null;
     final o = session.outbox.where((o) => o.kind == OutKind.fetch).lastOrNull;
     final l = me.leaving?.home;
     if (o == null || o.answered || o.command != null) return null;
     if (l != null && hex(l.id) == hex(o.dst.id)) return null;
-    return (home: o.dst, over: session.fetchWaiting != o);
+    return (home: o.dst, over: session.fetchWaiting != o, noWay: o.noWay);
   }
 
   /// A summary of the fetch of `round` came: from the home being left, of

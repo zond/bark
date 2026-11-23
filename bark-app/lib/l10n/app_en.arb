@@ -107,7 +107,7 @@
     "placeholders": {"wait": {"type": "String", "example": "0:42"}}
   },
   "sentRefused": "refused by the node",
-  "sentNoNeighbour": "your node hears no other node, sending when it does",
+  "sentNoNeighbour": "the node hears no other, sending when it does",
   "sentNoWay": "found no way there",
   "sentPartsSent": "{taken} of {total} sent",
   "@sentPartsSent": {
@@ -121,11 +121,11 @@
   },
   "sentQueuedHelp": "On this phone, until a node is linked and ready for it.",
   "sentWritingHelp": "The phone is giving it to the node.",
-  "sentTakenHelp": "The node has it and passes it on. The network gives no further news: it does not say when it arrives.",
+  "sentTakenHelp": "The node has it and passes it on. The network does not say when it arrives; it gives it back if it finds no way there.",
   "sentBusy": "The network is busy",
-  "sentBusyHelp": "The network gave it back for now. The app sends it again by itself once the wait is over; nothing makes that sooner.",
-  "sentNoNeighbourHelp": "Your node hears no other node now. The app sends it again by itself once it does; nothing makes that sooner.",
-  "sentNoWayHelp": "The network looked for a way to their address and found none: they may be out of reach, or their address old. Send again tries once more; Cancel removes it.",
+  "sentBusyHelp": "The network gave it back for now. The app sends it again by itself once the wait is over.",
+  "sentNoNeighbourHelp": "The node hears no other node now. The app sends it again by itself once it does.",
+  "sentNoWayHelp": "The network found no way to their address: their node may be off or gone, or their address old. Send again tries once more, as a new message; Cancel removes it.",
   "@sentNoWayHelp": {
     "description": "Send again and Cancel are the buttons under the text."
   },
@@ -581,24 +581,28 @@
     "placeholders": {"count": {"type": "int"}, "max": {"type": "int"}}
   },
   "sendCharTooLong": "a character too long to send",
-  "sendFetchNoWay": "Your home could not be reached: found no way there",
-  "@sendFetchNoWay": {
-    "description": "What became of a fetch of the mail whose search for the home node found no way."
-  },
-  "sendReactionNoWay": "Your reaction {emoji} did not reach {name}: found no way there.",
-  "@sendReactionNoWay": {
-    "placeholders": {"emoji": {"type": "String"}, "name": {"type": "String"}}
-  },
-  "sendCardNoWay": "Your card did not reach {name}: found no way there.",
-  "@sendCardNoWay": {
-    "placeholders": {"name": {"type": "String"}}
-  },
-  "sendHomeNoWay": "The home you gave {name} did not reach them: found no way there.",
-  "@sendHomeNoWay": {
-    "placeholders": {"name": {"type": "String"}}
-  },
   "@sendCharTooLong": {
     "description": "Why a text cannot be sent, under the field and after threadNotSent's words; lower case."
+  },
+  "sendTextNoWay": "Your text to {name} found no way there.",
+  "@sendTextNoWay": {
+    "description": "A notice: the network found no way to a contact's address for a text, which waits in its thread for Send again or Cancel.",
+    "placeholders": {"name": {"type": "String", "example": "Olena", "description": "A contact's name, any gender."}}
+  },
+  "sendReactionNoWay": "Your reaction {emoji} found no way to {name}.",
+  "@sendReactionNoWay": {
+    "description": "A notice: the network found no way to a contact's address for the person's reaction; it is not sent again by itself.",
+    "placeholders": {"emoji": {"type": "String", "example": "👍"}, "name": {"type": "String", "example": "Olena", "description": "A contact's name, any gender."}}
+  },
+  "sendCardNoWay": "Your card found no way to {name}.",
+  "@sendCardNoWay": {
+    "description": "A notice: the network found no way to a contact's address for the person's card; it is not sent again by itself.",
+    "placeholders": {"name": {"type": "String", "example": "Olena", "description": "A contact's name, any gender."}}
+  },
+  "sendHomeNoWay": "The home you gave {name} found no way to them.",
+  "@sendHomeNoWay": {
+    "description": "A notice: the network found no way to a contact's address for the home the person gave them; it is not sent again by itself.",
+    "placeholders": {"name": {"type": "String", "example": "Olena", "description": "A contact's name, any gender."}}
   },
 
   "sessionBadValue": "The node sent a value this app cannot read: {error}",
@@ -1974,6 +1978,15 @@
   "@homeNoAnswer": {
     "description": "The home the person named with homeUseExisting did not answer.",
     "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "homeNoWay": "No way found to {node}. Nothing changed.",
+  "@homeNoWay": {
+    "description": "The network found no way to the home the person named with homeUseExisting.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "mailboxFetchNoWay": "No way found to your home",
+  "@mailboxFetchNoWay": {
+    "description": "What became of a fetch of the mail whose search for the home node found no way."
   },
   "homeAsking": "Asking {node} for your mail…",
   "@homeAsking": {
