@@ -1928,11 +1928,9 @@ one's as the node does, and tells the person why:
 - no way: it offers it again only on the person's word, and as a message
   with another ID: the relays that searched the first keep their records
   of it ([message records](#message-records)) and would take it for one
-  they have had. A text keeps its `sent` where its bytes differ anyway,
-  going to another address or from another node, and its receiver drops
-  it if the first did arrive ([the payload](#the-payload)); otherwise it
-  goes as a new text with a new `sent`, which a receiver that had the
-  first shows twice (roadmap D126, D244).
+  they have had. A text goes again whole, as a new text with a new `sent`
+  ([the payload](#the-payload)); a receiver that did get the first shows
+  both (roadmap D126, D244).
 
 The person may give up a message given back for any reason.
 
