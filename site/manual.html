@@ -111,9 +111,20 @@ addresses are places. It finds out from its GPS, which needs a view of
 the sky and may take some minutes the first time. Indoors, or to be
 exact, set the place from the app instead: <strong>Settings</strong>, <strong>This node</strong>,
 <strong>Place</strong>.</p>
-<p><strong>Give it power.</strong> On a charger the node is a relay and helps everyone
-around it. On battery it relays while it stands still, until the
-battery is low, and turns sleepy when carried.</p>
+<p><strong>Give it power.</strong> The node chooses what it is by its power and
+by whether it moves:</p>
+<ul>
+<li><strong>On a charger</strong> it is a relay, and helps everyone around it.</li>
+<li><strong>On battery, standing still,</strong> it goes on relaying until the
+battery is low, then turns sleepy.</li>
+<li><strong>On battery, carried,</strong> it is sleepy.</li>
+</ul>
+<p>A sleepy node passes on nobody else's messages. The one exception is
+when it hears no relay at all: then sleepy nodes pass messages among
+themselves, slowly, until a relay turns up.</p>
+<p>To choose yourself, hold the lower button for 3 seconds: it switches
+the node between relay and sleepy
+(<a href="#the-nodes-screen-and-buttons">the screen and buttons</a>).</p>
 <figure class="anim">
 <canvas id="a-sleepy" role="img" aria-label="Two relays and a sleepy node. A message waits at the sleepy node's relay until the sleepy node wakes."></canvas>
 <figcaption>Relays announce themselves often and pass messages on at once. A sleepy node wakes now and then; the relay it talks through keeps its messages until it does.</figcaption>
