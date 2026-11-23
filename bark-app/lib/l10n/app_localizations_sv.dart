@@ -38,7 +38,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get conversationsBackupWhy =>
-      'Tappar du telefonen är de enda vägen tillbaka till dina kontakter.';
+      'Om du tappar bort telefonen är de enda sättet att få tillbaka dina kontakter.';
 
   @override
   String get conversationsNone =>
@@ -87,13 +87,13 @@ class AppLocalizationsSv extends AppLocalizations {
   String get startNode => 'En nod';
 
   @override
-  String get startNodeHow => 'Hittas av sig själv när en är nära.';
+  String get startNodeHow => 'Appen hittar en själv när den är i närheten.';
 
   @override
   String get startContact => 'Din första kontakt';
 
   @override
-  String get startContactHow => 'Skanna deras kort, eller visa dem ditt.';
+  String get startContactHow => 'Skanna personens kort, eller visa ditt.';
 
   @override
   String barHearsNoOne(String node) {
@@ -102,11 +102,11 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get barHearsNoOneWhy =>
-      'Den nya programvaran kan ha förstört radion. Tryck för vägen tillbaka.';
+      'Den nya programvaran kan ha slagit ut radion. Tryck för att gå tillbaka.';
 
   @override
   String barAppOut(int version) {
-    return 'Appversion $version är ute';
+    return 'Appversion $version finns nu';
   }
 
   @override
@@ -129,7 +129,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String barFirmwareOut(int version) {
-    return 'Nodprogramvara $version är ute';
+    return 'Nodprogramvara $version finns nu';
   }
 
   @override
@@ -194,7 +194,7 @@ class AppLocalizationsSv extends AppLocalizations {
   String get sentQueued => 'väntar på en nod';
 
   @override
-  String get sentWriting => 'lämnas till noden';
+  String get sentWriting => 'lämnas över till noden';
 
   @override
   String get sentTaken => 'skickat ut i nätet';
@@ -229,53 +229,54 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get sentQueuedHelp =>
-      'På telefonen, tills en nod är ansluten och redo för det.';
+      'Väntar i telefonen tills en nod är ansluten och kan ta emot det.';
 
   @override
-  String get sentWritingHelp => 'Telefonen lämnar det till noden.';
+  String get sentWritingHelp => 'Telefonen lämnar över det till noden.';
 
   @override
   String get sentTakenHelp =>
-      'Noden har det och skickar det vidare. Nätet säger inte när det kommer fram; det ger tillbaka det om det inte hittar någon väg dit.';
+      'Noden har det och skickar det vidare. Nätet säger inte när det kommer fram; det lämnar tillbaka det om det inte hittar någon väg dit.';
 
   @override
   String get sentBusy => 'Nätet är upptaget';
 
   @override
   String get sentBusyHelp =>
-      'Nätet gav tillbaka det tills vidare. Appen skickar det igen av sig själv när väntan är över.';
+      'Nätet lämnade tillbaka det för stunden. Appen skickar det igen av sig själv när väntetiden är slut.';
 
   @override
   String get sentNoNeighbourHelp =>
-      'Noden hör ingen annan nod just nu. Appen skickar det igen av sig själv när den gör det.';
+      'Noden hör ingen annan nod just nu. Appen skickar det igen av sig själv så fort noden hör en.';
 
   @override
   String get sentNoWayHelp =>
-      'Nätet hittade ingen väg till deras adress: deras nod kan vara av eller borta, eller adressen gammal. Skicka igen försöker en gång till, som ett nytt meddelande; Avbryt tar bort det.';
+      'Nätet hittade ingen väg till adressen: noden kan vara avstängd eller borta, eller adressen inaktuell. Skicka igen försöker en gång till, som ett nytt meddelande; Avbryt tar bort det.';
 
   @override
   String get sentRefusedHelp =>
-      'Noden tar inte emot det som det är, ett fel i appen eller noden. Avbryt tar bort det; Felsökning visar orsaken.';
+      'Noden tar inte emot meddelandet som det är. Det beror på ett fel i appen eller noden. Avbryt tar bort det; Felsökning visar orsaken.';
 
   @override
-  String get sentReaction => 'Deras reaktion';
+  String get sentReaction => 'Mottagarens reaktion';
 
   @override
-  String get sentReactionHelp => 'Emojin i meddelandets hörn, om de valde en.';
+  String get sentReactionHelp =>
+      'Emojin i meddelandets hörn, om mottagaren valde en.';
 
   @override
   String get receivedYourReaction => 'Din reaktion';
 
   @override
   String get receivedYourReactionHelp =>
-      'Håll in ett meddelande för att reagera med en emoji eller kopiera det. De ser den när den kommer fram. Välj en annan för att byta.';
+      'Håll in ett meddelande för att reagera med en emoji eller kopiera det. Avsändaren ser reaktionen när den kommer fram. Välj en annan för att byta.';
 
   @override
   String get receivedFirst => 'Första meddelandet';
 
   @override
   String get receivedFirstHelp =>
-      'Vem som helst med ditt kort kan ha skickat ett första meddelande, så det är inte bevisat att det här kommer från dem.';
+      'Vem som helst med ditt kort kan ha skickat ett första meddelande, så det är inte säkert vem det här kommer från.';
 
   @override
   String get receivedMailbox => 'Från din brevlåda';
@@ -303,12 +304,12 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String commonNotPaired(String reason) {
-    return '$reason. Fortfarande gäst här.';
+    return '$reason. Du är fortfarande gäst här.';
   }
 
   @override
   String commonPairingFailed(String error) {
-    return 'Parkopplingen misslyckades: $error. Fortfarande gäst här.';
+    return 'Parkopplingen misslyckades: $error. Du är fortfarande gäst här.';
   }
 
   @override
@@ -321,7 +322,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get commonGiftHelp =>
-      'Ägaren till en hemnod har lagt till dig där. Använder du det blir det ditt hem: det sparar meddelanden till dig medan du är borta, och ditt kort får dess adress, så dina kontakter får ditt nya kort.\n\nEtt hem du hade förut skickar dig din post och glömmer sedan bort dig.';
+      'Ägaren till en hemnod har lagt till dig där. Om du använder det blir det ditt hem: det sparar meddelanden till dig medan du är borta, och ditt kort får hemmets adress, så dina kontakter får ditt nya kort.\n\nEtt hem du hade förut skickar dig din post och glömmer sedan bort dig.';
 
   @override
   String get commonUseGift => 'Använd det';
@@ -333,7 +334,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get commonHomeOffer =>
-      'Ingen hemnod än. Göra den här till ditt hem? Den sparar meddelanden till dig medan du är borta. Först parkopplar du med koden på dess skärm.';
+      'Du har ingen hemnod än. Vill du göra den här till ditt hem? Den sparar meddelanden till dig medan du är borta. Först parkopplar du med koden på nodens skärm.';
 
   @override
   String get setHome => 'Gör till hem';
@@ -380,7 +381,7 @@ class AppLocalizationsSv extends AppLocalizations {
   }
 
   @override
-  String get commonCardQueued => 'Ditt kort står i kö';
+  String get commonCardQueued => 'Ditt kort väntar på att skickas';
 
   @override
   String commonCardFailed(String error) {
@@ -403,7 +404,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get commonWhyBluetooth =>
-      'bark skickar meddelanden via en nod nära dig, över Bluetooth. Android frågar härnäst.';
+      'bark skickar meddelanden via en nod i närheten, med Bluetooth. Android frågar strax om lov.';
 
   @override
   String get commonContinue => 'Fortsätt';
@@ -487,7 +488,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String statusHomeAt(String node) {
-    return 'Hem på $node';
+    return 'Hem: $node';
   }
 
   @override
@@ -544,15 +545,15 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get connectionAtHome =>
-      'Ditt hem. Telefonen förblir ansluten medan den är inom räckhåll, så meddelanden kommer direkt, även med skärmen av. Den går alltid till ditt hem först.';
+      'Ditt hem. Telefonen är ansluten så länge hemmet är inom räckhåll, så meddelanden kommer direkt, även när skärmen är släckt. Telefonen väljer alltid ditt hem i första hand.';
 
   @override
   String get connectionPaired =>
-      'En nod du är parkopplad med. Telefonen förblir ansluten medan den är inom räckhåll.';
+      'En nod du är parkopplad med. Telefonen är ansluten så länge noden är inom räckhåll.';
 
   @override
   String get connectionPairedNoHome =>
-      'Utan hem anger ditt kort den här noden medan du använder den.';
+      'Eftersom du inte har något hem pekar ditt kort på den här noden så länge du använder den.';
 
   @override
   String get connectionPairedHome =>
@@ -580,7 +581,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get connectionGuestVisits =>
-      'Som gäst ansluter den ungefär en gång i minuten, och direkt när du skickar. Svar på meddelanden som skickats härifrån kommer hit.';
+      'Som gäst ansluter telefonen ungefär en gång i minuten, och direkt när du skickar. Svar på meddelanden som skickats härifrån kommer hit.';
 
   @override
   String get connectionBluetoothOff =>
@@ -592,7 +593,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get connectionLookPaired =>
-      'Telefonen letar var 15:e sekund efter dina parkopplade noder, ditt hem först. Efter 30 sekunder utan någon använder den en publik nod som gäst så länge.';
+      'Telefonen letar var 15:e sekund efter dina parkopplade noder, ditt hem först. Hittar den ingen på 30 sekunder använder den så länge en publik nod som gäst.';
 
   @override
   String get connectionNotLooking =>
@@ -607,11 +608,11 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get notifyOutInReach =>
-      'Väntande meddelanden går iväg när den är inom räckhåll';
+      'Väntande meddelanden skickas när noden är inom räckhåll';
 
   @override
   String get notifyOutBluetooth =>
-      'Väntande meddelanden går iväg när Bluetooth är på';
+      'Väntande meddelanden skickas när Bluetooth är på';
 
   @override
   String get notifyUnnamed => 'Namnlös';
@@ -654,13 +655,13 @@ class AppLocalizationsSv extends AppLocalizations {
   String get threadSealed => 'Krypterat';
 
   @override
-  String get threadSealedForThem => 'bara för dem';
+  String get threadSealedForThem => 'bara för mottagaren';
 
   @override
   String get threadSealedIntroOut => 'som ett första meddelande, med ditt kort';
 
   @override
-  String get threadSealedForYou => 'av dem, bara för dig';
+  String get threadSealedForYou => 'av avsändaren, bara för dig';
 
   @override
   String get threadSealedIntroIn => 'för dig, som ett första meddelande';
@@ -701,13 +702,13 @@ class AppLocalizationsSv extends AppLocalizations {
   }
 
   @override
-  String get threadThereHow => 'Snabbt om de är kvar där';
+  String get threadThereHow => 'Snabbt om personen är kvar där';
 
   @override
-  String get threadTheirHome => 'Deras hemnod';
+  String get threadTheirHome => 'Personens hemnod';
 
   @override
-  String get threadHomeHow => 'Väntar i deras hem tills de hämtar det';
+  String get threadHomeHow => 'Väntar i hemmet tills personen hämtar det';
 
   @override
   String threadNotSent(String error) {
@@ -756,7 +757,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get threadRemoveHow =>
-      'Meddelandena blir kvar. Lägg till deras kort för att skriva igen.';
+      'Meddelandena blir kvar. Lägg till kortet igen om du vill skriva.';
 
   @override
   String get remove => 'Ta bort';
@@ -766,7 +767,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get threadNotVerified =>
-      'Inte verifierad än: deras första svar visar att det är de.';
+      'Inte verifierad än: det första svaret visar att det är rätt person.';
 
   @override
   String get threadIsArchived => 'Samtalet är arkiverat.';
@@ -812,7 +813,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String threadTheyReacted(String emoji) {
-    return 'Deras reaktion: $emoji';
+    return 'Mottagarens reaktion: $emoji';
   }
 
   @override
@@ -824,10 +825,10 @@ class AppLocalizationsSv extends AppLocalizations {
   String get threadCopy => 'Kopiera text';
 
   @override
-  String get threadToWhere => 'Dit de var';
+  String get threadToWhere => 'Dit personen var';
 
   @override
-  String get threadToHome => 'Till deras hem';
+  String get threadToHome => 'Till personens hem';
 
   @override
   String get threadSendAgain => 'Skicka igen';
@@ -923,7 +924,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String sessionReadFailed(String error) {
-    return 'Det gick inte att läsa noden: $error';
+    return 'Det gick inte att läsa från noden: $error';
   }
 
   @override
@@ -996,11 +997,11 @@ class AppLocalizationsSv extends AppLocalizations {
   String get card => 'Kort';
 
   @override
-  String get scanTheirCard => 'Skanna deras kort';
+  String get scanTheirCard => 'Skanna personens kort';
 
   @override
   String get contactsNone =>
-      'Inga kontakter än. Tryck på Lägg till kontakt och skanna deras kort.';
+      'Inga kontakter än. Tryck på Lägg till kontakt och skanna personens kort.';
 
   @override
   String contactsArchived(int count) {
@@ -1027,11 +1028,11 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String contactsTemporaryAt(String ago) {
-    return 'tillfälligt: på noden de använde $ago';
+    return 'tillfälligt: på noden som användes $ago';
   }
 
   @override
-  String get contactsPasteHelp => 'Eller klistra in kortet de skickade dig';
+  String get contactsPasteHelp => 'Eller klistra in ett kort du har fått';
 
   @override
   String get homeNode => 'Hemnod';
@@ -1112,10 +1113,10 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get cardTemporaryHow =>
-      'Tillfälligt kort: utan hemnod anger det noden du använder nu. Välj ett hem i Inställningar.';
+      'Tillfälligt kort: utan hemnod pekar det på noden du använder nu. Välj ett hem i Inställningar.';
 
   @override
-  String get cardHomeHow => 'Det anger adressen till din hemnod.';
+  String get cardHomeHow => 'Det innehåller adressen till din hemnod.';
 
   @override
   String get cardTemporary => 'Tillfälligt kort';
@@ -1154,27 +1155,27 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get factRole =>
-      'Ett relä har extern ström, till exempel USB, och lyssnar hela tiden och skickar vidare meddelanden åt noderna runt omkring: ju fler reläer, desto längre når meddelandena. En sömnig nod går på batteri: för att räcka sover den och vaknar bara i korta fönster, och den skickar och tar emot genom ett relä nära sig, sitt ankare. Ett stillastående relä som förlorar strömmen fortsätter som relä på batteri tills batteriet börjar ta slut, och blir då sömnigt. Håller du in nodens knapp byter den roll tills dess ström ändras nästa gång.';
+      'Ett relä har extern ström, till exempel USB, och lyssnar hela tiden och skickar vidare meddelanden åt noderna runt omkring: ju fler reläer, desto längre når meddelandena. En sömnig nod går på batteri: för att batteriet ska räcka sover den och vaknar bara korta stunder, och den skickar och tar emot via ett relä i närheten, sitt ankare. Ett relä som står still och förlorar strömmen fortsätter som relä på batteri tills batteriet börjar ta slut, och blir då sömnigt. Om du håller in nodens knapp byter den roll tills strömförsörjningen ändras nästa gång.';
 
   @override
   String get factMoving =>
-      'Noden avgör det själv utifrån sin GPS: efter drygt en minut på andra positioner än där den stod räknas den som buren, och efter fyra timmar på ett ställe är den stillastående igen. En buren nods plats följer dess GPS, och den tar inte emot ny post åt andra, eftersom den snart kan vara borta. Anger du dess plats i appens Inställningar blir den stillastående direkt.';
+      'Noden avgör det själv med sin GPS: efter drygt en minut på andra positioner än där den stod räknas den som en nod som bärs omkring, och efter fyra timmar på samma ställe räknas den som stillastående igen. Platsen för en nod som bärs omkring tas från dess GPS, och den tar inte emot ny post åt andra, eftersom den snart kan vara borta. Om du anger platsen i appens Inställningar räknas noden som stillastående direkt.';
 
   @override
   String get factAnchor =>
-      'En sömnig nod skickar och tar emot genom ett relä nära sig, sitt ankare. Ankaret sparar den sömniga nodens post och lämnar över den i det korta fönstret efter varje gång den vaknar, och den sömniga nodens adress är ankarets plats. En sömnig nod tar det första relä den hör som sitt ankare; utan något än sparar den och skickar vidare meddelanden själv, vilket belastar kanalen mer.';
+      'En sömnig nod skickar och tar emot via ett relä i närheten, sitt ankare. Ankaret sparar den sömniga nodens post och lämnar över den under den korta stund efter att noden har vaknat, och den sömniga nodens adress är ankarets plats. En sömnig nod tar det första relä den hör som sitt ankare; innan den har något sparar den och skickar vidare meddelanden själv, vilket belastar kanalen mer.';
 
   @override
   String get factPlace =>
-      'Meddelanden hittar en nod genom dess plats: en adress är en position och nodens ID, och varje relä skickar ett meddelande vidare mot den positionen. Platsen kommer från nodens GPS, om inte någon har angett den i appens Inställningar, vilket går före, som för ett relä inomhus utan fri sikt mot himlen. En nod utan plats skickar inga hjärtslag, så inget meddelande kan hitta den förrän den har en.';
+      'Meddelanden hittar en nod via dess plats: en adress är en position och nodens ID, och varje relä skickar ett meddelande vidare mot den positionen. Platsen kommer från nodens GPS, om ingen har angett den i appens Inställningar. En angiven plats gäller i stället för GPS, till exempel för ett relä inomhus utan fri sikt mot himlen. En nod utan plats skickar inga hjärtslag, så inget meddelande kan hitta den förrän den har en.';
 
   @override
   String get factPower =>
-      'USB betyder extern ström, och med den kan en nod vara relä hela tiden. På batteri räknas värdet ut från cellens spänning, så det är ungefärligt; i den här nodens egen vy är det den råa avläsningen i millivolt. Vid ungefär en femtedel kvar räknas batteriet som lågt, och ett relä på det blir sömnigt för att spara resten.';
+      'USB betyder extern ström, och med den kan en nod vara relä hela tiden. På batteri räknas värdet ut från cellens spänning, så det är ungefärligt; i den här nodens egen vy visas den råa avläsningen i millivolt. När ungefär en femtedel är kvar räknas batteriet som lågt, och ett relä på batteri blir då sömnigt för att spara resten.';
 
   @override
   String get factLink =>
-      'Hur väl den här noden hör den andra: hur högt dess signal ligger över radiobruset här. Under ungefär 4 dB går ett helt meddelande ofta förlorat när signalen sviktar, så länken är skör och används bara när ingen annan finns kvar; från ungefär 7 dB är den bra; däremellan medelgod. Den mäts åt ett håll: den andra noden kan höra den här bättre eller sämre.';
+      'Hur bra den här noden hör den andra: hur högt dess signal ligger över radiobruset här. Under ungefär 4 dB går ett helt meddelande ofta förlorat när signalen sviktar, så länken är skör och används bara när ingen annan finns kvar; från ungefär 7 dB är den bra; däremellan medelgod. Den mäts åt ett håll: den andra noden kan höra den här bättre eller sämre.';
 
   @override
   String get factLastHeard =>
@@ -1190,12 +1191,12 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String factGpsSignal(int floor) {
-    return 'Hur starkt nodens GPS hör satelliterna, i dB-Hz, enligt dess senaste avläsning. Under $floor tar noden ingen position från den; fri himmel ger ungefär 40. Flytta noden dit den visar mer, eller ange dess plats för hand.';
+    return 'Hur starkt nodens GPS hör satelliterna, i dB-Hz, enligt den senaste avläsningen. Under $floor tar noden ingen position från den; fri himmel ger ungefär 40. Flytta noden till en plats där värdet är högre, eller ange platsen för hand.';
   }
 
   @override
   String get factVersion =>
-      'Versionen av programvaran som noden kör. En ny version sprids av sig själv: en nod som får den, från en telefon eller via USB, skickar den till reläerna runt sig en bit i taget och lämnar kanalerna åt meddelandena. En nod tar bara emot en nyare version som projektet har signerat, och medan den samlar in en visar den här raden vilken och hur många av dess block den har.';
+      'Versionen av programvaran som noden kör. En ny version sprids av sig själv: en nod som får den, från en telefon eller via USB, skickar den till reläerna runt omkring en bit i taget och lämnar kanalerna åt meddelandena. En nod tar bara emot en nyare version som projektet har signerat, och medan den hämtar en visar den här raden vilken version och hur många block den har fått.';
 
   @override
   String get factExchanged =>
@@ -1207,7 +1208,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get factAvoided =>
-      'Den avböjde ett meddelande och bad om väntan, eller svarade inte på ett. Inget skickas till den på ett tag; meddelanden går runt den så länge och väntar på den bara där det inte finns någon annan väg.';
+      'Den tackade nej till ett meddelande och bad avsändaren vänta, eller svarade inte på ett. Inget skickas till den på ett tag; meddelanden går runt den så länge och väntar på den bara där det inte finns någon annan väg.';
 
   @override
   String get factPaired =>
@@ -1217,7 +1218,7 @@ class AppLocalizationsSv extends AppLocalizations {
   String get factRoleLabel => 'Roll';
 
   @override
-  String get factMovingLabel => 'Rörlighet';
+  String get factMovingLabel => 'Rörelse';
 
   @override
   String get factAnchorLabel => 'Ankare';
@@ -1265,7 +1266,7 @@ class AppLocalizationsSv extends AppLocalizations {
   String get factRoleRelayName => 'roll, relä';
 
   @override
-  String get factMovingName => 'rörlighet';
+  String get factMovingName => 'rörelse';
 
   @override
   String get factAnchorName => 'ankare';
@@ -1323,16 +1324,16 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get factRoleSleepy =>
-      'sömnig: vaknar i korta fönster, går genom sitt ankare';
+      'sömnig: vaknar korta stunder, kommunicerar via sitt ankare';
 
   @override
   String get factRoleRelay => 'relä: skickar vidare andras meddelanden';
 
   @override
-  String get factCarried => 'buren';
+  String get factCarried => 'bärs omkring';
 
   @override
-  String get factFixed => 'stillastående';
+  String get factFixed => 'står still';
 
   @override
   String get factAnchored => 'förankrad';
@@ -1510,7 +1511,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get mapNoAnswerSleepy =>
-      'Den svarade inte: den sover mellan sina fönster.';
+      'Den svarade inte: den sover mellan sina vakna stunder.';
 
   @override
   String get mapNoAnswer => 'Den svarade inte.';
@@ -1570,7 +1571,7 @@ class AppLocalizationsSv extends AppLocalizations {
   String get mapLegendSleepy => 'en sömnig nod';
 
   @override
-  String get mapLegendCarried => 'en buren nod';
+  String get mapLegendCarried => 'en nod som bärs omkring';
 
   @override
   String get mapLegendShared => 'noder på samma plats';
@@ -1747,7 +1748,7 @@ class AppLocalizationsSv extends AppLocalizations {
   String get debugSleepy => 'Sömnig';
 
   @override
-  String get debugCarried => 'Buren';
+  String get debugCarried => 'Bärs omkring';
 
   @override
   String get debugMapPoint => 'Position angiven för hand';
@@ -1800,7 +1801,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get forgetInBluetoothToo =>
-      'Glöm noden i Bluetooth-inställningarna också: telefonen behöll sin parkoppling.';
+      'Glöm noden i Bluetooth-inställningarna också: telefonen har kvar sin parkoppling.';
 
   @override
   String get settingsBackupAnnounce => 'Reservord: skriv ner dina 12 ord';
@@ -1850,7 +1851,8 @@ class AppLocalizationsSv extends AppLocalizations {
       'Noden och den här telefonen glömmer varandra; meddelanden och kontakter finns kvar.';
 
   @override
-  String get settingsUnpairLast => 'Utan någon telefon kvar blir den publik.';
+  String get settingsUnpairLast =>
+      'När ingen telefon är kvar blir noden publik.';
 
   @override
   String get settingsUnpairOthers =>
@@ -1873,7 +1875,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get settingsPhonesHelp =>
-      'En nod kan ha upp till åtta telefoner. Vem som helst vid den kan parkoppla med koden på dess skärm, och varje parkopplad telefon kan ändra dess inställningar, så ta bort en telefon du inte känner igen eller en som är borta. Att ta bort en kräver också koden på nodens skärm, för att visa att du är där.\n\nEn telefon med hem här får sin post sparad på den här noden.\n\nÄgaren, en av dem, väljer vem som har hem här, även på långt håll: ägaren kan ge en kontakt ett hem här, ta bort ett eller göra någon annan till ägare. Den som först gör noden till sitt hem blir dess ägare. Vid noden kan varje parkopplad telefon göra en annan till ägare med koden på skärmen.';
+      'En nod kan ha upp till åtta telefoner. Vem som helst som står vid noden kan parkoppla med koden på skärmen, och varje parkopplad telefon kan ändra nodens inställningar. Ta därför bort telefoner du inte känner igen eller som inte längre används. För att ta bort en telefon krävs också koden på nodens skärm, som visar att du är på plats.\n\nEn telefon med hem här får sin post sparad på den här noden.\n\nEn av dem är ägare och bestämmer vem som har hem här, även på avstånd: ägaren kan ge en kontakt ett hem här, ta bort ett hem eller göra någon annan till ägare. Den som först gör noden till sitt hem blir ägare. Vid noden kan varje parkopplad telefon göra en annan till ägare med koden på skärmen.';
 
   @override
   String get settingsPhonesFull =>
@@ -1929,7 +1931,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get settingsRestoreHow =>
-      'Telefonen tar över identiteten från orden. Kontakter når den först när de har dess kort.';
+      'Telefonen får den identitet som orden ger. Dina kontakter når dig först när de har fått det nya kortet.';
 
   @override
   String get restore => 'Återställ';
@@ -1961,7 +1963,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get settingsPlaceHow =>
-      'För en nod inomhus, utom räckhåll för GPS. Den går före GPS tills den rensas.';
+      'För en nod inomhus, utom räckhåll för GPS. Platsen gäller i stället för GPS tills du rensar den.';
 
   @override
   String get settingsLatitude => 'Latitud';
@@ -1980,7 +1982,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get settingsNotificationsWhy =>
-      'bark säger till när ett meddelande kommer. Android frågar härnäst.';
+      'bark säger till när ett meddelande kommer. Android frågar strax om lov.';
 
   @override
   String settingsPairingFailed(String error) {
@@ -2000,7 +2002,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String settingsNotOursHow(String node) {
-    return '$node känner inte längre igen den här telefonen. Parkoppla igen med koden på dess skärm.';
+    return '$node känner inte längre igen den här telefonen. Parkoppla igen med koden på nodens skärm.';
   }
 
   @override
@@ -2051,7 +2053,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get nodeLostHelp =>
-      'Någon som är parkopplad med den tog bort den här telefonen, noden förlorade sitt minne, eller så flyttade du hit från en annan telefon: en parkoppling finns bara på telefonen där den gjordes.\n\nParkoppla igen: parkoppla på nytt med koden på dess skärm. Visas medan noden är inom räckhåll.\n\nGlöm: sluta visa noden här.';
+      'Någon som är parkopplad med noden har tagit bort den här telefonen, noden har tappat sitt minne, eller så har du flyttat hit från en annan telefon: en parkoppling finns bara på den telefon där den gjordes.\n\nParkoppla igen: parkoppla på nytt med koden på nodens skärm. Visas när noden är inom räckhåll.\n\nGlöm: noden visas inte längre här.';
 
   @override
   String get nodeConnected => 'Ansluten';
@@ -2104,7 +2106,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get nodePairHow =>
-      'Sedan kan du ändra dess inställningar och uppdatera den. Skriv koden från dess skärm.';
+      'Sedan kan du ändra nodens inställningar och uppdatera den. Skriv koden från nodens skärm.';
 
   @override
   String nodeForgetTitle(String node) {
@@ -2149,11 +2151,11 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String peopleSeen(String when) {
-    return 'sedd $when';
+    return 'sågs $when';
   }
 
   @override
-  String get peopleNeverSeen => 'aldrig sedd';
+  String get peopleNeverSeen => 'har aldrig setts';
 
   @override
   String get peopleChoices => 'Alternativ';
@@ -2191,7 +2193,7 @@ class AppLocalizationsSv extends AppLocalizations {
       'Telefonen utan namn kan inte längre använda noden om den inte parkopplas igen.';
 
   @override
-  String get peopleNodeStopsMail => 'Noden slutar spara deras post.';
+  String get peopleNodeStopsMail => 'Noden slutar spara personens post.';
 
   @override
   String peopleRemoveHome(String name) {
@@ -2202,7 +2204,7 @@ class AppLocalizationsSv extends AppLocalizations {
   String get peopleRemoveTheirHome => 'Ta bort den här personens hem?';
 
   @override
-  String get peopleHomeStopsMail => 'Ditt hem slutar spara deras post.';
+  String get peopleHomeStopsMail => 'Ditt hem slutar spara personens post.';
 
   @override
   String peopleMakeOwnerTitle(String name) {
@@ -2342,7 +2344,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String linkNotPaired(String full) {
-    return 'Inte parkopplad: avbruten, fel kod eller så är noden full (dess skärm visar $full)';
+    return 'Inte parkopplad: avbruten, fel kod eller så är noden full (skärmen visar $full)';
   }
 
   @override
@@ -2472,7 +2474,7 @@ class AppLocalizationsSv extends AppLocalizations {
       'Ditt kort ändras inte, men den senaste ändringen väntar fortfarande på Skicka mitt kort.';
 
   @override
-  String get homeCardSame => 'Ditt kort förblir detsamma.';
+  String get homeCardSame => 'Ditt kort ändras inte.';
 
   @override
   String get homeCardChanges => 'Ditt kort ändras.';
@@ -2737,7 +2739,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String updateHearsNoOneWarning(int version, String file) {
-    return 'Sedan version $version hör noden ingen annan nod: den nya programvaran kan ha förstört radion. För att gå tillbaka, dubbeltryck på nodens återställningsknapp och kopiera $file från den utgåvan till noden via USB; telefonen kan inte skicka en äldre version.';
+    return 'Sedan version $version hör noden ingen annan nod: den nya programvaran kan ha slagit ut radion. För att gå tillbaka dubbeltrycker du på nodens återställningsknapp och kopierar $file från den utgåvan till noden via USB; telefonen kan inte skicka en äldre version.';
   }
 
   @override
@@ -2871,7 +2873,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String updatesAppOut(int version, int latest) {
-    return 'Version $version; $latest är ute. Tryck för att installera';
+    return 'Version $version; $latest finns nu. Tryck för att installera';
   }
 
   @override
@@ -2910,7 +2912,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String updatesFirmwareOut(int version, int latest) {
-    return 'Version $version; $latest är ute';
+    return 'Version $version; $latest finns nu';
   }
 
   @override
@@ -2923,12 +2925,12 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String releaseAppOut(int version) {
-    return 'Appversion $version är ute: tryck på App nedan';
+    return 'Appversion $version finns nu: tryck på App nedan';
   }
 
   @override
   String releaseAppUpToDate(int version) {
-    return 'Appen är aktuell ($version)';
+    return 'Appen är den senaste versionen ($version)';
   }
 
   @override
@@ -2947,12 +2949,12 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String releaseFirmwareOut(int version) {
-    return 'nodprogramvara $version är ute: skicka den nedan';
+    return 'nodprogramvara $version finns nu: skicka den nedan';
   }
 
   @override
   String releaseFirmwareUpToDate(int version) {
-    return 'nodens programvara $version är aktuell';
+    return 'nodens programvara $version är den senaste';
   }
 
   @override

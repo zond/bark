@@ -105,7 +105,7 @@ screen and in the manual (`site/sv/`, `site/uk/`):
 | Debug (the screen) | Felsökning | Налагодження |
 | connected | ansluten | підключено |
 | reaction | reaktion | реакція |
-| carried, fixed | buren, stillastående | його носять, нерухомий |
+| carried, fixed | bärs omkring, står still | його носять, стоїть на місці |
 
 Swedish says "du", Ukrainian "ви" in lower case. A translation says a
 thing as its language does, not word for word: no passive with the doer
