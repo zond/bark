@@ -1126,11 +1126,11 @@ abstract class AppLocalizations {
   /// **'Archive conversation'**
   String get threadArchiveConversation;
 
-  /// No description provided for @threadContactArchived.
+  /// No description provided for @contactArchived.
   ///
   /// In en, this message translates to:
   /// **'{name}: contact archived'**
-  String threadContactArchived(String name);
+  String contactArchived(String name);
 
   /// No description provided for @threadArchiveContact.
   ///
@@ -1186,11 +1186,11 @@ abstract class AppLocalizations {
   /// **'{name}\'s card names no node yet: ask them for a new one.'**
   String threadNoNode(String name);
 
-  /// The title of the field that renames a contact.
+  /// A contact's name: the title of the dialog that renames one, and the label of the field in Add contact.
   ///
   /// In en, this message translates to:
   /// **'Name'**
-  String get threadName;
+  String get name;
 
   /// Under the field being written: how many messages the text takes, two or more.
   ///
@@ -1437,6 +1437,276 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{time} from the phone, offset {offset}'**
   String sessionClockPhone(String time, String offset);
+
+  /// The label of a card as text: the one pasted when adding a contact, or the person's own in My card's details.
+  ///
+  /// In en, this message translates to:
+  /// **'Card'**
+  String get card;
+
+  /// The button that opens the camera to scan another person's card.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan their card'**
+  String get scanTheirCard;
+
+  /// Add contact is the button contactsAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'No contacts yet. Tap Add contact and scan their card.'**
+  String get contactsNone;
+
+  /// The line under the contacts that leads to the archived ones; count is how many contacts.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} archived'**
+  String contactsArchived(int count);
+
+  /// The button that adds a contact, and the title of the screen it opens.
+  ///
+  /// In en, this message translates to:
+  /// **'Add contact'**
+  String get contactsAdd;
+
+  /// Under a contact's name in the list: the contact came by a first message and has not yet replied sealed.
+  ///
+  /// In en, this message translates to:
+  /// **'Not verified yet'**
+  String get contactsNotVerified;
+
+  /// Under a contact's name in the list.
+  ///
+  /// In en, this message translates to:
+  /// **'Has a home node'**
+  String get contactsHasHome;
+
+  /// Under a contact's name: their card is temporary (it names no home). Lower case, after an hourglass icon.
+  ///
+  /// In en, this message translates to:
+  /// **'temporary: no node known yet'**
+  String get contactsTemporaryNoNode;
+
+  /// As contactsTemporaryNoNode, with how long ago they were last known at their node; {ago} is such as timeMinutesAgo or timeJustNow.
+  ///
+  /// In en, this message translates to:
+  /// **'temporary: at the node they used {ago}'**
+  String contactsTemporaryAt(String ago);
+
+  /// Under the field where a card's text is pasted, below the button scanTheirCard.
+  ///
+  /// In en, this message translates to:
+  /// **'Or paste the card they sent you'**
+  String get contactsPasteHelp;
+
+  /// A pasted card's home node, with its address under it.
+  ///
+  /// In en, this message translates to:
+  /// **'Home node'**
+  String get contactsHomeNode;
+
+  /// Under contactsHomeNode: the card names no home node and no node at all. Lower case, as it follows that title.
+  ///
+  /// In en, this message translates to:
+  /// **'none, and no node yet: ask them for a new card'**
+  String get contactsNoHomeNoNode;
+
+  /// Under contactsHomeNode: the card names no home node. Lower case, as it follows that title.
+  ///
+  /// In en, this message translates to:
+  /// **'none: a temporary card'**
+  String get contactsNoHomeTemporary;
+
+  /// Under the field, when the pasted text is not a card. {error} is why, a sentence without its full stop, such as cardNot; {prefix} is BARK:.
+  ///
+  /// In en, this message translates to:
+  /// **'{error}. Paste a card: it starts with {prefix}'**
+  String contactsBadPaste(String error, String prefix);
+
+  /// A contact whose card has no name and whom the person has not named. {start} is the first 8 hex digits of their identity.
+  ///
+  /// In en, this message translates to:
+  /// **'Unnamed ({start}…)'**
+  String contactsUnnamed(String start);
+
+  /// The button that sends the person's card through the phone's share sheet.
+  ///
+  /// In en, this message translates to:
+  /// **'Share'**
+  String get cardShare;
+
+  /// No description provided for @cardShareFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Sharing failed: {error}'**
+  String cardShareFailed(String error);
+
+  /// Under My name, when the person has no name yet.
+  ///
+  /// In en, this message translates to:
+  /// **'not set'**
+  String get cardNameNotSet;
+
+  /// The tooltip of the button that changes the person's name.
+  ///
+  /// In en, this message translates to:
+  /// **'Change'**
+  String get cardChangeName;
+
+  /// A section on My card that opens to the card's parts as text.
+  ///
+  /// In en, this message translates to:
+  /// **'Details'**
+  String get cardDetails;
+
+  /// The person's identity, the public key their texts are sealed to, shown in hex.
+  ///
+  /// In en, this message translates to:
+  /// **'My identity'**
+  String get cardMyIdentity;
+
+  /// A button's tooltip; cardIdentityCopied says it is done. The other cardCopy… and …Copied messages are the same for the other rows.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy the identity'**
+  String get cardCopyIdentity;
+
+  /// No description provided for @cardIdentityCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'The identity copied'**
+  String get cardIdentityCopied;
+
+  /// No description provided for @cardHomeAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Home address'**
+  String get cardHomeAddress;
+
+  /// No description provided for @cardCopyAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy the address'**
+  String get cardCopyAddress;
+
+  /// No description provided for @cardAddressCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'The address copied'**
+  String get cardAddressCopied;
+
+  /// The address of the node the person's phone uses now, which a temporary card names.
+  ///
+  /// In en, this message translates to:
+  /// **'The node I use now'**
+  String get cardNodeNow;
+
+  /// No description provided for @cardCopyNode.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy the node'**
+  String get cardCopyNode;
+
+  /// No description provided for @cardNodeCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'The node copied'**
+  String get cardNodeCopied;
+
+  /// No description provided for @cardCopyCard.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy the card'**
+  String get cardCopyCard;
+
+  /// No description provided for @cardCardCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'The card copied'**
+  String get cardCardCopied;
+
+  /// No description provided for @cardNameFirst.
+  ///
+  /// In en, this message translates to:
+  /// **'Set your name first: whoever scans your card needs to know it.'**
+  String get cardNameFirst;
+
+  /// No description provided for @cardSetName.
+  ///
+  /// In en, this message translates to:
+  /// **'Set my name'**
+  String get cardSetName;
+
+  /// No description provided for @cardTemporaryHow.
+  ///
+  /// In en, this message translates to:
+  /// **'Temporary card: with no home node, it names the node you use now. Set a home in Settings.'**
+  String get cardTemporaryHow;
+
+  /// Under the QR code of a card with a home node: the card holds that node's address.
+  ///
+  /// In en, this message translates to:
+  /// **'It carries your home node\'s address.'**
+  String get cardHomeHow;
+
+  /// What a screen reader says for the hourglass that marks a card with no home.
+  ///
+  /// In en, this message translates to:
+  /// **'Temporary card'**
+  String get cardTemporary;
+
+  /// The word under a temporary card's QR code, in capitals; it describes the card.
+  ///
+  /// In en, this message translates to:
+  /// **'TEMPORARY'**
+  String get cardTemporaryMark;
+
+  /// Why a scanned or pasted text was not read as a card; it may be followed by other words, as in contactsBadPaste. So are the other card… reasons.
+  ///
+  /// In en, this message translates to:
+  /// **'Not a card'**
+  String get cardNot;
+
+  /// No description provided for @cardNewer.
+  ///
+  /// In en, this message translates to:
+  /// **'A card from a newer app (card version {version})'**
+  String cardNewer(int version);
+
+  /// No description provided for @cardOlder.
+  ///
+  /// In en, this message translates to:
+  /// **'A card from an older app (card version {version})'**
+  String cardOlder(int version);
+
+  /// No description provided for @cardNameNotUtf8.
+  ///
+  /// In en, this message translates to:
+  /// **'Not a card: the name is not UTF-8'**
+  String get cardNameNotUtf8;
+
+  /// Why the person's card cannot be made: their name is longer than a card holds.
+  ///
+  /// In en, this message translates to:
+  /// **'The name is too long'**
+  String get cardNameTooLong;
+
+  /// The title of the camera screen that reads a card's QR code.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan a card'**
+  String get scanTitle;
+
+  /// No description provided for @scanNoCamera.
+  ///
+  /// In en, this message translates to:
+  /// **'The camera is not allowed. Allow it in the phone\'s settings, or paste the card.'**
+  String get scanNoCamera;
+
+  /// No description provided for @scanPoint.
+  ///
+  /// In en, this message translates to:
+  /// **'Point the camera at the card on the other phone'**
+  String get scanPoint;
 
   /// The help under the row Role of a node's sheet on the map; the other fact messages are the help of the rows they name.
   ///

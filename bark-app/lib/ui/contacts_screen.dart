@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../app.dart';
 import '../card.dart';
 import '../contacts.dart';
+import '../l10n.dart';
 import 'archived_screen.dart';
 import 'common.dart';
 import 'scan_screen.dart';
@@ -20,20 +21,18 @@ class ContactsScreen extends StatelessWidget {
     final cs = app.contacts;
     final archived = cs.list.length - cs.active.length;
     return Scaffold(
-      appBar: AppBar(title: const Text('Contacts')),
+      appBar: AppBar(title: Text(tr.contacts)),
       body: ListView(
         children: [
           if (cs.list.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'No contacts yet. Tap Add contact and scan their card.',
-              ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(tr.contactsNone),
             ),
           for (final c in cs.active) _row(context, c),
           if (archived > 0)
             ArchivedLine(
-              '$archived archived',
+              tr.contactsArchived(archived),
               onTap: () => Navigator.of(context)
                   .push(MaterialPageRoute(builder: (_) => ArchivedScreen(app))),
             ),
@@ -41,7 +40,7 @@ class ContactsScreen extends StatelessWidget {
       ),
       floatingActionButton: FloatingActionButton.extended(
         icon: const Icon(Icons.person_add),
-        label: const Text('Add contact'),
+        label: Text(tr.contactsAdd),
         onPressed: () =>
             Navigator.of(context)
                 .push(MaterialPageRoute(builder: (_) => AddContactScreen(app))),
@@ -62,17 +61,17 @@ class ContactsScreen extends StatelessWidget {
         ScaffoldMessenger.of(context),
         app,
         c.key,
-        '${c.name}: contact archived',
+        tr.contactArchived(c.name),
       );
     },
     child: ListTile(
       leading: const CircleAvatar(child: Icon(Icons.person)),
       title: Text(c.name),
       subtitle: c.unverified
-          ? const Text('Not verified yet')
+          ? Text(tr.contactsNotVerified)
           : c.card.temporary
           ? TemporaryLine(c.placeAt, app.now)
-          : const Text('Has a home node'),
+          : Text(tr.contactsHasHome),
       onTap: () => Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => ThreadScreen(app, c.key)),
       ),
@@ -95,17 +94,13 @@ class TemporaryLine extends StatelessWidget {
 
   Widget _line(Duration? age) => Row(
     children: [
-      const Icon(
-        Icons.hourglass_empty,
-        size: 16,
-        semanticLabel: 'Temporary card',
-      ),
+      Icon(Icons.hourglass_empty, size: 16, semanticLabel: tr.cardTemporary),
       const SizedBox(width: 4),
       Flexible(
         child: Text(
           age == null
-              ? 'temporary: no node known yet'
-              : 'temporary: at the node they used ${ago(age)}',
+              ? tr.contactsTemporaryNoNode
+              : tr.contactsTemporaryAt(ago(age)),
         ),
       ),
     ],
@@ -160,7 +155,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
         card = PersonCard.parse(s);
         if (name.text.isEmpty) name.text = card!.name;
       } on BadCard catch (e) {
-        error = '$e. Paste a card: it starts with ${PersonCard.prefix}';
+        error = tr.contactsBadPaste('$e', PersonCard.prefix);
       }
     });
   }
@@ -187,7 +182,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Add contact')),
+    appBar: AppBar(title: Text(tr.contactsAdd)),
     body: SafeArea(
       top: false,
       child: ListView(
@@ -197,7 +192,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
             alignment: Alignment.centerLeft,
             child: FilledButton.icon(
               icon: const Icon(Icons.qr_code_scanner),
-              label: const Text('Scan their card'),
+              label: Text(tr.scanTheirCard),
               onPressed: _scan,
             ),
           ),
@@ -207,8 +202,8 @@ class _AddContactScreenState extends State<AddContactScreen> {
             onChanged: _read,
             maxLines: null,
             decoration: InputDecoration(
-              labelText: 'Card',
-              helperText: 'Or paste the card they sent you',
+              labelText: tr.card,
+              helperText: tr.contactsPasteHelp,
               errorText: error,
               errorMaxLines: 3,
             ),
@@ -216,12 +211,12 @@ class _AddContactScreenState extends State<AddContactScreen> {
           if (card != null)
             ListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Home node'),
+              title: Text(tr.contactsHomeNode),
               subtitle: Text(
                 card!.home?.toString() ??
                     (card!.now == null
-                        ? 'none, and no node yet: ask them for a new card'
-                        : 'none: a temporary card'),
+                        ? tr.contactsNoHomeNoNode
+                        : tr.contactsNoHomeTemporary),
                 style: const TextStyle(fontFamily: 'monospace'),
               ),
             ),
@@ -230,14 +225,14 @@ class _AddContactScreenState extends State<AddContactScreen> {
             controller: name,
             onChanged: (_) => setState(() {}),
             textCapitalization: TextCapitalization.words,
-            decoration: const InputDecoration(labelText: 'Name'),
+            decoration: InputDecoration(labelText: tr.name),
           ),
           const SizedBox(height: 16),
           Align(
             alignment: Alignment.centerLeft,
             child: FilledButton(
               onPressed: card == null ? null : _save,
-              child: const Text('Save'),
+              child: Text(tr.save),
             ),
           ),
         ],

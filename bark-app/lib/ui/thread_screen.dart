@@ -237,7 +237,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                   PopupMenuItem(
                     value: () => _archive(
                       app.contacts.archiveContact(contact),
-                      tr.threadContactArchived(contact.name),
+                      tr.contactArchived(contact.name),
                     ),
                     child: Text(tr.threadArchiveContact),
                   ),
@@ -330,7 +330,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
   }
 
   Future<void> _name(Contact c) async {
-    final name = await askText(context, tr.threadName, c.given);
+    final name = await askText(context, tr.name, c.given);
     if (name == null || name.isEmpty) return;
     await app.contacts.put(c.copyWith(name: name));
   }

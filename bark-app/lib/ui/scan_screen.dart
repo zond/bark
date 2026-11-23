@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:qr_code_scanner_plus/qr_code_scanner_plus.dart';
 
 import '../card.dart';
+import '../l10n.dart';
 
 /// The camera's card, or null when the person goes back without one.
 Future<PersonCard?> scanCard(BuildContext context) => Navigator.of(context)
@@ -50,7 +51,7 @@ class _ScanScreenState extends State<ScanScreen> {
   Widget build(BuildContext context) {
     final side = MediaQuery.of(context).size.shortestSide * 0.7;
     return Scaffold(
-      appBar: AppBar(title: const Text('Scan a card')),
+      appBar: AppBar(title: Text(tr.scanTitle)),
       body: SafeArea(
         top: false,
         child: Column(
@@ -62,11 +63,7 @@ class _ScanScreenState extends State<ScanScreen> {
                 onQRViewCreated: _created,
                 onPermissionSet: (_, granted) {
                   if (!granted) {
-                    setState(
-                      () => _problem =
-                          'The camera is not allowed. Allow it in the phone\'s '
-                          'settings, or paste the card.',
-                    );
+                    setState(() => _problem = tr.scanNoCamera);
                   }
                 },
                 overlay: QrScannerOverlayShape(
@@ -77,9 +74,7 @@ class _ScanScreenState extends State<ScanScreen> {
             ),
             Padding(
               padding: const EdgeInsets.all(16),
-              child: Text(
-                _problem ?? 'Point the camera at the card on the other phone',
-              ),
+              child: Text(_problem ?? tr.scanPoint),
             ),
           ],
         ),

@@ -8,9 +8,11 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'app_layer.dart';
+import 'l10n.dart';
 import 'link.dart';
 
-/// A value that is not a card this app reads.
+/// A value that is not a card this app reads. Its words reach the screen,
+/// so they are in the language spoken.
 class BadCard implements Exception {
   final String why;
   const BadCard(this.why);
@@ -75,7 +77,7 @@ class PersonCard {
 
   Uint8List encode() {
     final n = utf8.encode(name);
-    if (n.length > maxName) throw const BadCard('The name is too long');
+    if (n.length > maxName) throw BadCard(tr.cardNameTooLong);
     final h = home, w = now;
     return Uint8List.fromList([
       version,
@@ -89,20 +91,20 @@ class PersonCard {
   }
 
   static PersonCard decode(List<int> b) {
-    if (b.isEmpty) throw const BadCard('Not a card');
+    if (b.isEmpty) throw BadCard(tr.cardNot);
     if (b[0] > version) {
-      throw BadCard('A card from a newer app (card version ${b[0]})');
+      throw BadCard(tr.cardNewer(b[0]));
     }
     if (b[0] < version) {
-      throw BadCard('A card from an older app (card version ${b[0]})');
+      throw BadCard(tr.cardOlder(b[0]));
     }
     if (b.length < fixedLen || b[1] & 0x0f & ~(_flagHome | _flagNow) != 0) {
-      throw const BadCard('Not a card');
+      throw BadCard(tr.cardNot);
     }
     var at = fixedLen;
     Address? address(int flag) {
       if (b[1] & flag == 0) return null;
-      if (b.length < at + Address.len) throw const BadCard('Not a card');
+      if (b.length < at + Address.len) throw BadCard(tr.cardNot);
       final a = b.sublist(at, at += Address.len);
       return Address(Position.decode(a), a.sublist(Position.wireLen));
     }
@@ -111,10 +113,10 @@ class PersonCard {
     final now = address(_flagNow);
     var nowAt = 0;
     if (now != null) {
-      if (b.length < at + 4) throw const BadCard('Not a card');
+      if (b.length < at + 4) throw BadCard(tr.cardNot);
       nowAt = fromBe(b.sublist(at, at += 4));
     }
-    if (b.length > at + maxName) throw const BadCard('Not a card');
+    if (b.length > at + maxName) throw BadCard(tr.cardNot);
     try {
       return PersonCard(
         b.sublist(2, 2 + keyLen),
@@ -126,7 +128,7 @@ class PersonCard {
         reads: b[1] >> 4,
       );
     } on FormatException {
-      throw const BadCard('Not a card: the name is not UTF-8');
+      throw BadCard(tr.cardNameNotUtf8);
     }
   }
 
@@ -148,18 +150,18 @@ class PersonCard {
 
   static PersonCard parse(String text) {
     final t = text.trim().toUpperCase();
-    if (!t.startsWith(prefix)) throw const BadCard('Not a card');
+    if (!t.startsWith(prefix)) throw BadCard(tr.cardNot);
     final body = t.substring(prefix.length);
     final n = body.length * 5 ~/ 8;
-    if (body.length * 5 - n * 8 >= 5) throw const BadCard('Not a card');
+    if (body.length * 5 - n * 8 >= 5) throw BadCard(tr.cardNot);
     final b = Uint8List(n);
     for (final (k, c) in body.split('').indexed) {
       final v = _base32.indexOf(c);
-      if (v < 0) throw const BadCard('Not a card');
+      if (v < 0) throw BadCard(tr.cardNot);
       for (var j = 0; j < 5; j++) {
         final i = k * 5 + j;
         if ((v >> (4 - j)) & 1 == 0) continue;
-        if (i >= n * 8) throw const BadCard('Not a card');
+        if (i >= n * 8) throw BadCard(tr.cardNot);
         b[i ~/ 8] |= 0x80 >> (i % 8);
       }
     }

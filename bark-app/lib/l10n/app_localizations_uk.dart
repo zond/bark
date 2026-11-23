@@ -685,7 +685,7 @@ class AppLocalizationsUk extends AppLocalizations {
   String get threadArchiveConversation => 'Архівувати розмову';
 
   @override
-  String threadContactArchived(String name) {
+  String contactArchived(String name) {
     return '$name: контакт заархівовано';
   }
 
@@ -723,7 +723,7 @@ class AppLocalizationsUk extends AppLocalizations {
   }
 
   @override
-  String get threadName => 'Ім\'я';
+  String get name => 'Ім\'я';
 
   @override
   String threadParts(int count) {
@@ -919,6 +919,159 @@ class AppLocalizationsUk extends AppLocalizations {
   String sessionClockPhone(String time, String offset) {
     return '$time з телефону, часовий пояс $offset';
   }
+
+  @override
+  String get card => 'Картка';
+
+  @override
+  String get scanTheirCard => 'Сканувати їхню картку';
+
+  @override
+  String get contactsNone =>
+      'Контактів ще немає. Натисніть «Додати контакт» і відскануйте їхню картку.';
+
+  @override
+  String contactsArchived(int count) {
+    return '$count в архіві';
+  }
+
+  @override
+  String get contactsAdd => 'Додати контакт';
+
+  @override
+  String get contactsNotVerified => 'Ще не перевірено';
+
+  @override
+  String get contactsHasHome => 'Має домашній вузол';
+
+  @override
+  String get contactsTemporaryNoNode => 'тимчасова: вузол ще невідомий';
+
+  @override
+  String contactsTemporaryAt(String ago) {
+    return 'тимчасова: на вузлі, яким користувалися $ago';
+  }
+
+  @override
+  String get contactsPasteHelp => 'Або вставте картку, яку вам надіслали';
+
+  @override
+  String get contactsHomeNode => 'Домашній вузол';
+
+  @override
+  String get contactsNoHomeNoNode => 'немає, як і вузла: попросіть нову картку';
+
+  @override
+  String get contactsNoHomeTemporary => 'немає: тимчасова картка';
+
+  @override
+  String contactsBadPaste(String error, String prefix) {
+    return '$error. Вставте картку: вона починається з $prefix';
+  }
+
+  @override
+  String contactsUnnamed(String start) {
+    return 'Без імені ($start…)';
+  }
+
+  @override
+  String get cardShare => 'Поділитися';
+
+  @override
+  String cardShareFailed(String error) {
+    return 'Не вдалося поділитися: $error';
+  }
+
+  @override
+  String get cardNameNotSet => 'не вказано';
+
+  @override
+  String get cardChangeName => 'Змінити';
+
+  @override
+  String get cardDetails => 'Подробиці';
+
+  @override
+  String get cardMyIdentity => 'Моя особа';
+
+  @override
+  String get cardCopyIdentity => 'Копіювати особу';
+
+  @override
+  String get cardIdentityCopied => 'Особу скопійовано';
+
+  @override
+  String get cardHomeAddress => 'Адреса дому';
+
+  @override
+  String get cardCopyAddress => 'Копіювати адресу';
+
+  @override
+  String get cardAddressCopied => 'Адресу скопійовано';
+
+  @override
+  String get cardNodeNow => 'Вузол, яким я користуюся зараз';
+
+  @override
+  String get cardCopyNode => 'Копіювати вузол';
+
+  @override
+  String get cardNodeCopied => 'Вузол скопійовано';
+
+  @override
+  String get cardCopyCard => 'Копіювати картку';
+
+  @override
+  String get cardCardCopied => 'Картку скопійовано';
+
+  @override
+  String get cardNameFirst =>
+      'Спершу вкажіть своє ім\'я: тому, хто скануватиме вашу картку, треба його знати.';
+
+  @override
+  String get cardSetName => 'Вказати своє ім\'я';
+
+  @override
+  String get cardTemporaryHow =>
+      'Тимчасова картка: без домашнього вузла вона вказує на вузол, яким ви користуєтеся зараз. Задайте дім у Налаштуваннях.';
+
+  @override
+  String get cardHomeHow => 'Вона містить адресу вашого домашнього вузла.';
+
+  @override
+  String get cardTemporary => 'Тимчасова картка';
+
+  @override
+  String get cardTemporaryMark => 'ТИМЧАСОВА';
+
+  @override
+  String get cardNot => 'Це не картка';
+
+  @override
+  String cardNewer(int version) {
+    return 'Картка з новішого застосунку (версія картки $version)';
+  }
+
+  @override
+  String cardOlder(int version) {
+    return 'Картка зі старішого застосунку (версія картки $version)';
+  }
+
+  @override
+  String get cardNameNotUtf8 => 'Це не картка: ім\'я не в UTF-8';
+
+  @override
+  String get cardNameTooLong => 'Ім\'я задовге';
+
+  @override
+  String get scanTitle => 'Сканування картки';
+
+  @override
+  String get scanNoCamera =>
+      'Немає доступу до камери. Дозвольте його в налаштуваннях телефону або вставте картку.';
+
+  @override
+  String get scanPoint => 'Наведіть камеру на картку на екрані іншого телефону';
 
   @override
   String get factRole =>

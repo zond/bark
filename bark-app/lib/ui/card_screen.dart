@@ -9,6 +9,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../app.dart';
 import '../card.dart';
+import '../l10n.dart';
 import 'common.dart';
 import 'contacts_screen.dart';
 import 'scan_screen.dart';
@@ -34,21 +35,26 @@ class CardScreen extends StatelessWidget {
     final card = me.shownCard;
     _log(card);
     final mono = const TextStyle(fontFamily: 'monospace');
-    Widget copyable(String title, String value, String what) => ListTile(
+    Widget copyable(
+      String title,
+      String value, {
+      required String copy,
+      required String copied,
+    }) => ListTile(
       contentPadding: EdgeInsets.zero,
       title: Text(title),
       subtitle: SelectableText(value, style: mono),
       trailing: IconButton(
-        tooltip: 'Copy $what',
+        tooltip: copy,
         icon: const Icon(Icons.copy),
         onPressed: () {
           Clipboard.setData(ClipboardData(text: value));
-          say(context, '${what[0].toUpperCase()}${what.substring(1)} copied');
+          say(context, copied);
         },
       ),
     );
     return Scaffold(
-      appBar: AppBar(title: const Text('My card')),
+      appBar: AppBar(title: Text(tr.myCard)),
       body: SafeArea(
         top: false,
         child: ListView(
@@ -63,12 +69,12 @@ class CardScreen extends StatelessWidget {
                 if (card != null)
                   FilledButton.icon(
                     icon: const Icon(Icons.share),
-                    label: const Text('Share'),
+                    label: Text(tr.cardShare),
                     onPressed: () => _share(context, card),
                   ),
                 OutlinedButton.icon(
                   icon: const Icon(Icons.qr_code_scanner),
-                  label: const Text('Scan their card'),
+                  label: Text(tr.scanTheirCard),
                   onPressed: () => _scan(context),
                 ),
               ],
@@ -76,25 +82,46 @@ class CardScreen extends StatelessWidget {
             const SizedBox(height: 8),
             ListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('My name'),
-              subtitle: Text(me.name.isEmpty ? 'not set' : me.name),
+              title: Text(tr.commonMyName),
+              subtitle: Text(me.name.isEmpty ? tr.cardNameNotSet : me.name),
               trailing: IconButton(
-                tooltip: 'Change',
+                tooltip: tr.cardChangeName,
                 icon: const Icon(Icons.edit),
                 onPressed: () => askMyName(context, app),
               ),
             ),
             ExpansionTile(
-              title: const Text('Details'),
+              title: Text(tr.cardDetails),
               tilePadding: EdgeInsets.zero,
               childrenPadding: EdgeInsets.zero,
               children: [
-                copyable('My identity', me.key, 'the identity'),
+                copyable(
+                  tr.cardMyIdentity,
+                  me.key,
+                  copy: tr.cardCopyIdentity,
+                  copied: tr.cardIdentityCopied,
+                ),
                 if (card?.home case final h?)
-                  copyable('Home address', h.toString(), 'the address'),
+                  copyable(
+                    tr.cardHomeAddress,
+                    h.toString(),
+                    copy: tr.cardCopyAddress,
+                    copied: tr.cardAddressCopied,
+                  ),
                 if (card?.now case final n?)
-                  copyable('The node I use now', n.toString(), 'the node'),
-                if (card != null) copyable('Card', card.toText(), 'the card'),
+                  copyable(
+                    tr.cardNodeNow,
+                    n.toString(),
+                    copy: tr.cardCopyNode,
+                    copied: tr.cardNodeCopied,
+                  ),
+                if (card != null)
+                  copyable(
+                    tr.card,
+                    card.toText(),
+                    copy: tr.cardCopyCard,
+                    copied: tr.cardCardCopied,
+                  ),
               ],
             ),
           ],
@@ -110,24 +137,22 @@ class CardScreen extends StatelessWidget {
       final text = card.toText();
       await app.notifier.share(text, await qrPng(text));
     } catch (e) {
-      if (context.mounted) say(context, 'Sharing failed: $e');
+      if (context.mounted) say(context, tr.cardShareFailed('$e'));
     }
   }
 
   /// In place of the card while the person has no name.
   List<Widget> _noName(BuildContext context) => [
-    const Padding(
-      padding: EdgeInsets.only(top: 8),
-      child: Text(
-        'Set your name first: whoever scans your card needs to know it.',
-      ),
+    Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Text(tr.cardNameFirst),
     ),
     const SizedBox(height: 16),
     Align(
       alignment: Alignment.centerLeft,
       child: FilledButton.icon(
         icon: const Icon(Icons.edit),
-        label: const Text('Set my name'),
+        label: Text(tr.cardSetName),
         onPressed: () => askMyName(context, app),
       ),
     ),
@@ -140,12 +165,7 @@ class CardScreen extends StatelessWidget {
           : _qr(card.toText()),
     ),
     const SizedBox(height: 16),
-    Text(
-      card.temporary
-          ? 'Temporary card: with no home node, it names the node you use '
-                'now. Set a home in Settings.'
-          : 'It carries your home node\'s address.',
-    ),
+    Text(card.temporary ? tr.cardTemporaryHow : tr.cardHomeHow),
   ];
 
   Future<void> _scan(BuildContext context) async {
@@ -188,7 +208,7 @@ class TemporaryFrame extends StatelessWidget {
     final color = Theme.of(context).colorScheme.onSurface;
     final ground = Theme.of(context).colorScheme.surface;
     return Semantics(
-      label: 'Temporary card',
+      label: tr.cardTemporary,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -218,7 +238,7 @@ class TemporaryFrame extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'TEMPORARY',
+            tr.cardTemporaryMark,
             style: Theme.of(context).textTheme.titleMedium
                 ?.copyWith(letterSpacing: 4, fontWeight: FontWeight.bold),
           ),

@@ -427,8 +427,8 @@
   "threadRename": "Rename",
   "threadShareHome": "Share my home node",
   "threadArchiveConversation": "Archive conversation",
-  "threadContactArchived": "{name}: contact archived",
-  "@threadContactArchived": {
+  "contactArchived": "{name}: contact archived",
+  "@contactArchived": {
     "placeholders": {"name": {"type": "String"}}
   },
   "threadArchiveContact": "Archive contact",
@@ -449,9 +449,9 @@
   "@threadNoNode": {
     "placeholders": {"name": {"type": "String"}}
   },
-  "threadName": "Name",
-  "@threadName": {
-    "description": "The title of the field that renames a contact."
+  "name": "Name",
+  "@name": {
+    "description": "A contact's name: the title of the dialog that renames one, and the label of the field in Add contact."
   },
   "threadParts": "{count, plural, one{{count} part} other{{count} parts}}",
   "@threadParts": {
@@ -599,6 +599,152 @@
     "description": "The node's clock, set from a phone.",
     "placeholders": {"time": {"type": "String"}, "offset": {"type": "String"}}
   },
+
+  "card": "Card",
+  "@card": {
+    "description": "The label of a card as text: the one pasted when adding a contact, or the person's own in My card's details."
+  },
+  "scanTheirCard": "Scan their card",
+  "@scanTheirCard": {
+    "description": "The button that opens the camera to scan another person's card."
+  },
+
+  "contactsNone": "No contacts yet. Tap Add contact and scan their card.",
+  "@contactsNone": {
+    "description": "Add contact is the button contactsAdd."
+  },
+  "contactsArchived": "{count} archived",
+  "@contactsArchived": {
+    "description": "The line under the contacts that leads to the archived ones; count is how many contacts.",
+    "placeholders": {"count": {"type": "int"}}
+  },
+  "contactsAdd": "Add contact",
+  "@contactsAdd": {
+    "description": "The button that adds a contact, and the title of the screen it opens."
+  },
+  "contactsNotVerified": "Not verified yet",
+  "@contactsNotVerified": {
+    "description": "Under a contact's name in the list: the contact came by a first message and has not yet replied sealed."
+  },
+  "contactsHasHome": "Has a home node",
+  "@contactsHasHome": {
+    "description": "Under a contact's name in the list."
+  },
+  "contactsTemporaryNoNode": "temporary: no node known yet",
+  "@contactsTemporaryNoNode": {
+    "description": "Under a contact's name: their card is temporary (it names no home). Lower case, after an hourglass icon."
+  },
+  "contactsTemporaryAt": "temporary: at the node they used {ago}",
+  "@contactsTemporaryAt": {
+    "description": "As contactsTemporaryNoNode, with how long ago they were last known at their node; {ago} is such as timeMinutesAgo or timeJustNow.",
+    "placeholders": {"ago": {"type": "String"}}
+  },
+  "contactsPasteHelp": "Or paste the card they sent you",
+  "@contactsPasteHelp": {
+    "description": "Under the field where a card's text is pasted, below the button scanTheirCard."
+  },
+  "contactsHomeNode": "Home node",
+  "@contactsHomeNode": {
+    "description": "A pasted card's home node, with its address under it."
+  },
+  "contactsNoHomeNoNode": "none, and no node yet: ask them for a new card",
+  "@contactsNoHomeNoNode": {
+    "description": "Under contactsHomeNode: the card names no home node and no node at all. Lower case, as it follows that title."
+  },
+  "contactsNoHomeTemporary": "none: a temporary card",
+  "@contactsNoHomeTemporary": {
+    "description": "Under contactsHomeNode: the card names no home node. Lower case, as it follows that title."
+  },
+  "contactsBadPaste": "{error}. Paste a card: it starts with {prefix}",
+  "@contactsBadPaste": {
+    "description": "Under the field, when the pasted text is not a card. {error} is why, a sentence without its full stop, such as cardNot; {prefix} is BARK:.",
+    "placeholders": {"error": {"type": "String"}, "prefix": {"type": "String", "example": "BARK:"}}
+  },
+  "contactsUnnamed": "Unnamed ({start}…)",
+  "@contactsUnnamed": {
+    "description": "A contact whose card has no name and whom the person has not named. {start} is the first 8 hex digits of their identity.",
+    "placeholders": {"start": {"type": "String", "example": "a3f09c12"}}
+  },
+
+  "cardShare": "Share",
+  "@cardShare": {
+    "description": "The button that sends the person's card through the phone's share sheet."
+  },
+  "cardShareFailed": "Sharing failed: {error}",
+  "@cardShareFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "cardNameNotSet": "not set",
+  "@cardNameNotSet": {
+    "description": "Under My name, when the person has no name yet."
+  },
+  "cardChangeName": "Change",
+  "@cardChangeName": {
+    "description": "The tooltip of the button that changes the person's name."
+  },
+  "cardDetails": "Details",
+  "@cardDetails": {
+    "description": "A section on My card that opens to the card's parts as text."
+  },
+  "cardMyIdentity": "My identity",
+  "@cardMyIdentity": {
+    "description": "The person's identity, the public key their texts are sealed to, shown in hex."
+  },
+  "cardCopyIdentity": "Copy the identity",
+  "@cardCopyIdentity": {
+    "description": "A button's tooltip; cardIdentityCopied says it is done. The other cardCopy… and …Copied messages are the same for the other rows."
+  },
+  "cardIdentityCopied": "The identity copied",
+  "cardHomeAddress": "Home address",
+  "cardCopyAddress": "Copy the address",
+  "cardAddressCopied": "The address copied",
+  "cardNodeNow": "The node I use now",
+  "@cardNodeNow": {
+    "description": "The address of the node the person's phone uses now, which a temporary card names."
+  },
+  "cardCopyNode": "Copy the node",
+  "cardNodeCopied": "The node copied",
+  "cardCopyCard": "Copy the card",
+  "cardCardCopied": "The card copied",
+  "cardNameFirst": "Set your name first: whoever scans your card needs to know it.",
+  "cardSetName": "Set my name",
+  "cardTemporaryHow": "Temporary card: with no home node, it names the node you use now. Set a home in Settings.",
+  "cardHomeHow": "It carries your home node's address.",
+  "@cardHomeHow": {
+    "description": "Under the QR code of a card with a home node: the card holds that node's address."
+  },
+  "cardTemporary": "Temporary card",
+  "@cardTemporary": {
+    "description": "What a screen reader says for the hourglass that marks a card with no home."
+  },
+  "cardTemporaryMark": "TEMPORARY",
+  "@cardTemporaryMark": {
+    "description": "The word under a temporary card's QR code, in capitals; it describes the card."
+  },
+  "cardNot": "Not a card",
+  "@cardNot": {
+    "description": "Why a scanned or pasted text was not read as a card; it may be followed by other words, as in contactsBadPaste. So are the other card… reasons."
+  },
+  "cardNewer": "A card from a newer app (card version {version})",
+  "@cardNewer": {
+    "placeholders": {"version": {"type": "int"}}
+  },
+  "cardOlder": "A card from an older app (card version {version})",
+  "@cardOlder": {
+    "placeholders": {"version": {"type": "int"}}
+  },
+  "cardNameNotUtf8": "Not a card: the name is not UTF-8",
+  "cardNameTooLong": "The name is too long",
+  "@cardNameTooLong": {
+    "description": "Why the person's card cannot be made: their name is longer than a card holds."
+  },
+
+  "scanTitle": "Scan a card",
+  "@scanTitle": {
+    "description": "The title of the camera screen that reads a card's QR code."
+  },
+  "scanNoCamera": "The camera is not allowed. Allow it in the phone's settings, or paste the card.",
+  "scanPoint": "Point the camera at the card on the other phone",
 
   "factRole": "A relay has outside power, such as USB, and listens all the time, passing on texts for the nodes around it: the more relays, the farther texts reach. A sleepy node is on battery: to last, it sleeps and wakes only in short windows, and sends and receives through one relay near it, its anchor. A fixed relay that loses its power keeps relaying on battery until the battery runs low, and then turns sleepy. Holding the node's button switches its role until its power next changes.",
   "@factRole": {

@@ -50,7 +50,7 @@ class AppLocalizationsSv extends AppLocalizations {
       count,
       locale: localeName,
       other: '$count arkiverade',
-      one: '$count arkiverad',
+      one: '$count arkiverat',
     );
     return '$_temp0';
   }
@@ -680,7 +680,7 @@ class AppLocalizationsSv extends AppLocalizations {
   String get threadArchiveConversation => 'Arkivera samtalet';
 
   @override
-  String threadContactArchived(String name) {
+  String contactArchived(String name) {
     return '$name: kontakten arkiverad';
   }
 
@@ -718,7 +718,7 @@ class AppLocalizationsSv extends AppLocalizations {
   }
 
   @override
-  String get threadName => 'Namn';
+  String get name => 'Namn';
 
   @override
   String threadParts(int count) {
@@ -906,6 +906,166 @@ class AppLocalizationsSv extends AppLocalizations {
   String sessionClockPhone(String time, String offset) {
     return '$time från telefonen, tidszon $offset';
   }
+
+  @override
+  String get card => 'Kort';
+
+  @override
+  String get scanTheirCard => 'Skanna deras kort';
+
+  @override
+  String get contactsNone =>
+      'Inga kontakter än. Tryck på Lägg till kontakt och skanna deras kort.';
+
+  @override
+  String contactsArchived(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count arkiverade',
+      one: '$count arkiverad',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get contactsAdd => 'Lägg till kontakt';
+
+  @override
+  String get contactsNotVerified => 'Inte verifierad än';
+
+  @override
+  String get contactsHasHome => 'Har en hemnod';
+
+  @override
+  String get contactsTemporaryNoNode => 'tillfälligt: ingen känd nod än';
+
+  @override
+  String contactsTemporaryAt(String ago) {
+    return 'tillfälligt: på noden de använde $ago';
+  }
+
+  @override
+  String get contactsPasteHelp => 'Eller klistra in kortet de skickade dig';
+
+  @override
+  String get contactsHomeNode => 'Hemnod';
+
+  @override
+  String get contactsNoHomeNoNode =>
+      'ingen, och ingen nod än: be om ett nytt kort';
+
+  @override
+  String get contactsNoHomeTemporary => 'ingen: ett tillfälligt kort';
+
+  @override
+  String contactsBadPaste(String error, String prefix) {
+    return '$error. Klistra in ett kort: det börjar med $prefix';
+  }
+
+  @override
+  String contactsUnnamed(String start) {
+    return 'Namnlös ($start…)';
+  }
+
+  @override
+  String get cardShare => 'Dela';
+
+  @override
+  String cardShareFailed(String error) {
+    return 'Det gick inte att dela: $error';
+  }
+
+  @override
+  String get cardNameNotSet => 'inte angivet';
+
+  @override
+  String get cardChangeName => 'Ändra';
+
+  @override
+  String get cardDetails => 'Detaljer';
+
+  @override
+  String get cardMyIdentity => 'Min identitet';
+
+  @override
+  String get cardCopyIdentity => 'Kopiera identiteten';
+
+  @override
+  String get cardIdentityCopied => 'Identiteten kopierad';
+
+  @override
+  String get cardHomeAddress => 'Hemadress';
+
+  @override
+  String get cardCopyAddress => 'Kopiera adressen';
+
+  @override
+  String get cardAddressCopied => 'Adressen kopierad';
+
+  @override
+  String get cardNodeNow => 'Noden jag använder nu';
+
+  @override
+  String get cardCopyNode => 'Kopiera noden';
+
+  @override
+  String get cardNodeCopied => 'Noden kopierad';
+
+  @override
+  String get cardCopyCard => 'Kopiera kortet';
+
+  @override
+  String get cardCardCopied => 'Kortet kopierat';
+
+  @override
+  String get cardNameFirst =>
+      'Ange ditt namn först: den som skannar ditt kort behöver veta det.';
+
+  @override
+  String get cardSetName => 'Ange mitt namn';
+
+  @override
+  String get cardTemporaryHow =>
+      'Tillfälligt kort: utan hemnod anger det noden du använder nu. Välj ett hem i Inställningar.';
+
+  @override
+  String get cardHomeHow => 'Det anger adressen till din hemnod.';
+
+  @override
+  String get cardTemporary => 'Tillfälligt kort';
+
+  @override
+  String get cardTemporaryMark => 'TILLFÄLLIGT';
+
+  @override
+  String get cardNot => 'Inte ett kort';
+
+  @override
+  String cardNewer(int version) {
+    return 'Ett kort från en nyare app (kortversion $version)';
+  }
+
+  @override
+  String cardOlder(int version) {
+    return 'Ett kort från en äldre app (kortversion $version)';
+  }
+
+  @override
+  String get cardNameNotUtf8 => 'Inte ett kort: namnet är inte UTF-8';
+
+  @override
+  String get cardNameTooLong => 'Namnet är för långt';
+
+  @override
+  String get scanTitle => 'Skanna ett kort';
+
+  @override
+  String get scanNoCamera =>
+      'Appen får inte använda kameran. Tillåt det i telefonens inställningar eller klistra in kortet.';
+
+  @override
+  String get scanPoint => 'Rikta kameran mot kortet på den andra telefonen';
 
   @override
   String get factRole =>

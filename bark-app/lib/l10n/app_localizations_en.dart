@@ -669,7 +669,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get threadArchiveConversation => 'Archive conversation';
 
   @override
-  String threadContactArchived(String name) {
+  String contactArchived(String name) {
     return '$name: contact archived';
   }
 
@@ -707,7 +707,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get threadName => 'Name';
+  String get name => 'Name';
 
   @override
   String threadParts(int count) {
@@ -895,6 +895,160 @@ class AppLocalizationsEn extends AppLocalizations {
   String sessionClockPhone(String time, String offset) {
     return '$time from the phone, offset $offset';
   }
+
+  @override
+  String get card => 'Card';
+
+  @override
+  String get scanTheirCard => 'Scan their card';
+
+  @override
+  String get contactsNone =>
+      'No contacts yet. Tap Add contact and scan their card.';
+
+  @override
+  String contactsArchived(int count) {
+    return '$count archived';
+  }
+
+  @override
+  String get contactsAdd => 'Add contact';
+
+  @override
+  String get contactsNotVerified => 'Not verified yet';
+
+  @override
+  String get contactsHasHome => 'Has a home node';
+
+  @override
+  String get contactsTemporaryNoNode => 'temporary: no node known yet';
+
+  @override
+  String contactsTemporaryAt(String ago) {
+    return 'temporary: at the node they used $ago';
+  }
+
+  @override
+  String get contactsPasteHelp => 'Or paste the card they sent you';
+
+  @override
+  String get contactsHomeNode => 'Home node';
+
+  @override
+  String get contactsNoHomeNoNode =>
+      'none, and no node yet: ask them for a new card';
+
+  @override
+  String get contactsNoHomeTemporary => 'none: a temporary card';
+
+  @override
+  String contactsBadPaste(String error, String prefix) {
+    return '$error. Paste a card: it starts with $prefix';
+  }
+
+  @override
+  String contactsUnnamed(String start) {
+    return 'Unnamed ($start…)';
+  }
+
+  @override
+  String get cardShare => 'Share';
+
+  @override
+  String cardShareFailed(String error) {
+    return 'Sharing failed: $error';
+  }
+
+  @override
+  String get cardNameNotSet => 'not set';
+
+  @override
+  String get cardChangeName => 'Change';
+
+  @override
+  String get cardDetails => 'Details';
+
+  @override
+  String get cardMyIdentity => 'My identity';
+
+  @override
+  String get cardCopyIdentity => 'Copy the identity';
+
+  @override
+  String get cardIdentityCopied => 'The identity copied';
+
+  @override
+  String get cardHomeAddress => 'Home address';
+
+  @override
+  String get cardCopyAddress => 'Copy the address';
+
+  @override
+  String get cardAddressCopied => 'The address copied';
+
+  @override
+  String get cardNodeNow => 'The node I use now';
+
+  @override
+  String get cardCopyNode => 'Copy the node';
+
+  @override
+  String get cardNodeCopied => 'The node copied';
+
+  @override
+  String get cardCopyCard => 'Copy the card';
+
+  @override
+  String get cardCardCopied => 'The card copied';
+
+  @override
+  String get cardNameFirst =>
+      'Set your name first: whoever scans your card needs to know it.';
+
+  @override
+  String get cardSetName => 'Set my name';
+
+  @override
+  String get cardTemporaryHow =>
+      'Temporary card: with no home node, it names the node you use now. Set a home in Settings.';
+
+  @override
+  String get cardHomeHow => 'It carries your home node\'s address.';
+
+  @override
+  String get cardTemporary => 'Temporary card';
+
+  @override
+  String get cardTemporaryMark => 'TEMPORARY';
+
+  @override
+  String get cardNot => 'Not a card';
+
+  @override
+  String cardNewer(int version) {
+    return 'A card from a newer app (card version $version)';
+  }
+
+  @override
+  String cardOlder(int version) {
+    return 'A card from an older app (card version $version)';
+  }
+
+  @override
+  String get cardNameNotUtf8 => 'Not a card: the name is not UTF-8';
+
+  @override
+  String get cardNameTooLong => 'The name is too long';
+
+  @override
+  String get scanTitle => 'Scan a card';
+
+  @override
+  String get scanNoCamera =>
+      'The camera is not allowed. Allow it in the phone\'s settings, or paste the card.';
+
+  @override
+  String get scanPoint => 'Point the camera at the card on the other phone';
 
   @override
   String get factRole =>

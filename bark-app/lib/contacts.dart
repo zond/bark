@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import 'app_layer.dart';
 import 'card.dart';
+import 'l10n.dart';
 import 'link.dart';
 import 'session.dart';
 import 'store.dart';
@@ -39,7 +40,7 @@ class Contact {
   /// What the contact is listed as: a nameless one by the start of its
   /// identity, so that two of them are told apart and no row is empty.
   String get name =>
-      given.isNotEmpty ? given : 'Unnamed (${key.substring(0, 8)}…)';
+      given.isNotEmpty ? given : tr.contactsUnnamed(key.substring(0, 8));
 
   /// A boxed message from this identity has opened here: only its
   /// holder could make one. A first message's sender is not verified.
