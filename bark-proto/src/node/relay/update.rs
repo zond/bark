@@ -76,8 +76,10 @@ struct Gather {
     seen: [[u8; PIECES.div_ceil(8)]; MAX_BLOCKS],
     /// The blocks that decoded and passed their hash, a bit each.
     done: u64,
-    /// When it began or last took a piece, for [`fed_within`] and
-    /// [`unproven_within`].
+    /// When it began or was last fed, for [`fed_within`] and
+    /// [`unproven_within`]: once proven, by any piece it takes; before,
+    /// only by a block that passes its check, since nothing else in it is
+    /// checked yet and junk pieces would feed it for good.
     fed: Instant,
 }
 
@@ -106,19 +108,20 @@ impl Gather {
     }
 
     /// Block `b` decoded, or failed its hash (`!ok`) and its pieces are
-    /// taken again.
-    fn decoded(&mut self, b: u8, ok: bool) {
+    /// taken again: whether it now holds a block it lacked.
+    fn decoded(&mut self, b: u8, ok: bool) -> bool {
         if b >= self.image.blocks || usize::from(b) >= MAX_BLOCKS || self.holds(b) {
-            return;
+            return false;
         }
         if !ok {
             self.seen[usize::from(b)] = [0; PIECES.div_ceil(8)];
-            return;
+            return false;
         }
         self.done |= 1 << b;
         while self.block < self.image.blocks && self.holds(self.block) {
             self.block += 1;
         }
+        true
     }
 }
 
@@ -510,9 +513,12 @@ impl Spread {
         }
     }
 
-    pub(super) fn block_done(&mut self, index: u8, ok: bool) {
+    pub(super) fn block_done(&mut self, index: u8, ok: bool, now: Instant) {
         if let Some(g) = self.gather.as_mut() {
-            g.decoded(index, ok);
+            let proven = g.proven();
+            if g.decoded(index, ok) && !proven {
+                g.fed = now;
+            }
         }
     }
 
@@ -542,7 +548,7 @@ impl Spread {
         Some(g.fed + unproven_within(config))
     }
 
-    /// An unproven gather that has taken no piece for [`unproven_within`]
+    /// An unproven gather not fed for [`unproven_within`]
     /// is given up and held off, and the driver told to forget its pieces:
     /// a section can name an image nobody holds.
     pub(super) fn expire(&mut self, config: &Config, now: Instant, emit: &mut dyn FnMut(Action)) {
@@ -586,7 +592,7 @@ impl Spread {
 
     /// Whether it takes no offer of `version` now. One left unfed for an
     /// older image is held off only while its gather of an older image has
-    /// taken a piece within [`fed_within`]: once that one starves too, or
+    /// been fed within [`fed_within`]: once that one starves too, or
     /// is given up or held whole, the newer may be served after all, and
     /// a fed gather still keeps its place against a claim nobody serves.
     fn held_off(&self, config: &Config, version: u32, now: Instant) -> bool {
@@ -742,7 +748,9 @@ impl Spread {
         if !g.take(block, index) {
             return run;
         }
-        g.fed = now;
+        if g.proven() {
+            g.fed = now;
+        }
         let mut piece = Piece {
             block,
             index,
@@ -1617,9 +1625,9 @@ mod tests {
         assert!(offers(&mut r, 2, left), "the newer starved: the older");
         r.gather(image(2), 0, left);
         assert!(!offers(&mut r, 3, left), "held off");
-        // A piece of the older renews its hold.
+        // A block of the older that passes renews its hold.
         let piece = left + fed - Duration::from_secs(60);
-        feed(&mut r, 2, 0, piece);
+        r.spread.block_done(0, true, piece);
         assert!(!offers(&mut r, 3, left + fed), "the older fed");
         assert!(!offers(&mut r, 3, piece + fed - Duration::from_secs(1)));
         assert!(offers(&mut r, 3, piece + fed), "the older starved too");
@@ -1638,6 +1646,55 @@ mod tests {
         assert!(offers(&mut r, 3, whole), "the older held whole");
     }
 
+    /// A forger that names an image and streams junk pieces of it feeds
+    /// an unproven gather of it no more than its one block that passes,
+    /// the table it can make whole itself: an older real image offered
+    /// takes its place once that block is [`fed_within`] old, and the
+    /// gather is given up [`unproven_within`] after it, junk or not
+    /// (spec "Updates over the mesh").
+    #[test]
+    fn junk_pieces_feed_no_unproven_gather() {
+        let config = Config::default();
+        let fed = fed_within(&config);
+        let bound = unproven_within(&config);
+        let forged = Image {
+            version: 9,
+            blocks: 3,
+            last: 7,
+            key: 1,
+        };
+        let t0 = Instant::ZERO + Duration::from_secs(10);
+        let table = t0 + Duration::from_secs(60);
+        let junk = |r: &mut crate::Relay, until: Instant| {
+            // A fresh junk piece of block 1 every ten minutes.
+            let mut t = table;
+            let mut index = 0;
+            while t < until {
+                feed(r, 9, index, t);
+                index = index.wrapping_add(1);
+                t += Duration::from_secs(600);
+            }
+        };
+        let mut r = crate::Relay::new(config, 1);
+        r.gather(forged, 0, t0);
+        r.spread.block_done(0, true, table);
+        junk(&mut r, table + fed);
+        assert!(!offers(&mut r, 5, table + fed - Duration::from_secs(1)));
+        assert!(offers(&mut r, 5, table + fed), "the real image");
+        // Never taken, the forged gather is given up at the bound.
+        let mut r = crate::Relay::new(config, 1);
+        r.gather(forged, 0, t0);
+        r.spread.block_done(0, true, table);
+        junk(&mut r, table + bound);
+        let mut given_up = None;
+        r.spread.expire(&config, table + bound, &mut |a| {
+            if let Action::Unproven(v) = a {
+                given_up = Some(v);
+            }
+        });
+        assert_eq!(given_up, Some(9));
+    }
+
     /// A fed older gather holds the newer it left off, for as long as it
     /// is fed, up to [`unproven_within`]: a section that names a newer
     /// version nobody holds cannot take a node from an image it is being
@@ -1646,7 +1703,7 @@ mod tests {
     fn a_fed_older_gather_holds_the_newer_off() {
         let image = |version| Image {
             version,
-            blocks: 3,
+            blocks: 48,
             last: 7,
             key: 1,
         };
@@ -1659,13 +1716,14 @@ mod tests {
         r.gather(image(9), 0, t0);
         assert!(offers(&mut r, 2, left));
         r.gather(image(2), 0, left);
-        // A piece of the older at half the bound each time, past the
-        // bound; the newer is offered each time just before the next.
-        let step = Duration::from_micros(fed.as_micros() / 2);
+        // A block of the older passes, not yet its proof, nine tenths of
+        // [`fed_within`] apart, past the bound; the newer is offered each
+        // time just before the next.
+        let step = Duration::from_micros(fed.as_micros() * 9 / 10);
         let mut t = left;
-        let mut index = 0;
+        let mut index = 2;
         while t + step < left + bound {
-            feed(&mut r, 2, index, t);
+            r.spread.block_done(index, true, t);
             index += 1;
             assert!(
                 !offers(&mut r, 9, t + step - Duration::from_secs(1)),
@@ -1886,8 +1944,8 @@ mod tests {
         };
         assert_eq!(named(&r, 5), Some((3, 0)), "to its helper, the gather");
         assert_eq!(named(&r, 7), Some((2, 4)), "elsewhere, what it holds");
-        r.spread.block_done(0, true);
-        r.spread.block_done(1, true);
+        r.spread.block_done(0, true, t0);
+        r.spread.block_done(1, true, t0);
         assert_eq!(named(&r, 7), Some((3, 2)), "proven, the gather");
     }
 

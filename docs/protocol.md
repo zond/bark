@@ -2639,12 +2639,13 @@ naming none.
 
    | | |
    |---|---|
-   | a gather that has taken a piece within **3 990.9 s** (3 600 s + 2 × 195 s + 872.8 ms; `bark-proto`, `update.rs`, `fed_within`) | no offer replaces it |
+   | **fed** | a proven gather, by every piece it takes; one not yet proven only by a block of it that passes its check, as nothing else in it is checked yet |
+   | a gather fed within **3 990.9 s** (3 600 s + 2 × 195 s + 872.8 ms; `bark-proto`, `update.rs`, `fed_within`) | no offer replaces it |
    | a gather not fed for that long | an unproven one gives way to an older image, and is then held off (below); a proven one to a newer image |
    | an unproven gather | gives way to a newer image at once |
    | a newer image | taken once the gathered one is installed or rejected |
-   | an unproven gather that has taken no piece for **104 866 s** (195 s + 2 × 3 763 × 13.86 s + 2 × 195 s + 872.8 ms; `unproven_within`) | given up; the firmware forgets the pieces |
-   | held off | the node takes no offer of a version given up so, or whose proof failed, for 104 866 s; of one left unfed for an older one, for as long at most, and only while its gather of an older image has taken a piece within 3 990.9 s |
+   | an unproven gather not fed for **104 866 s** (195 s + 2 × 3 763 × 13.86 s + 2 × 195 s + 872.8 ms; `unproven_within`) | given up; the firmware forgets the pieces |
+   | held off | the node takes no offer of a version given up so, or whose proof failed, for 104 866 s; of one left unfed for an older one, for as long at most, and only while its gather of an older image has been fed within 3 990.9 s |
    | at a reboot | a gather not yet proven is forgotten; one proven is proven again |
 
 2. A node that gathers hands its firmware every piece it has not handed
