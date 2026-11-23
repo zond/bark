@@ -199,10 +199,12 @@ fn a_sleepy_node_owns_no_other_node_s_message() {
         pending,
     );
     assert!(r.anchorless());
+    hear_neighbour(&mut r, &mut now, name(77), true);
     let send = AppCommand::Send {
         dst_pos: config.position,
         dst_id: name(78),
         payload: b"for another",
+        tag: 0,
     };
     r.handle(Event::App(send), now, &mut |_| {});
     assert_eq!(r.holding().count(), 1);
@@ -227,10 +229,12 @@ fn the_record_of_a_message_held_is_not_remembered() {
         Instant::ZERO + Duration::from_secs(5),
         pending,
     );
+    hear_neighbour(&mut r, &mut now, name(77), true);
     let send = AppCommand::Send {
         dst_pos: config.position,
         dst_id: name(78),
         payload: b"held over the reboot",
+        tag: 0,
     };
     r.handle(Event::App(send), now, &mut |_| {});
     let id = r.holding().next().expect("held");
@@ -428,10 +432,12 @@ fn a_reset_relay_is_a_new_one() {
     let mut used = Relay::new(config, 1);
     let mut now = Instant::ZERO;
     drive(&mut used, &mut now, Instant::ZERO + Duration::from_secs(30));
+    hear_neighbour(&mut used, &mut now, name(77), false);
     let send = AppCommand::Send {
         dst_pos: config.position,
         dst_id: NodeId([1; 6]),
         payload: b"queued",
+        tag: 0,
     };
     used.handle(Event::App(send), now, &mut |_| {});
     assert_eq!(used.holding().count(), 1);
@@ -777,11 +783,11 @@ fn a_packet_that_cannot_be_answered_is_not_taken() {
 }
 
 /// The application may send only while the relay can take a message:
-/// not while it boots, not while it holds one of the application's, and
-/// not while its bucket cannot hold a full frame on top of what is queued;
-/// then the relay wakes when it can. A send offered anyway is ignored. A
-/// message for a held-for sleepy node that finds the delivery queue full
-/// is held until it has a place.
+/// not while it has no live neighbour, not while it holds one of the
+/// application's, and not while its bucket cannot hold a full frame on top
+/// of what is queued; then the relay wakes when it can. A send offered
+/// anyway is ignored. A message for a held-for sleepy node that finds the
+/// delivery queue full is held until it has a place.
 #[test]
 fn the_application_waits_for_room() {
     use crate::ids::NodeId;
@@ -799,7 +805,9 @@ fn the_application_waits_for_room() {
     let mut r = Relay::new(config, 1);
     let mut now = Instant::ZERO;
     r.handle(Event::Wakeup, now, &mut |_| {});
-    // From its boot.
+    assert!(!r.accepts_send(now), "alone");
+    // From its boot, once it hears a neighbour.
+    hear_neighbour(&mut r, &mut now, name(77), false);
     assert!(r.accepts_send(now), "booting");
     drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
     assert!(r.accepts_send(now));
@@ -812,6 +820,7 @@ fn the_application_waits_for_room() {
             dst_pos: me,
             dst_id: NodeId([1; 6]),
             payload: &[k],
+            tag: 0,
         };
         r.handle(Event::App(cmd), now, &mut |_| {});
     };
@@ -838,6 +847,7 @@ fn the_application_waits_for_room() {
         DELIVERY_QUEUE,
         "the held one, now queued"
     );
+    hear_neighbour(&mut r, &mut now, name(77), false);
     assert!(r.accepts_send(now));
 
     // A bucket spent down to a full frame keeps the application
@@ -845,6 +855,7 @@ fn the_application_waits_for_room() {
     let mut r = Relay::new(config, 1);
     let mut now = Instant::ZERO;
     drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    hear_neighbour(&mut r, &mut now, name(77), false);
     r.radio.budget_mut().record(DEPTH, now);
     r.handle(Event::Wakeup, now, &mut |_| {});
     assert!(!r.accepts_send(now));
@@ -2095,6 +2106,29 @@ fn handing_to_the_nearer(text: &[u8]) -> (Relay, Instant, MsgId, Position, Posit
     (r, now, id, d_pos, e_pos)
 }
 
+/// `r` hears the heartbeat of neighbour `id`, a relay or, `alone`, a
+/// sleepy node without an anchor, a little north of it: it has a live
+/// neighbour, as its application's message needs (spec "Receiving DATA").
+fn hear_neighbour(r: &mut Relay, now: &mut Instant, id: NodeId, alone: bool) {
+    let me = r.config.position;
+    let p = Position {
+        lat: me.lat + 10_000,
+        ..me
+    };
+    let hb = Heartbeat {
+        sleepy: alone,
+        anchorless: alone,
+        carried: false,
+        home: r.home,
+        format: crate::wire::FORMAT,
+        map_point: false,
+        leaving: false,
+        id,
+        short: p.short(),
+    };
+    hear(r, now, &Packet::Heartbeat(hb));
+}
+
 /// `r` hears `p` on its home channel at `now`, and runs until the
 /// actions that follow are done; the frames it sent.
 fn hear(r: &mut Relay, now: &mut Instant, p: &Packet<'_>) -> Vec<(Instant, Frame)> {
@@ -2752,6 +2786,7 @@ fn the_application_s_message_is_given_back_while_its_way_on_is_taken() {
         dst_pos: far,
         dst_id: NOBODY,
         payload: &payload,
+        tag: 0,
     };
     assert!(r.accepts_send(now));
     let mut back = None;
@@ -3352,6 +3387,7 @@ fn own_refused(lats: &[i32], bans: u8) -> (Relay, Instant, Vec<(Instant, Frame)>
         dst_pos: at(100_000),
         dst_id: NOBODY,
         payload: &payload,
+        tag: 0,
     };
     assert!(r.accepts_send(now));
     let mut pending = Vec::new();
@@ -3619,8 +3655,260 @@ fn what_a_node_held_waits_for_room_when_it_turns_sleepy() {
     );
     let record = r.records.get(id).unwrap();
     assert!(!record.arrived() && record.parent().is_none());
+    assert!(record.tag().is_none(), "no application to go back to");
     assert!(traces.contains(&Trace::HandedOn { msg_id: id }));
     assert!(!traces.iter().any(|t| matches!(t, Trace::Dropped { .. })));
+
+    // With no neighbour at all it waits, routed again every 60 s, and
+    // nothing is given back (spec "Sleepy nodes").
+    while r.queue.len() > 1 {
+        r.queue.remove(0);
+    }
+    let mut actions = Vec::new();
+    r.handle(Event::Wakeup, now, &mut |a| actions.push(a));
+    let waits = r.queue.iter().last().unwrap();
+    assert_eq!(waits.msg_id(), id);
+    assert_eq!(waits.not_before, now + r.config.fade_retry);
+    let later = now + r.config.fade_retry.mul(3) + Duration::from_secs(1);
+    drive_all(&mut r, &mut now, later, Vec::new(), &mut |_, a| {
+        actions.push(a)
+    });
+    assert!(r.holding().any(|m| m == id), "still held");
+    assert!(!actions.iter().any(|a| matches!(
+        a,
+        Action::App(crate::AppEvent::GivenBack { .. }) | Action::Trace(Trace::Dropped { .. })
+    )));
+
+    // A neighbour heard that has it already: no candidate is left, and it
+    // is dropped, not given back.
+    hear_neighbour(&mut r, &mut now, name(60), true);
+    let slot = r.neighbours.slot_of(name(60)).unwrap();
+    r.records.get_mut(id).unwrap().handed_to(slot);
+    let mut actions = Vec::new();
+    let until = now + r.config.fade_retry + Duration::from_secs(1);
+    drive_all(&mut r, &mut now, until, Vec::new(), &mut |_, a| {
+        actions.push(a)
+    });
+    assert!(actions.contains(&Action::Trace(Trace::Dropped {
+        msg_id: id,
+        reason: crate::event::DropReason::NoRoute,
+    })));
+    assert!(!actions
+        .iter()
+        .any(|a| matches!(a, Action::App(crate::AppEvent::GivenBack { .. }))));
+}
+
+/// A relay R that hears S, a sleepy node with an anchor, beat (`heard`),
+/// and holds S's own message with S as its parent and no other neighbour:
+/// the search has no candidate, and the message goes back to S
+/// (spec "Return to parent"). `full`: R's delivery queue is full of fresh
+/// messages for another node. Returns what R sent and did.
+fn returning_to_sleepy(heard: bool, full: bool) -> (Relay, MsgId, NodeId, Vec<(Instant, Action)>) {
+    use crate::ids::MsgId;
+    use crate::tables::delivery::{Queued, DELIVERY_QUEUE};
+    use crate::tables::records::Record;
+    use crate::tables::send_queue::{Kind, Outgoing};
+    use crate::wire::Data;
+    let hour = Duration::from_secs(3600);
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        home_override: Channel::new(3),
+        sweep_interval: hour,
+        heartbeat_min: hour,
+        heartbeat_max: hour,
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    let me = r.config.position;
+    let s = name(50);
+    if heard {
+        let beat = Heartbeat {
+            sleepy: true,
+            anchorless: false,
+            carried: false,
+            home: r.home,
+            format: crate::wire::FORMAT,
+            map_point: false,
+            leaving: false,
+            id: s,
+            short: me.short(),
+        };
+        hear(&mut r, &mut now, &Packet::Heartbeat(beat));
+    }
+    if full {
+        for k in 0..DELIVERY_QUEUE as u32 {
+            let q = Queued::new(MsgId(k), me, NodeId([3; 6]), &k.to_be_bytes(), now).unwrap();
+            r.delivery.push(q);
+        }
+    }
+    let far = Position {
+        lat: me.lat + 100_000,
+        ..me
+    };
+    let data = Data {
+        wrong: 0,
+        sender_home: r.home,
+        dst_hop: NodeId::NONE,
+        src_hop: r.id(),
+        dst_pos: far,
+        dst_id: NOBODY,
+        hops: 1,
+        payload: b"no way from here",
+    };
+    let id = data.msg_id();
+    let at = r.record_place().unwrap();
+    r.records
+        .put(at, Record::new(id, Some((s, r.home)), (0, 0), now));
+    r.queue
+        .push(Outgoing::of(
+            &data,
+            r.home,
+            MIN_PREAMBLE_SYMBOLS,
+            Kind::Forward,
+        ))
+        .unwrap();
+    let mut seen = Vec::new();
+    r.handle(Event::Wakeup, now, &mut |a| seen.push((now, a)));
+    let pending = seen
+        .iter()
+        .filter(|(_, a)| matches!(a, Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_)))
+        .map(|(_, a)| *a)
+        .collect();
+    let until = now + Duration::from_secs(2);
+    drive_all(&mut r, &mut now, until, pending, &mut |t, a| {
+        seen.push((t, a))
+    });
+    (r, id, s, seen)
+}
+
+/// The return to a sleepy parent R hears beat waits in R's delivery queue
+/// as a message for that node does, and goes in its window, with the
+/// ordinary preamble: DATA to S, the message's own destination kept; gone
+/// unanswered, it stays there for the next beat
+/// (spec "Return to parent", "Delivery").
+#[test]
+fn a_return_to_a_sleepy_parent_goes_in_its_window() {
+    let (r, id, s, seen) = returning_to_sleepy(true, false);
+    let data: Vec<_> = seen
+        .iter()
+        .filter_map(|(_, a)| match a {
+            Action::Transmit(f) => match Packet::decode(f.payload()) {
+                Ok(Packet::Data(d)) => Some((d.dst_hop, d.dst_id, d.hops, f.preamble_symbols)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    // Unanswered here, it is offered all its attempts.
+    let attempts = r.config.hop_attempts as usize;
+    assert_eq!(
+        data,
+        [(s, NOBODY, 1, MIN_PREAMBLE_SYMBOLS)].repeat(attempts)
+    );
+    let q = r.delivery.iter().find(|q| q.msg_id == id).expect("held");
+    assert!(q.returns() && q.node == s && q.dst_id == NOBODY);
+    assert!(!seen
+        .iter()
+        .any(|(_, a)| matches!(a, Action::Trace(Trace::Dropped { .. }))));
+}
+
+/// A return to a sleepy parent that finds no place in the delivery queue
+/// is dropped, as is one whose node is no longer heard; nobody is told
+/// (spec "Return to parent").
+#[test]
+fn a_return_to_a_sleepy_parent_is_dropped_with_no_place_or_unheard() {
+    use crate::event::DropReason;
+    for (heard, full, why) in [
+        (true, true, DropReason::ReturnNoPlace),
+        (false, false, DropReason::ReturnUnheard),
+    ] {
+        let (r, id, _, seen) = returning_to_sleepy(heard, full);
+        let dropped = Action::Trace(Trace::Dropped {
+            msg_id: id,
+            reason: why,
+        });
+        assert!(seen.iter().any(|(_, a)| *a == dropped), "{why:?}");
+        assert!(!r.holding().any(|m| m == id));
+        assert!(!seen.iter().any(|(_, a)| matches!(
+            a,
+            Action::Transmit(_) | Action::App(crate::AppEvent::GivenBack { .. })
+        ) && !matches!(a, Action::Transmit(f) if !matches!(Packet::decode(f.payload()), Ok(Packet::Data(_))))));
+    }
+}
+
+/// The application's message, held while its last live neighbour's entry
+/// expires, goes back to it, no neighbour, with its tag, at the expiry and
+/// not later; the node takes none until it hears a neighbour again
+/// (spec "Receiving DATA").
+#[test]
+fn the_application_s_message_goes_back_when_the_last_neighbour_goes() {
+    use crate::event::Why;
+    use crate::ids::MsgId;
+    use crate::tables::records::Record;
+    use crate::tables::send_queue::{Kind, Message, Outgoing};
+    let hour = Duration::from_secs(3600);
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        home_override: Channel::new(3),
+        sweep_interval: hour,
+        heartbeat_min: hour,
+        heartbeat_max: hour,
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    hear_neighbour(&mut r, &mut now, name(77), false);
+    assert!(r.accepts_send(now));
+    let expiry = r.neighbours.expiry_of(name(77)).unwrap();
+    // Held, as by a wait of its own, past the expiry.
+    let far = Position {
+        lat: r.config.position.lat + 100_000,
+        ..r.config.position
+    };
+    let id = MsgId::of(far, NOBODY, b"kept");
+    r.own.id = Some(id);
+    let at = r.record_place().unwrap();
+    r.records.put(at, Record::own(id, 5, now));
+    let out = Outgoing {
+        not_before: expiry + hour,
+        since: now,
+        ..Outgoing::new(
+            Message::new(far, NOBODY, b"kept"),
+            1,
+            NodeId::NONE,
+            r.home,
+            MIN_PREAMBLE_SYMBOLS,
+            Kind::Forward,
+        )
+    };
+    r.queue.push(out).unwrap();
+    assert!(!r.accepts_send(now), "it holds one");
+    let mut seen = Vec::new();
+    r.handle(Event::Wakeup, now, &mut |a| seen.push((now, a)));
+    drive_all(
+        &mut r,
+        &mut now,
+        expiry + Duration::from_secs(5),
+        Vec::new(),
+        &mut |t, a| seen.push((t, a)),
+    );
+    let back: Vec<_> = seen
+        .iter()
+        .filter_map(|(t, a)| match *a {
+            Action::App(crate::AppEvent::GivenBack {
+                msg_id, why, tag, ..
+            }) if msg_id == id => Some((*t, why, tag)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(back, [(expiry, Why::NoNeighbour, 5)]);
+    assert!(r.holding().next().is_none() && !r.knows(id));
+    assert!(!r.accepts_send(now));
+    hear_neighbour(&mut r, &mut now, name(78), false);
+    assert!(r.accepts_send(now), "a neighbour heard again");
 }
 
 /// A relay on channel 3 that runs image version 9 and hears two

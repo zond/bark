@@ -6,7 +6,7 @@
 use crate::links::{BuildStats, Site};
 use crate::metrics::{
     percentile, DropCounts, HopPlaceRefusals, NodeMetrics, RxCounts, SleepMetrics, TypeAirtime,
-    AFTER_BEAT, AFTER_TAKE, FIRST_TRIES,
+    WhyCounts, AFTER_BEAT, AFTER_TAKE, FIRST_TRIES,
 };
 use crate::sim::{Fate, Sim};
 use bark_proto::gps::{GPS_CURRENT_UA, GPS_STANDBY_UA};
@@ -45,6 +45,17 @@ pub struct AppSummary {
     pub drops: DropCounts,
     /// Messages whose last reported fate is a drop, by reason.
     pub lost_dropped: DropCounts,
+    /// Messages given back to their origin's application that it did not
+    /// offer again, by why: busy past its patience, or no way.
+    pub lost_given_back: WhyCounts,
+    /// Messages given back to their applications, by why (events).
+    pub given_back: WhyCounts,
+    /// Returns to a sleepy parent: taken from the delivery queue, dropped
+    /// for want of a place there, and dropped with the node no longer
+    /// heard (spec "Return to parent").
+    pub returns_to_sleepy: [u64; 3],
+    /// Mailbox replies given back as no way, and dropped.
+    pub replies_no_way: u64,
     /// Of those, the ones dropped by a node other than their origin: lost
     /// in the network rather than refused or given up where they began.
     pub lost_in_network: DropCounts,
@@ -360,12 +371,14 @@ impl Sim {
             max_ms: ms(100.0),
         });
         let (mut lost_dropped, mut unaccounted) = (DropCounts::default(), 0);
+        let mut lost_given_back = WhyCounts::default();
         let (mut in_flight, mut unreachable) = (0, 0);
         let mut lost_at = BTreeMap::new();
         for (_, f, reachable) in self.messages() {
             unreachable += u64::from(!reachable);
             match f {
                 Fate::Dropped { reason, .. } => lost_dropped.add(reason),
+                Fate::GivenBack { why, .. } => lost_given_back.add(why),
                 Fate::Unaccounted => unaccounted += 1,
                 Fate::InFlight => in_flight += 1,
                 Fate::Delivered => {}
@@ -469,6 +482,14 @@ impl Sim {
                 shared_ids: m.app.shared_ids,
                 drops: m.app.drops,
                 lost_dropped,
+                lost_given_back,
+                given_back: m.app.given_back,
+                returns_to_sleepy: [
+                    m.app.returns_to_sleepy,
+                    m.app.drops.return_no_place,
+                    m.app.drops.return_unheard,
+                ],
+                replies_no_way: m.app.replies_no_way,
                 lost_in_network,
                 lost_at,
                 unaddressed: m.app.unaddressed,
@@ -702,6 +723,9 @@ impl Sim {
             Fate::Dropped { node, reason } => {
                 Some(format!("{}: dropped {reason:?}", self.label(node)))
             }
+            Fate::GivenBack { node, why } => {
+                Some(format!("{}: given back {why:?}", self.label(node)))
+            }
             Fate::Delivered | Fate::Unaccounted | Fate::InFlight => None,
         }
     }
@@ -796,12 +820,13 @@ impl Summary {
             .unwrap_or_else(|| "no latency samples".into());
         let _ = writeln!(
             s,
-            "messages: {} originated, {} delivered ({:.1}%), {} dropped, {} in flight, \
-             {} unaccounted; {lat}",
+            "messages: {} originated, {} delivered ({:.1}%), {} dropped, {} given back, \
+             {} in flight, {} unaccounted; {lat}",
             a.originated,
             a.delivered,
             100.0 * a.delivery_ratio,
             a.lost_dropped.total(),
+            a.lost_given_back.total(),
             a.in_flight,
             a.unaccounted
         );
@@ -844,6 +869,26 @@ impl Summary {
                 let list: Vec<String> = causes.iter().map(|(k, n)| format!("{k} {n}")).collect();
                 let _ = writeln!(s, "lost {what}, by cause: {}", list.join(", "));
             }
+        }
+        let g = &a.given_back;
+        if g.total() > 0 {
+            let _ = writeln!(
+                s,
+                "given back to the application: busy {}, no neighbour {}, no way {}; \
+                 not offered again: busy {}, no way {}",
+                g.busy, g.no_neighbour, g.no_way, a.lost_given_back.busy, a.lost_given_back.no_way
+            );
+        }
+        let [taken, no_place, unheard] = a.returns_to_sleepy;
+        if taken + no_place + unheard > 0 {
+            let _ = writeln!(
+                s,
+                "returns to a sleepy parent: {taken} taken in its window, dropped {no_place} \
+                 for want of a place, {unheard} with the node no longer heard"
+            );
+        }
+        if a.replies_no_way > 0 {
+            let _ = writeln!(s, "mailbox replies dropped as no way: {}", a.replies_no_way);
         }
         for (at, n) in &a.lost_at {
             let _ = writeln!(s, "  lost {n:>5} at {at}");

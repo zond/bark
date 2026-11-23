@@ -135,7 +135,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Held {
                 msg_id: q.msg_id,
                 dst_pos: q.dst_pos,
-                dst_id: q.node,
+                dst_id: q.dst_id,
                 payload: q.payload(),
                 hops: q.hops,
                 wrong: q.wrong,
@@ -143,10 +143,23 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
         }
         let delivery = self.delivery.iter().map(move |q| {
-            let at = HeldAt::Delivery {
-                waits_for: q.waits_for,
-                age: now.since(q.enqueued),
-                flushed: q.flushed,
+            let at = match q.returns() {
+                // Put back, it is routed to its parent again, and so held
+                // for it again (spec "Return to parent").
+                true => HeldAt::Forward {
+                    parent: Some(
+                        self.records
+                            .get(q.msg_id)
+                            .and_then(Record::parent)
+                            .unwrap_or((q.node, self.home)),
+                    ),
+                    place: 0,
+                },
+                false => HeldAt::Delivery {
+                    waits_for: q.waits_for,
+                    age: now.since(q.enqueued),
+                    flushed: q.flushed,
+                },
             };
             held(q, at)
         });

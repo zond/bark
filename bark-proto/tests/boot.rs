@@ -68,6 +68,7 @@ fn send(h: &mut Harness<Relay>, from: usize, to: usize, text: &[u8]) -> MsgId {
             dst_pos,
             dst_id,
             payload: text,
+            tag: 0,
         },
     );
     MsgId::of(dst_pos, dst_id, text)
@@ -137,11 +138,11 @@ fn a_relay_bursts_and_is_answered() {
     assert_eq!(relays[..2], [0, 1]);
 }
 
-/// A relay's application may send from the boot. With no relay known yet
-/// its text waits, and goes at the first relay heard, not dropped; it is
-/// delivered within the burst.
+/// A relay's application may send only while it has a live neighbour
+/// (spec "Receiving DATA"): booting alone it takes no text; once it hears
+/// a relay it does, and the text is delivered within the burst.
 #[test]
-fn a_booting_relay_holds_its_text_until_it_hears_a_relay() {
+fn a_booting_relay_takes_a_text_once_it_hears_a_neighbour() {
     let (a, b) = (0, 1);
     let mut h = Harness::powered(vec![node(0.0, true, 3), node(300.0, true, 4)]);
     h.link(a, b);
@@ -150,8 +151,10 @@ fn a_booting_relay_holds_its_text_until_it_hears_a_relay() {
     h.run_until(planted, |_| false);
     h.run_until(planted + secs(1), |h| !h.nodes[b].boot.is_empty());
     assert!(h.nodes[b].core.booting());
-    assert!(h.accepts(b), "it takes a text at boot");
-    let text = send(&mut h, b, a, b"from the first second");
+    assert!(!h.accepts(b), "alone, it takes no text");
+    assert!(h.run_until(planted + secs(40), |h| h.accepts(b)));
+    assert!(h.nodes[b].core.booting(), "within its first rotation");
+    let text = send(&mut h, b, a, b"from the first relay heard");
     assert!(h.run_until(planted + secs(40), |h| delivered(h, a, text)));
     let dropped = h.nodes[b]
         .traces

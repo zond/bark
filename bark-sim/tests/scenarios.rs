@@ -1,8 +1,8 @@
 //! Whole-scenario tests: determinism, the capacity-sized run, and S1.
 
 use bark_proto::node::CLOCK_DRIFT_PPM;
+use bark_proto::Why;
 use bark_sim::links::{FadingParams, Model, Site};
-use bark_sim::metrics::DropReason;
 use bark_sim::scenario::{
     Availability, Destination, InterfererSpec, Placement, RoleSpec, ScriptAction, TrafficSpec,
 };
@@ -260,15 +260,16 @@ fn s1_parses_and_runs() {
 
 /// One run of S1. Once the relays know each other, a worst-case rotation
 /// after their first (spec "Channel at boot", "Heartbeat"), every text
-/// with an address is delivered until B is removed at 20 minutes; after
-/// that every one is dropped at A for want of a route
-/// (spec "Return to parent"), or, while A waits out the ban on B, refused
-/// at LA and given back to its application with that wait
-/// (spec "A sleepy node's own message"). The sleepy node LA hands its
-/// texts to A, then, as the origin of their search
-/// (`docs/one-node-type-2026-10-16.md`); the application skips the texts
-/// due while LA holds one. Every message has a fate, except one sent as
-/// the run ends.
+/// with an address is delivered until B is removed at 20 minutes. After
+/// that the search of each from LA, a sleepy node, ends at its anchor A,
+/// which returns it to LA in LA's window, and LA, its origin, gives it
+/// back to its application, no way (spec "Return to parent"); or, while A
+/// waits out the ban on B, A refuses it and LA gives it back with that
+/// wait, busy, and the application gives up a wait past its patience
+/// (spec "A sleepy node's own message"). The last may still wait at A for
+/// LA's next beat as the run ends. The application skips the texts due
+/// while LA holds one. Every message has a fate, except one sent as the
+/// run ends.
 fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
     let seed = sc.seed;
     let mut sim = Sim::new(sc).expect("S1 builds");
@@ -293,26 +294,32 @@ fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
         "seed {seed}: {before:?}\n{}",
         s.table()
     );
-    let a_no_route = Fate::Dropped {
-        node: 0,
-        reason: DropReason::NoRoute,
-    };
     // Texts skipped while LA held one fall before the removal or after it.
     let after_n = after.len() as u64;
     assert_eq!(after_n, 20 - sim.skipped_since(removal), "seed {seed}");
-    let given_back = |f: &Fate| {
-        matches!(
-            f,
-            Fate::Dropped {
-                reason: DropReason::Pushback,
-                ..
-            }
-        )
-    };
+    let la = sim
+        .message_rows()
+        .iter()
+        .map(|r| r.src)
+        .next()
+        .expect("texts");
+    let given_back = |f: &Fate| matches!(f, Fate::GivenBack { node, .. } if *node == la);
     assert!(
-        after.iter().all(|(_, f)| *f == a_no_route || given_back(f)),
+        after
+            .iter()
+            .all(|(_, f)| given_back(f) || *f == Fate::InFlight),
         "seed {seed}: {after:?}"
     );
+    assert!(
+        after.iter().any(|(_, f)| *f
+            == Fate::GivenBack {
+                node: la,
+                why: Why::NoWay
+            }),
+        "seed {seed}: {after:?}"
+    );
+    assert!(s.app.returns_to_sleepy[0] > 0, "seed {seed}");
+    assert_eq!(s.app.lost_dropped.total(), 0, "seed {seed}");
     // The summary splits the run the same way.
     let phases = &s.app.phases;
     let names: Vec<_> = phases.iter().map(|p| p.phase.as_str()).collect();
@@ -330,12 +337,61 @@ fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
         "seed {seed}"
     );
     let back = after.iter().filter(|(_, f)| given_back(f)).count() as u64;
-    let no_route = off.lost_at.get("relay 0 (A): dropped NoRoute").copied();
-    assert_eq!(no_route.unwrap_or(0) + back, after_n, "seed {seed}");
-    assert_eq!(off.lost_at.len(), 1 + usize::from(back > 0), "seed {seed}");
+    assert_eq!(off.lost_at.values().sum::<u64>(), back, "seed {seed}");
+    assert_eq!(back + off.in_flight, after_n, "seed {seed}");
     // B was removed at 20 minutes and its relay core stopped.
     assert!(sim.resting(1).is_none());
     assert!(sim.resting(0).is_some() && sim.resting(2).is_some());
+}
+
+/// A sleepy node LA whose anchor A has no way to the destination, a relay
+/// nobody hears: A returns each text to LA in LA's window, and LA, the
+/// origin, gives it back to its application, no way, which does not offer
+/// it again (spec "Return to parent", "Sending"). Nothing is dropped and
+/// nothing is left over.
+#[test]
+fn a_sleepy_node_whose_anchor_has_no_way_gets_its_text_back() {
+    let mut sc = Scenario::new("no-way", 1, 1800.0)
+        .point("A", RoleSpec::Relay, 0.0, 0.0)
+        .point("LA", RoleSpec::Leaf, 50.0, 0.0)
+        .point("C", RoleSpec::Relay, 5_000.0, 0.0)
+        .link("A", "LA", -80.0);
+    sc.settle_s = 390.0;
+    sc.traffic.push(TrafficSpec::Periodic {
+        from: "LA".into(),
+        to: "C".into(),
+        interval_s: 120.0,
+        start_s: Some(600.0),
+        payload_bytes: 40,
+    });
+    let mut sim = Sim::new(&sc).expect("builds");
+    sim.run();
+    let s = sim.summary();
+    let rows = sim.message_rows();
+    let la = rows.first().expect("texts").src;
+    let ended: Vec<_> = rows
+        .iter()
+        .filter(|r| r.t_s + 600.0 < sc.duration_s)
+        .collect();
+    assert!(ended.len() >= 5, "{} texts", ended.len());
+    for r in &ended {
+        assert_eq!(
+            r.fate,
+            Fate::GivenBack {
+                node: la,
+                why: Why::NoWay
+            },
+            "text {}\n{}",
+            r.tag,
+            s.table()
+        );
+    }
+    assert_eq!(s.app.delivered, 0);
+    assert_eq!(s.app.lost_dropped.total(), 0, "{}", s.table());
+    assert!(s.app.given_back.no_way >= ended.len() as u64);
+    assert!(s.app.returns_to_sleepy[0] >= ended.len() as u64);
+    assert_eq!(s.app.returns_to_sleepy[1..], [0, 0]);
+    accounted(&sim, "no way");
 }
 
 /// S1b: A and C, which cannot hear each other, hand to B at the same
@@ -610,9 +666,10 @@ fn on_the_desk_a_text_reaches_its_node_at_once() {
 /// to each other. Settled, every text between A and C goes through B, two
 /// hand-overs, in under a second. With C off, B demotes it on the first
 /// text within the bound of a message held on one neighbour, 14.2 s (spec
-/// "Bounds"), and returns each text to A, which drops it; with B off too,
-/// A demotes B within the same bound and drops its texts at once, as long
-/// as B's entry lasts (spec "Neighbour table").
+/// "Bounds"), and returns each text to A, which gives it back to its
+/// application, no way; with B off too, A demotes B within the same bound
+/// and gives its texts back at once, as long as B's entry lasts
+/// (spec "Neighbour table", "Return to parent").
 #[test]
 fn on_the_bench_line_a_text_goes_through_the_middle() {
     for seed in 1..=5 {
@@ -650,9 +707,9 @@ fn bench_line(sc: &Scenario) {
         let l = r.latency_s.expect("delivered");
         assert!(l < 1.0, "seed {seed}: text {} took {l} s", r.tag);
     }
-    let a_no_route = Fate::Dropped {
+    let a_no_way = Fate::GivenBack {
         node: a,
-        reason: DropReason::NoRoute,
+        why: Why::NoWay,
     };
     let trace = std::fs::read_to_string(&file).unwrap();
     let time = |line: &str| -> f64 { line.split(' ').next().unwrap().parse().unwrap() };
@@ -684,7 +741,7 @@ fn bench_line(sc: &Scenario) {
         .collect();
     assert_eq!(off.len(), 16, "a text a minute from A for 15.5 minutes");
     for r in &off {
-        assert_eq!(r.fate, a_no_route, "seed {seed}: text {}", r.tag);
+        assert_eq!(r.fate, a_no_way, "seed {seed}: text {}", r.tag);
         let returned = format!("relay 1 (B): returned #{} to relay 0 (A)", r.tag);
         assert_eq!(
             r.t_s < b_off,

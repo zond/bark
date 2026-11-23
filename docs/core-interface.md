@@ -134,30 +134,43 @@ and `Action::Serve`, the queries
 command `AppCommand::Ask` and the event `AppEvent::Status`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
-at most 224 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
-asks again after every `handle`, so an application waits for its node; a firmware's async
-send awaits it. The core reports nothing back about the message but a give-back (below), not even the first hop's
+at most 224 bytes (§7) and a one-byte `tag`, which of the application's senders it is
+from: a phone, the mailbox, whatever the driver tells apart. The core never reads the tag;
+the message's record keeps it at the origin (spec "Message records") and hands it back
+with the message, so a give-back that comes minutes later reaches the sender that sent it.
+The driver offers one only while `accepts_send(now)` is true, and asks again after every
+`handle`, so an application waits for its node; a firmware's async send awaits it. The core
+reports nothing back about the message but a give-back (below), not even the first hop's
 ACK, which a user could read as delivered: from the moment it is taken the node is either
-sending it or waiting to. The protocol has no end-to-end acknowledgement (spec "Addresses"), so
-whether the message arrived is for the app to find out inside its payload. A message the
-node drops is reported only as `Trace::Dropped` (§3 rule 9).
+sending it, waiting to, or will give it back. The protocol has no end-to-end
+acknowledgement (spec "Addresses"), so whether the message arrived is for the app to find
+out inside its payload. A message the node drops is reported only as `Trace::Dropped`
+(§3 rule 9).
 
 A node holds one message of its application's at a time, until its first hop takes it.
-It accepts a message from its boot on while it holds none and does not drain (below), its
-send queue takes a full
-frame on top of what it holds (spec "Send queue"), and not every neighbour is banned, or
-for a sleepy node with a live anchor, the anchor (spec "Receiving DATA"). When only its
-bucket and bans keep it from accepting, its `next_wakeup()` includes the moment both allow
-it. A message the node holds waits for bans as spec "Bans" says; one for a
-sleepy node it holds for that finds the delivery queue full waits for a
-place (spec "Receiving DATA"). A message the node's own gate refuses
-when it is offered (spec "Receiving DATA"), or a sleepy node's own message that
-its first hop refuses, goes back to the application (spec "A sleepy node's own message"):
-the core emits `AppEvent::GivenBack` with the message's ID and `retry_at`, the end of the
-wait the refusal asked for, and `Trace::Dropped` with `DropReason::Pushback` for the log;
-`accepts_send` stays false until `retry_at`, which `next_wakeup()` includes. The driver
-hands the event to the application, which may offer the message again then or give it up. One whose hand-over goes
-unanswered waits in the node as in that section.
+It accepts a message while it has a live neighbour, holds none and does not drain (below),
+its send queue takes a full frame on top of what it holds (spec "Send queue"), and not
+every neighbour is banned, or for a sleepy node with a live anchor, the anchor (spec
+"Receiving DATA"). When only its bucket and bans keep it from accepting, its
+`next_wakeup()` includes the moment both allow it; a neighbour heard is an event, after
+which the driver asks again. A message the node holds waits for bans as spec "Bans" says;
+one for a sleepy node it holds for that finds the delivery queue full waits for a place
+(spec "Receiving DATA").
+
+The node gives its application's message back (spec "Addresses") as
+`AppEvent::GivenBack` with the message's ID, its `tag`, `why`, and `retry_at`, with
+`Trace::Dropped` and `DropReason::GivenBack` for the log. `why` is `event::Why`, whose
+codes are those of the phone link's Given back (spec "Sending"):
+
+| `why` | when | `retry_at` |
+|---|---|---|
+| `Busy` | the node's own gate refuses it when it is offered (spec "Receiving DATA"), or a sleepy node's first hop refuses it (spec "A sleepy node's own message") | the end of the wait the refusal asked for; `accepts_send` stays false until then, and `next_wakeup()` includes it |
+| `NoNeighbour` | the node still holds it when its last live neighbour's entry expires, which `next_wakeup()` includes; `accepts_send` is false until a neighbour is heard | now |
+| `NoWay` | its search came back to the node with no candidate left (spec "Return to parent"), a sleepy node's in its window from its anchor | now |
+
+The driver hands the event to the sender the tag names, which may offer the message again
+or give it up. One whose hand-over goes unanswered waits in the node as
+spec "A sleepy node's own message" says.
 
 A `Send` while `accepts_send` is false, or with a longer payload, breaks the contract like
 a second outstanding excursion: the core ignores it, and the test and simulator drivers

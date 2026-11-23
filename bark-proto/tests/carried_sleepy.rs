@@ -322,6 +322,7 @@ fn a_carried_sleepy_node_plugged_in_is_a_carried_relay() {
             dst_pos: dst,
             dst_id: tid,
             payload: text,
+            tag: 0,
         },
     );
     let id = MsgId::of(dst, tid, text);
@@ -346,6 +347,7 @@ fn a_carried_sleepy_node_plugged_in_is_a_carried_relay() {
             dst_pos: dst,
             dst_id: tid,
             payload: text,
+            tag: 0,
         },
     );
     let id = MsgId::of(dst, tid, text);

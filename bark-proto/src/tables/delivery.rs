@@ -6,8 +6,8 @@
 //!
 //! A message already queued is not queued twice (same `msg_id`): a
 //! duplicate that slipped past the message records costs nothing here.
-//! The 6 bytes of [`Queued::waits_for`] fit in what the entry's alignment
-//! left free.
+//! The 6 bytes each of [`Queued::waits_for`] and [`Queued::dst_id`] fit in
+//! what the entry's alignment left free.
 
 use crate::ids::{MsgId, NodeId};
 use crate::node::Config;
@@ -47,11 +47,14 @@ const _: () = assert!(INBOX == 23);
 pub struct Queued {
     /// The message.
     pub msg_id: MsgId,
-    /// Its destination position, which with `node` and the payload makes
+    /// Its destination position, which with `dst_id` and the payload makes
     /// its ID.
     pub dst_pos: Position,
-    /// The node it is for.
+    /// The node it is for: its destination, or the sleepy node it returns
+    /// to (spec "Return to parent").
     pub node: NodeId,
+    /// Its destination node.
+    pub dst_id: NodeId,
     /// The neighbour leaving the air it waits for; [`NodeId::NONE`] for a
     /// message to deliver from here.
     pub waits_for: NodeId,
@@ -74,7 +77,8 @@ pub struct Queued {
 }
 
 impl Queued {
-    /// A message, or `None` if `payload` exceeds [`MAX_PAYLOAD`].
+    /// A message for `node`, its destination, or `None` if `payload`
+    /// exceeds [`MAX_PAYLOAD`].
     pub fn new(
         msg_id: MsgId,
         dst_pos: Position,
@@ -89,6 +93,7 @@ impl Queued {
             msg_id,
             dst_pos,
             node,
+            dst_id: node,
             waits_for: NodeId::NONE,
             enqueued: now,
             flushed: false,
@@ -109,7 +114,13 @@ impl Queued {
 
     /// The message.
     pub fn message(&self) -> Message {
-        Message::new(self.dst_pos, self.node, self.payload())
+        Message::new(self.dst_pos, self.dst_id, self.payload())
+    }
+
+    /// Whether it returns to a sleepy node, its parent, rather than goes to
+    /// its destination (spec "Return to parent").
+    pub fn returns(&self) -> bool {
+        self.node != self.dst_id
     }
 
     /// Whether it waits for a neighbour leaving the air, not for
@@ -124,6 +135,7 @@ impl core::fmt::Debug for Queued {
         f.debug_struct("Queued")
             .field("msg_id", &self.msg_id)
             .field("node", &self.node)
+            .field("dst_id", &self.dst_id)
             .field("waits_for", &self.waits_for)
             .field("enqueued", &self.enqueued)
             .field("payload", &self.payload())
@@ -162,6 +174,7 @@ impl<const N: usize> DeliveryQueue<N> {
             msg_id: MsgId(0),
             dst_pos: Position { lat: 0, lon: 0 },
             node: NodeId::NONE,
+            dst_id: NodeId::NONE,
             waits_for: NodeId::NONE,
             enqueued: Instant::ZERO,
             flushed: false,

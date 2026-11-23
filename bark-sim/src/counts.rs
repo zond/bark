@@ -97,9 +97,10 @@ impl Sim {
                 }
             }
             Trace::Seen { .. } => c.seen_acted += 1,
-            Trace::ReturnedToParent { .. } => {
+            Trace::ReturnedToParent { sleepy, .. } => {
                 c.handed_over += 1;
                 c.returned += 1;
+                self.metrics.app.returns_to_sleepy += u64::from(sleepy);
             }
             _ => {}
         }

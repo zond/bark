@@ -10,7 +10,7 @@ use bark_proto::tables::heard::{beat_period, HeardParams};
 use bark_proto::wire::{Data, Packet};
 use bark_proto::{
     AppCommand, AppEvent, Config, DropReason, Duration, Instant, MsgId, NodeId, Position, Relay,
-    Trace,
+    Trace, Why,
 };
 use common::{secs, Harness};
 
@@ -75,6 +75,7 @@ fn send(h: &mut Harness<Relay>, from: usize, to: usize, text: &[u8]) -> MsgId {
             dst_pos,
             dst_id,
             payload: text,
+            tag: 0,
         },
     );
     MsgId::of(dst_pos, dst_id, text)
@@ -458,31 +459,141 @@ fn a_relay_answers_an_anchorless_beat_and_brings_the_node_in() {
     assert_eq!(after, 0);
 }
 
-/// A sleepy node's own message with no live neighbour waits for one,
-/// past the delivery TTL: no message ends by age
-/// (spec "A sleepy node's own message").
+/// A sleepy node with no live neighbour takes no message from its
+/// application (spec "Receiving DATA").
 #[test]
-fn a_sleepy_node_alone_keeps_its_message() {
+fn a_sleepy_node_alone_takes_no_message() {
     let mut h = Harness::powered(vec![node(0.0, true, 41)]);
     h.run_until(at(400), |_| false);
-    let text = b"nobody there";
-    let (dst_pos, dst_id) = (pos(500.0, 0.0), NodeId([9; 6]));
+    assert!(!h.accepts(0));
+    h.run_until(at(1400), |_| false);
+    assert!(h.nodes[0].core.anchorless());
+    assert!(!h.accepts(0), "anchorless and alone");
+}
+
+/// What node `i`'s application was given back of message `id`: when,
+/// why, and the tag it was sent with.
+fn given_back(h: &Harness<Relay>, i: usize, id: MsgId) -> Vec<(Instant, Why, u8)> {
+    h.nodes[i]
+        .app
+        .iter()
+        .filter_map(|(t, e)| match *e {
+            AppEvent::GivenBack {
+                msg_id, why, tag, ..
+            } if msg_id == id => Some((*t, why, tag)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Node `from`'s application sends `text` with `tag` to a node nobody
+/// knows, far away: there is no way to it.
+fn send_nowhere(h: &mut Harness<Relay>, from: usize, text: &[u8], tag: u8) -> MsgId {
+    let (dst_pos, dst_id) = (pos(20_000.0, 0.0), NodeId([9; 6]));
     h.command(
-        0,
+        from,
         AppCommand::Send {
             dst_pos,
             dst_id,
             payload: text,
+            tag,
         },
     );
-    let id = MsgId::of(dst_pos, dst_id, text);
+    MsgId::of(dst_pos, dst_id, text)
+}
+
+/// A sleepy node S hands its own message to its anchor R, which has no
+/// other neighbour: R takes it, the search finding no candidate, and
+/// returns it to S, its parent (spec "Receiving DATA", "Message records").
+/// The return waits in R's delivery queue and goes in S's window after a
+/// beat, with the ordinary preamble, addressed as the message is; S, its
+/// origin with nothing left, gives it back to its application, no way,
+/// with the tag it was sent with. Two messages with two tags each come
+/// back with their own (spec "Return to parent", "Sending").
+#[test]
+fn a_sleepy_node_s_message_with_no_way_comes_back_to_it_in_its_window() {
+    let (r, s) = (0, 1);
+    let mut h = Harness::powered(vec![node(0.0, false, 91), node(50.0, true, 92)]);
+    h.link(r, s);
+    h.start_at(s, at(10));
+    h.run_until(at(1000), |_| false);
+    let (nr, ns) = (h.nodes[r].core.id(), h.nodes[s].core.id());
+    assert_eq!(h.nodes[s].core.anchor().map(|a| a.id), Some(nr));
+    for (text, tag) in [(&b"nowhere to go"[..], 7), (&b"nor this one"[..], 200)] {
+        assert!(h.run_until(h.now + secs(60), |h| h.accepts(s)));
+        let id = send_nowhere(&mut h, s, text, tag);
+        let back = |h: &Harness<Relay>| !given_back(h, s, id).is_empty();
+        assert!(
+            h.run_until(h.now + secs(700), back),
+            "{:?}",
+            h.nodes[r].traces
+        );
+        let given = given_back(&h, s, id);
+        assert_eq!(given.len(), 1);
+        let (t, why, got) = given[0];
+        assert_eq!((why, got), (Why::NoWay, tag));
+        // The return R sent S: addressed to S, the message's own
+        // destination kept, the ordinary preamble, after a beat of S's.
+        let returns: Vec<_> = h.nodes[r]
+            .sent
+            .iter()
+            .filter_map(|(at, f)| match Packet::decode(f.payload()) {
+                Ok(Packet::Data(d)) if d.msg_id() == id => Some((*at, d.dst_hop, d.dst_id, f)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(returns.len(), 1, "one return, taken at once");
+        let (sent, to, dst, frame) = returns[0];
+        assert_eq!((to, dst), (ns, NodeId([9; 6])));
+        assert_eq!(frame.preamble_symbols, MIN_PREAMBLE_SYMBOLS);
+        let beat = beats(&h, s).into_iter().map(|b| b.0).rfind(|&b| b <= sent);
+        assert!(beat.is_some_and(|b| sent < b + secs(4)), "in S's window");
+        assert!(t >= sent);
+        assert!(h.nodes[r].traces.iter().any(|(_, x)| matches!(
+            x,
+            Trace::ReturnedToParent { msg_id, to, sleepy: true, .. } if *msg_id == id && *to == ns
+        )));
+        assert!(
+            !h.nodes[r]
+                .traces
+                .iter()
+                .any(|(_, x)| matches!(x, Trace::Dropped { msg_id, .. } if *msg_id == id)),
+            "the anchor drops nothing"
+        );
+        assert!(h.nodes[r].core.holding().next().is_none());
+        assert!(!h.nodes[s].core.knows(id), "offered again, it is new");
+    }
+}
+
+/// A sleepy node whose anchor is silent keeps its own message while the
+/// anchor stays live, as it does whatever its age: it offers it again
+/// after 60 s, then 120 s, and gives nothing back
+/// (spec "A sleepy node's own message", unanswered).
+#[test]
+fn a_sleepy_node_whose_anchor_is_silent_tries_again() {
+    let (r, s) = (0, 1);
+    let mut h = Harness::powered(vec![node(0.0, false, 93), node(50.0, true, 94)]);
+    h.link(r, s);
+    h.start_at(s, at(10));
+    h.run_until(at(1000), |_| false);
+    h.kill(r);
+    let id = send_nowhere(&mut h, s, b"anyone?", 3);
     let start = h.now;
-    h.run_until(start + Config::default().delivery_ttl.mul(2), |_| false);
-    assert!(!h.nodes[0]
-        .traces
+    h.run_until(start + secs(400), |_| false);
+    assert!(given_back(&h, s, id).is_empty());
+    assert!(h.nodes[s].core.holding().any(|m| m == id));
+    let firsts: Vec<Instant> = h.nodes[s]
+        .sent
         .iter()
-        .any(|(_, tr)| matches!(tr, Trace::Dropped { msg_id, .. } if *msg_id == id)));
-    assert!(h.nodes[0].core.holding().any(|m| m == id));
+        .filter(
+            |(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Data(d)) if d.msg_id() == id),
+        )
+        .map(|(t, _)| *t)
+        .collect();
+    let attempts = Config::default().hop_attempts as usize;
+    assert!(firsts.len() >= 3 * attempts, "{} frames", firsts.len());
+    let gap = firsts[attempts].since(firsts[attempts - 1]);
+    assert!(gap >= secs(60), "offered again after {gap:?}");
 }
 
 /// A sleepy node keeps its anchor against a node a little stronger and
@@ -727,7 +838,12 @@ fn a_refused_message_goes_back_to_the_application_with_its_wait() {
     h.inject(r, frame);
     let given = |h: &Harness<Relay>| {
         h.nodes[s].app.iter().find_map(|(t, e)| match *e {
-            AppEvent::GivenBack { msg_id, retry_at } if msg_id == id => Some((*t, retry_at)),
+            AppEvent::GivenBack {
+                msg_id,
+                retry_at,
+                why: Why::Busy,
+                ..
+            } if msg_id == id => Some((*t, retry_at)),
             _ => None,
         })
     };
@@ -740,7 +856,7 @@ fn a_refused_message_goes_back_to_the_application_with_its_wait() {
     assert!(h.nodes[s].traces.iter().any(|(_, x)| *x
         == Trace::Dropped {
             msg_id: id,
-            reason: DropReason::Pushback
+            reason: DropReason::GivenBack
         }));
     assert!(h.nodes[s].core.holding().next().is_none());
     h.run_until(retry_at - Duration::from_millis(1), |h| h.accepts(s));
@@ -816,7 +932,12 @@ fn a_refused_message_goes_back_though_another_relay_is_in_reach() {
     h.inject(r, frame);
     let given = |h: &Harness<Relay>| {
         h.nodes[s].app.iter().find_map(|(t, e)| match *e {
-            AppEvent::GivenBack { msg_id, retry_at } if msg_id == id => Some((*t, retry_at)),
+            AppEvent::GivenBack {
+                msg_id,
+                retry_at,
+                why: Why::Busy,
+                ..
+            } if msg_id == id => Some((*t, retry_at)),
             _ => None,
         })
     };

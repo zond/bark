@@ -222,6 +222,10 @@ pub struct Outgoing {
     pub dst_id: NodeId,
     /// Payload bytes copied into the buffer given to [`App::take`].
     pub len: usize,
+    /// Which of the application's senders it is from, opaque to the core,
+    /// which hands it back in [`AppEvent::GivenBack`]
+    /// (`docs/core-interface.md`, "Application").
+    pub tag: u8,
 }
 
 /// What the application asks of the node besides a message to send
@@ -934,6 +938,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             dst_pos: out.dst_pos,
             dst_id: out.dst_id,
             payload: &payload[..out.len.min(MAX_PAYLOAD)],
+            tag: out.tag,
         };
         self.deliver(Event::App(send)).await?;
         Ok(true)

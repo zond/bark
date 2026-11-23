@@ -333,13 +333,16 @@ impl<A: bark_driver::App> bark_driver::App for App<A> {
                 dst_pos: t.dst_pos,
                 dst_id: t.dst_id,
                 len: t.len,
+                tag: crate::node::UNTAGGED,
             })
         })
     }
 
     fn message(&mut self, event: &AppEvent) {
         match event {
-            AppEvent::GivenBack { msg_id, retry_at } if self.sent == Some(*msg_id) => {
+            AppEvent::GivenBack {
+                msg_id, retry_at, ..
+            } if self.sent == Some(*msg_id) => {
                 let wait = retry_at.since(crate::clock::core_now());
                 log::warn!(
                     "bench: message id={:08x} given back retry_in_ms={}",

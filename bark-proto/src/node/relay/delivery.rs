@@ -22,7 +22,12 @@ use crate::tables::budget::REPLY_RESERVE;
 use crate::tables::delivery::Queued;
 use crate::tables::send_queue::{Kind, Outgoing};
 use crate::time::{earlier, Duration, Instant};
-use crate::wire::data_header_len;
+use crate::wire::{data_header_len, Hops, MAX_HOPS};
+
+/// The count a message that arrived with `hops` goes on with.
+fn onward(hops: Hops) -> Hops {
+    hops.saturating_add(1).min(MAX_HOPS)
+}
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether the sleepy node `id` may be sent to with the short preamble
@@ -54,22 +59,37 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.heard.awake(node, now)
         };
         let is_for = |o: &Outgoing| o.kind.delivers() && o.to == node;
-        // Outside its window, and not known to be out of reach.
-        let early = !listens && !self.config.sleepy_listens && !n.missed;
-        if (!listens && !early) || self.queue.iter().any(is_for) {
+        if self.queue.iter().any(is_for) {
             return Ok(());
         }
         let home = n.home;
         let Some(q) = self.delivery.iter().find(|q| q.node == node && !q.waits()) else {
             return Ok(());
         };
+        // Outside its window, and not known to be out of reach; a return
+        // never goes so (spec "Return to parent").
+        let early = !listens && !self.config.sleepy_listens && !n.missed && !q.returns();
+        if !listens && !early {
+            return Ok(());
+        }
         let preamble = if early {
             LONG_PREAMBLE_SYMBOLS
         } else {
             MIN_PREAMBLE_SYMBOLS
         };
-        // The count is stamped when its hand-over starts (spec "Hop count").
-        let out = Outgoing::new(q.message(), 0, node, home, preamble, Kind::Deliver);
+        // The count is stamped when its hand-over starts (spec "Hop count"),
+        // from the record, else from what it arrived with.
+        let out = Outgoing {
+            wrong: q.wrong,
+            ..Outgoing::new(
+                q.message(),
+                onward(q.hops),
+                node,
+                home,
+                preamble,
+                Kind::Deliver,
+            )
+        };
         let (msg_id, airtime) = (q.msg_id, out.airtime());
         if early {
             if self.spares_long(airtime, Some(msg_id), now) {
@@ -185,7 +205,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(q) = self
             .delivery
             .iter()
-            .find(|q| (q.relay_home.is_some() || (far && !q.flushed)) && !q.waits() && !queued(q))
+            .find(|q| {
+                let flush = far && !q.flushed && !q.returns();
+                (q.relay_home.is_some() || flush) && !q.waits() && !queued(q)
+            })
             .copied()
         else {
             return Ok(());
@@ -205,7 +228,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         let out = Outgoing {
             tries,
-            ..Outgoing::new(q.message(), 0, q.node, channel, preamble, Kind::Direct)
+            wrong: q.wrong,
+            ..Outgoing::new(
+                q.message(),
+                onward(q.hops),
+                q.node,
+                channel,
+                preamble,
+                Kind::Direct,
+            )
         };
         let airtime = out.airtime();
         match self.no_room_to_deliver(airtime, now) {

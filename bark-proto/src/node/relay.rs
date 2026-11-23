@@ -668,6 +668,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let gps = self.gps_situation();
         self.gps.fire(&gps, &self.config, now, emit);
         self.forward_timers(now, emit);
+        self.own_alone(now, emit);
         self.delivery_timers(now);
         self.expire_update(now, emit);
     }
@@ -684,6 +685,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.gps.next_wakeup(&self.gps_situation(), &self.config),
             self.delivery_wakeup(),
             self.own.app_ready_at,
+            self.own_alone_at(),
             self.next_slot_edge(),
             self.spread.expires_at(&self.config),
         ]
@@ -844,7 +846,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 dst_pos,
                 dst_id,
                 payload,
-            } => self.originate(dst_pos, dst_id, payload, now, emit),
+                tag,
+            } => self.originate((dst_pos, dst_id), payload, tag, now, emit),
             AppCommand::Power { external } => self.power(external, now, emit),
             AppCommand::ForceRole => self.force(now, emit),
             AppCommand::Battery { millivolts } => self.battery_read(millivolts, now, emit),

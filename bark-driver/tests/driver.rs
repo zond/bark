@@ -1136,6 +1136,7 @@ fn a_relay_runs_through_the_loop() {
             dst_pos: me,
             dst_id: my_id,
             len: 5,
+            tag: 0,
         },
         b"hello".to_vec(),
     ));
@@ -1743,6 +1744,7 @@ fn out() -> Outgoing {
         dst_pos: Position::default(),
         dst_id: NodeId([7; 6]),
         len: 2,
+        tag: 0,
     }
 }
 

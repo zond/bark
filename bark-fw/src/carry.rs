@@ -105,6 +105,7 @@ impl Carry {
                     dst_pos: m.dst_pos,
                     dst_id: m.dst_id,
                     len: m.payload.len(),
+                    tag: crate::node::UNTAGGED,
                 }
             });
         if out.is_none() {

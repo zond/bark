@@ -171,6 +171,7 @@ impl Sim {
                 msg_id,
                 to,
                 attempts,
+                ..
             } => {
                 self.note_offer(node, msg_id, to);
                 self.metrics.taken_at_attempt(attempts);

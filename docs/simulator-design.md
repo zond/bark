@@ -96,7 +96,7 @@ Logged per run as CSV/JSON, with the scenario and seed embedded:
 - Per-relay airtime per hour, forwarded bytes, duty-cycle blocks, delivery queue depth and expiries.
 - Heartbeat: time for a new node to learn all neighbours in range; neighbour table size, evictions, false expiries.
 - Home-channel moves per relay per hour, and the distribution of relays per channel in a collision domain (does measurement spread load like the spec "Capacity and sizing" argument says?). Moves attributed to real interferers versus to fading alone, since the latter are a cost without a benefit.
-- DFS: invocations, returns to a parent, straight-back sends, hop counts; messages dropped at the hop cap and at the origin.
+- DFS: invocations, returns to a parent, straight-back sends, hop counts; messages dropped at the hop cap, and given back at the origin.
 - Collision accounting: packets lost to capture, to a later packet past their preamble, to adjacent-channel leakage, to receiver deafness (retune, sweep, own transmission), each separately, so the spec "Busy estimate" and "Hand-over" cost arguments can be checked against numbers.
 
 ## 5. Architecture
@@ -263,12 +263,33 @@ many messages waited, how many still waited at the end, the longest wait
 and how many were skipped. The simulator tags each message with its ID,
 which it computes as the core does (`MsgId::of`), to follow its traces.
 
+**Given back.** A node's application sends with one of three tags: a
+text of the traffic model, a mailbox's reply, a message kept across a
+reboot into a new image (`install.rs`). A message the core gives back
+(spec "Sending", Given back) goes by its tag to its sender, which acts by
+the why, as the app does:
+
+| why | a text | a mailbox's reply |
+|---|---|---|
+| busy | offered again after the wait, unless the wait reaches past the delivery TTL from when the traffic model had it: then it ends, given back | goes again |
+| no neighbour | offered again once the node is ready | goes again |
+| no way | ends, given back: a person would decide | dropped, as one lost on its way is, and counted |
+
+A kept message given back goes to the front of what the node kept for
+busy and no neighbour, and for no way ends as its text or reply does. The
+summary counts every give-back by why, and the returns to a sleepy parent
+(spec "Return to parent"): taken in its window, dropped for want of a place
+in the delivery queue, and dropped with the node no longer heard.
+
 **Accounting.** Every message the traffic model sends ends up in one of
 these:
 
 - **delivered** to the destination's application;
 - **lost**, where a core reported it in a `Dropped` trace, with the node
   and the reason;
+- **given back** to its origin's application and not offered again,
+  with the origin and the why (above): its search came back with no way,
+  or it was told to wait past the application's patience;
 - **in flight**: it is still held when the run ends, by its origin's
   application waiting to hand it over, in a send queue or a delivery
   queue;

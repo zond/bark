@@ -94,6 +94,7 @@ fn load(
                         dst_pos,
                         dst_id,
                         payload: &payload,
+                        tag: 0,
                     },
                 );
                 sent.push(MsgId::of(dst_pos, dst_id, &payload));
@@ -197,6 +198,7 @@ fn a_message_held_past_the_bound_is_put_back_after_the_reboot() {
             dst_pos,
             dst_id: dark,
             payload,
+            tag: 0,
         },
     );
     let id = MsgId::of(dst_pos, dark, payload);
@@ -316,6 +318,7 @@ fn for_a_draining_node(dark: bool) -> (Harness<Relay>, MsgId, [usize; 4]) {
             dst_pos,
             dst_id,
             payload,
+            tag: 0,
         },
     );
     let id = MsgId::of(dst_pos, dst_id, payload);
@@ -393,6 +396,7 @@ fn a_message_that_waits_past_the_ttl_goes_as_a_stale_one() {
                     dst_pos,
                     dst_id,
                     payload: &payload,
+                    tag: 0,
                 },
             );
             k += 1;
@@ -435,6 +439,7 @@ fn two_neighbours_draining_in_turn_do_not_hold_each_other_up() {
             dst_pos,
             dst_id: nid,
             payload,
+            tag: 0,
         },
     );
     let id = MsgId::of(dst_pos, nid, payload);

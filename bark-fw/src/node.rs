@@ -37,6 +37,14 @@ const REPORT_EVERY: Duration = Duration::from_secs(10);
 /// radio that stays broken logs once a second instead of filling the log.
 const RETRY_PAUSE: Duration = Duration::from_secs(1);
 
+/// The tag every message of the application is sent with for now
+/// (`bark_driver::Outgoing::tag`).
+// TODO(D244 firmware): a tag for each phone's link, the mailbox and the
+// message carried across a reboot, with each `AppEvent::GivenBack` routed
+// by its tag to that sender and told with its why (spec "Sending", Given
+// back), a mailbox reply given back no way dropped (spec "Mailbox").
+pub(crate) const UNTAGGED: u8 = 0;
+
 /// What wakes the node's loop for its application ([`LinkApp::ready`]):
 /// a signal for each part that tells it something, raised by that part
 /// alone, so that the loop looks only at what the signal stands for.
@@ -266,6 +274,7 @@ impl App for LinkApp<'_> {
                 dst_pos: out.address.position,
                 dst_id: out.address.node,
                 len: out.len,
+                tag: UNTAGGED,
             })
         })
     }
@@ -282,7 +291,9 @@ impl App for LinkApp<'_> {
                 log::info!("mailbox: reply id={:08x} given back", msg_id.0);
                 crate::mailbox::with(|m| m.given_back(*msg_id));
             }
-            AppEvent::GivenBack { msg_id, retry_at } => {
+            AppEvent::GivenBack {
+                msg_id, retry_at, ..
+            } => {
                 log::warn!(
                     "given back id={:08x} reason=refused retry_in_ms={}",
                     msg_id.0,
@@ -440,6 +451,7 @@ impl LinkApp<'_> {
                         dst_pos,
                         dst_id,
                         len: len as usize,
+                        tag: UNTAGGED,
                     },
                     true,
                 ))

@@ -819,6 +819,19 @@ impl Neighbours {
             .map(|n| n.last_heard + self.expire_after(n))
     }
 
+    /// When the last entry expires, so that none is live: `None` with none,
+    /// or with one kept whatever its age.
+    pub fn last_expiry(&self) -> Option<Instant> {
+        let mut last = None;
+        for n in self.iter() {
+            if Some(n.id) == self.pinned {
+                return None;
+            }
+            last = last.max(Some(n.last_heard + self.expire_after(n)));
+        }
+        last
+    }
+
     /// When the next entry expires, if any.
     pub fn next_expiry(&self) -> Option<Instant> {
         self.iter()
