@@ -597,7 +597,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get notifyChannelAbout => 'A text from a contact';
 
   @override
-  String get notifyYou => 'You';
+  String get notifyLinkChannel => 'Connection to the node';
+
+  @override
+  String get notifyLinkChannelAbout =>
+      'Shown while the app keeps the link to a node or looks for it';
+
+  @override
+  String get you => 'You';
 
   @override
   String get threadRemovedContact => 'Removed contact';
@@ -1152,10 +1159,582 @@ class AppLocalizationsEn extends AppLocalizations {
       'This phone is paired with this node: the node sends your texts into the network, and keeps the ones for you until the app reads them. Only the paired phone sees the node\'s neighbours on this map.';
 
   @override
+  String get factRoleLabel => 'Role';
+
+  @override
+  String get factMovingLabel => 'Moving';
+
+  @override
+  String get factAnchorLabel => 'Anchor';
+
+  @override
+  String get factPlaceLabel => 'Place';
+
+  @override
+  String get factPowerLabel => 'Power';
+
+  @override
+  String get factLinkLabel => 'Link';
+
+  @override
+  String get factLastHeardLabel => 'Last heard';
+
+  @override
+  String get factDistanceLabel => 'Distance';
+
+  @override
+  String get factKnownLabel => 'Known';
+
+  @override
+  String get gpsSignal => 'GPS signal';
+
+  @override
+  String get factVersionLabel => 'Version';
+
+  @override
+  String get factExchangedLabel => 'Exchanged';
+
+  @override
+  String get factDemotedLabel => 'Demoted';
+
+  @override
+  String get factAvoidedLabel => 'Avoided';
+
+  @override
+  String get factPairedLabel => 'Paired';
+
+  @override
+  String get factRoleSleepyName => 'role, sleepy';
+
+  @override
+  String get factRoleRelayName => 'role, relay';
+
+  @override
+  String get factMovingName => 'moving';
+
+  @override
+  String get factAnchorName => 'anchor';
+
+  @override
+  String get factPlaceName => 'place';
+
+  @override
+  String get factPlaceByPersonName => 'place, set by a person';
+
+  @override
+  String get factPlaceFromGpsName => 'place, from GPS';
+
+  @override
+  String get factPlaceAnchorsName => 'place, its anchor\'s';
+
+  @override
+  String get factPowerName => 'power';
+
+  @override
+  String get factBatteryName => 'battery';
+
+  @override
+  String get factLinkGoodName => 'link strength, good';
+
+  @override
+  String get factLinkFairName => 'link strength, fair';
+
+  @override
+  String get factLinkFragileName => 'link strength, fragile';
+
+  @override
+  String get factLastHeardName => 'last heard';
+
+  @override
+  String get factDistanceName => 'distance';
+
+  @override
+  String get factKnownName => 'neighbours known';
+
+  @override
+  String get factVersionName => 'firmware version';
+
+  @override
+  String get factPairedName => 'paired';
+
+  @override
+  String get factExchangedName => 'exchanged';
+
+  @override
+  String get factDemotedName => 'demoted';
+
+  @override
+  String get factAvoidedName => 'avoided';
+
+  @override
+  String get factRoleSleepy =>
+      'sleepy: wakes in windows, speaks through its anchor';
+
+  @override
+  String get factRoleRelay => 'relay: passes on others\' texts';
+
+  @override
+  String get factCarried => 'carried';
+
+  @override
+  String get factFixed => 'stays put';
+
+  @override
+  String get factAnchored => 'anchored';
+
+  @override
+  String factAnchoredTo(String node) {
+    return 'anchored to $node';
+  }
+
+  @override
+  String get factNoAnchor => 'no anchor yet';
+
+  @override
+  String get factThisNodesAnchor => 'this node\'s anchor';
+
+  @override
+  String get factNoPlace => 'no place yet';
+
+  @override
+  String factPlaceByPerson(String place) {
+    return 'set by a person\n$place';
+  }
+
+  @override
+  String factPlaceFromGps(String place) {
+    return 'from GPS\n$place';
+  }
+
+  @override
+  String factPlaceAnchors(String place) {
+    return 'its anchor\'s\n$place';
+  }
+
+  @override
+  String get factBatteryLow => 'low';
+
+  @override
+  String get notRead => 'not read';
+
+  @override
+  String factPercent(int percent) {
+    return '$percent%';
+  }
+
+  @override
+  String millivolts(int voltage) {
+    return '$voltage mV';
+  }
+
+  @override
+  String get noReading => 'no reading';
+
+  @override
+  String factGpsTooWeak(int signal) {
+    return '$signal dB-Hz · too weak for a fix';
+  }
+
+  @override
+  String factGpsEnough(int signal) {
+    return '$signal dB-Hz · enough for a fix';
+  }
+
+  @override
+  String get factLinkGood => 'good';
+
+  @override
+  String get factLinkFair => 'fair';
+
+  @override
+  String get factLinkFragile => 'fragile';
+
+  @override
+  String factLinkDetail(String rssi, String margin) {
+    return 'This link: $rssi dBm, $margin dB over the noise floor.';
+  }
+
+  @override
+  String timeSecondsAgo(int seconds) {
+    return '$seconds s ago';
+  }
+
+  @override
+  String factMetres(int metres) {
+    return '$metres m';
+  }
+
+  @override
+  String factKilometres(String kilometres) {
+    return '$kilometres km';
+  }
+
+  @override
+  String factKnownValue(int heard, int strong, int exchanged) {
+    return '$heard heard · $strong strong · $exchanged exchanged';
+  }
+
+  @override
+  String factVersionGetting(
+    String version,
+    String gathers,
+    int complete,
+    int blocks,
+  ) {
+    return '$version · getting $gathers $complete/$blocks';
+  }
+
+  @override
+  String get factExchangedValue => 'it took a message from this node';
+
+  @override
+  String get factDemotedValue => 'it did not answer its last texts';
+
+  @override
+  String get factAvoidedValue =>
+      'for now: it turned a text down or did not answer';
+
+  @override
+  String get factPairedWithThis => 'with this phone';
+
+  @override
+  String get mapShowMe => 'Show where I am';
+
+  @override
+  String get mapReadAgain => 'Read again';
+
+  @override
+  String get mapNotConnected =>
+      'Not connected to a node: connect to see its neighbours.';
+
+  @override
+  String get mapGuest =>
+      'Connected as a guest: only the phone paired with this node sees its neighbours.';
+
+  @override
+  String mapReadFailed(String error) {
+    return 'Reading the neighbours failed: $error';
+  }
+
+  @override
+  String get mapNothing =>
+      'The node has no place yet and has heard no neighbour: nothing to draw.';
+
+  @override
+  String get mapAttribution => '© OpenStreetMap contributors';
+
+  @override
+  String get mapNoPlaceNoLines =>
+      'The node has no place of its own: its neighbours are drawn without lines to it.';
+
+  @override
+  String get mapNoPlaceAtYou =>
+      'The node has no place of its own: it is drawn where you are.';
+
+  @override
+  String get mapNoTiles =>
+      'No street map here: the phone has no internet and has not kept this area from before. The nodes and links are drawn on a blank background.';
+
+  @override
+  String mapLastReadFailed(String error) {
+    return 'The last read failed: $error';
+  }
+
+  @override
+  String get mapKindSleepy => 'sleepy';
+
+  @override
+  String get mapKindRelay => 'relay';
+
+  @override
+  String get mapThisNode => 'this node';
+
+  @override
+  String get mapAsking => 'Asking it for power, neighbours and version…';
+
+  @override
+  String get mapNoAnswerSleepy =>
+      'It did not answer: it sleeps between its windows.';
+
+  @override
+  String get mapNoAnswer => 'It did not answer.';
+
+  @override
+  String mapNodesHere(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count nodes here',
+      one: '$count node here',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String mapNodesHereNamed(int count, String names) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count nodes here: $names',
+      one: '$count node here: $names',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String mapNeighboursRead(int count, String time) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count neighbours, read $time',
+      one: '$count neighbour, read $time',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String mapBandGood(String good) {
+    return 'good ≥ $good dB';
+  }
+
+  @override
+  String mapBandFair(String fair, String good) {
+    return 'fair $fair–$good dB';
+  }
+
+  @override
+  String mapBandFragile(String fair) {
+    return 'fragile < $fair dB over the noise floor';
+  }
+
+  @override
+  String get mapLegendRelay => 'a relay';
+
+  @override
+  String get mapLegendSleepy => 'a sleepy node';
+
+  @override
+  String get mapLegendCarried => 'a carried node';
+
+  @override
+  String get mapLegendShared => 'nodes at one place';
+
+  @override
+  String get mapLegendYou =>
+      'you: your position stays on this phone, never sent or kept';
+
+  @override
+  String mapHomeOf(String names) {
+    return 'Home: $names';
+  }
+
+  @override
+  String get mapYou => 'You';
+
+  @override
+  String mapLastSeen(String names) {
+    return 'Last seen: $names';
+  }
+
+  @override
+  String mapSeenAgo(String name, String ago) {
+    return '$name $ago';
+  }
+
+  @override
   String get ok => 'OK';
 
   @override
   String get debug => 'Debug';
+
+  @override
+  String get debugMe => 'Me';
+
+  @override
+  String get debugBench => 'Bench';
+
+  @override
+  String get debugStatus => 'Status';
+
+  @override
+  String get debugGivenBackHeading => 'Given back';
+
+  @override
+  String get debugConnectPaired =>
+      'Connect a paired node to pick a firmware file.';
+
+  @override
+  String get debugPickFirmware => 'Pick a firmware file';
+
+  @override
+  String get debugValue => 'Value';
+
+  @override
+  String get debugEmpty => 'empty';
+
+  @override
+  String debugGivenBack(String id, int wait) {
+    return '$id, wait $wait s';
+  }
+
+  @override
+  String get debugSent => 'Sent';
+
+  @override
+  String get debugReceived => 'Received';
+
+  @override
+  String get debugLog => 'Log';
+
+  @override
+  String get debugNone => 'None';
+
+  @override
+  String get debugNothingYet => 'Nothing yet';
+
+  @override
+  String get debugIdentity => 'Identity';
+
+  @override
+  String get debugCardAddress => 'Card address';
+
+  @override
+  String get debugNoneNoHome => 'none: no home';
+
+  @override
+  String get debugNoValue => 'none';
+
+  @override
+  String get debugUnsentAtHome => 'Mailbox: unsent at home';
+
+  @override
+  String get debugFetchRounds => 'Fetch rounds';
+
+  @override
+  String get debugLastSent => 'Last sent';
+
+  @override
+  String get debugAppVersion => 'App version';
+
+  @override
+  String get debugDevBuild => 'development build';
+
+  @override
+  String get debugLatestRelease => 'Latest release';
+
+  @override
+  String get debugNotKnown => 'not known';
+
+  @override
+  String debugRelease(int release, int app, int firmware, String checked) {
+    return '$release, app $app, firmware $firmware, checked $checked';
+  }
+
+  @override
+  String get debugName => 'Name';
+
+  @override
+  String get debugNodeId => 'Node ID';
+
+  @override
+  String get debugLink => 'Link';
+
+  @override
+  String get debugLinkGuest => 'a guest\'s';
+
+  @override
+  String get debugLinkPaired => 'the paired phone\'s';
+
+  @override
+  String get debugLinkVersion => 'Link version';
+
+  @override
+  String get debugFirmwareImage => 'Firmware image';
+
+  @override
+  String get debugClock => 'Clock';
+
+  @override
+  String get debugPublic => 'Public';
+
+  @override
+  String get debugYes => 'yes';
+
+  @override
+  String get debugNo => 'no';
+
+  @override
+  String get debugPublicGuest => 'yes, as a guest finds it';
+
+  @override
+  String get debugHome => 'Home';
+
+  @override
+  String get debugAddress => 'Address';
+
+  @override
+  String get debugNoPlace => 'none yet: no place';
+
+  @override
+  String get debugAddressCopied => 'Address copied';
+
+  @override
+  String get debugStatusNotRead => 'Not read';
+
+  @override
+  String get debugReady => 'Ready to take a message';
+
+  @override
+  String get debugExternalPower => 'External power';
+
+  @override
+  String get debugSleepy => 'Sleepy';
+
+  @override
+  String get debugCarried => 'Carried';
+
+  @override
+  String get debugMapPoint => 'Position from a map point';
+
+  @override
+  String get debugPlaced => 'Placed';
+
+  @override
+  String get debugAnchorless => 'Anchorless';
+
+  @override
+  String get debugFirstRotation => 'First rotation';
+
+  @override
+  String debugRotationRunning(String left) {
+    return 'running, $left to go';
+  }
+
+  @override
+  String get debugRotationOver => 'over';
+
+  @override
+  String get debugRelaysKnown => 'Relays known';
+
+  @override
+  String get debugNeighboursHeard => 'Neighbours heard';
+
+  @override
+  String get debugAddressPosition => 'Address position';
+
+  @override
+  String get debugBattery => 'Battery';
+
+  @override
+  String get debugBatteryNone => 'not read or on USB';
+
+  @override
+  String get debugInbox => 'Messages in the inbox';
+
+  @override
+  String dbHz(int signal) {
+    return '$signal dB-Hz';
+  }
 
   @override
   String get pairAgain => 'Pair again';
@@ -1375,7 +1954,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get nodePairedConnecting => 'Paired, connecting…';
 
   @override
-  String get nodeHeading => 'Node';
+  String get node => 'Node';
 
   @override
   String get nodeDisconnect => 'Disconnect';
@@ -1795,7 +2374,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get homeShowThem => 'Show them';
 
   @override
-  String get homeAskAgain => 'Ask again';
+  String get askAgain => 'Ask again';
 
   @override
   String homeAskFailed(String error) {
@@ -2248,7 +2827,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get updatesNodeFirmware => 'Node firmware';
 
   @override
-  String get updatesNotConnected => 'Not connected';
+  String get nodeNotConnected => 'Not connected';
 
   @override
   String get updatesGuest => 'Only its paired phones update it';
@@ -2326,6 +2905,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String identitySaveFailed(String error) {
     return 'Saving failed: $error';
   }
+
+  @override
+  String identityNoStream(String uri) {
+    return 'no stream for $uri';
+  }
+
+  @override
+  String get identitySaveBusy => 'a save is under way';
 
   @override
   String get identityRestoreTitle => 'Restore from a file?';

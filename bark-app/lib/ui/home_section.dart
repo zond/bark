@@ -157,7 +157,7 @@ class HomeSection extends StatelessWidget {
             final r = await app.mailbox.askList();
             if (context.mounted) say(context, r);
           }, tr.homeAskFailed),
-          child: Text(rs == null ? tr.homeShowThem : tr.homeAskAgain),
+          child: Text(rs == null ? tr.homeShowThem : tr.askAgain),
         ),
       ),
     ];

@@ -608,7 +608,14 @@ class AppLocalizationsSv extends AppLocalizations {
   String get notifyChannelAbout => 'Ett meddelande från en kontakt';
 
   @override
-  String get notifyYou => 'Du';
+  String get notifyLinkChannel => 'Anslutning till noden';
+
+  @override
+  String get notifyLinkChannelAbout =>
+      'Visas medan appen är ansluten till en nod eller letar efter den';
+
+  @override
+  String get you => 'Du';
 
   @override
   String get threadRemovedContact => 'Borttagen kontakt';
@@ -1141,7 +1148,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String get factKnown =>
-      'Vad noden säger om sina egna grannar, i tre tal. Hörda: noderna vars hjärtslag den hör. Starka: av dem, de som hörs så väl att ett helt meddelande kommer igenom när signalen sviktar, så de hör troligen den också. Utbytta: av dem, de som har tagit emot ett meddelande från den, vilket bevisar att de hör den.';
+      'Vad noden säger om sina egna grannar, i tre tal. Hörda: noderna vars hjärtslag den hör. Starka: av dem, de som hörs så väl att ett helt meddelande kommer igenom när signalen sviktar, så de hör troligen den också. Med utbyte: av dem, de som har tagit emot ett meddelande från den, vilket bevisar att de hör den.';
 
   @override
   String factGpsSignal(int floor) {
@@ -1169,10 +1176,583 @@ class AppLocalizationsSv extends AppLocalizations {
       'Den här telefonen är parkopplad med den här noden: noden skickar ut dina meddelanden i nätet och sparar dem som är till dig tills appen läser dem. Bara den parkopplade telefonen ser nodens grannar på den här kartan.';
 
   @override
+  String get factRoleLabel => 'Roll';
+
+  @override
+  String get factMovingLabel => 'Rörlighet';
+
+  @override
+  String get factAnchorLabel => 'Ankare';
+
+  @override
+  String get factPlaceLabel => 'Plats';
+
+  @override
+  String get factPowerLabel => 'Ström';
+
+  @override
+  String get factLinkLabel => 'Länk';
+
+  @override
+  String get factLastHeardLabel => 'Senast hörd';
+
+  @override
+  String get factDistanceLabel => 'Avstånd';
+
+  @override
+  String get factKnownLabel => 'Kända grannar';
+
+  @override
+  String get gpsSignal => 'GPS-signal';
+
+  @override
+  String get factVersionLabel => 'Version';
+
+  @override
+  String get factExchangedLabel => 'Utbyte';
+
+  @override
+  String get factDemotedLabel => 'Nedprioriterad';
+
+  @override
+  String get factAvoidedLabel => 'Undviks';
+
+  @override
+  String get factPairedLabel => 'Parkopplad';
+
+  @override
+  String get factRoleSleepyName => 'roll, sömnig';
+
+  @override
+  String get factRoleRelayName => 'roll, relä';
+
+  @override
+  String get factMovingName => 'rörlighet';
+
+  @override
+  String get factAnchorName => 'ankare';
+
+  @override
+  String get factPlaceName => 'plats';
+
+  @override
+  String get factPlaceByPersonName => 'plats, angiven för hand';
+
+  @override
+  String get factPlaceFromGpsName => 'plats, från GPS';
+
+  @override
+  String get factPlaceAnchorsName => 'plats, ankarets';
+
+  @override
+  String get factPowerName => 'ström';
+
+  @override
+  String get factBatteryName => 'batteri';
+
+  @override
+  String get factLinkGoodName => 'länk, bra';
+
+  @override
+  String get factLinkFairName => 'länk, medelgod';
+
+  @override
+  String get factLinkFragileName => 'länk, skör';
+
+  @override
+  String get factLastHeardName => 'senast hörd';
+
+  @override
+  String get factDistanceName => 'avstånd';
+
+  @override
+  String get factKnownName => 'kända grannar';
+
+  @override
+  String get factVersionName => 'programvaruversion';
+
+  @override
+  String get factPairedName => 'parkopplad';
+
+  @override
+  String get factExchangedName => 'utbyte';
+
+  @override
+  String get factDemotedName => 'nedprioriterad';
+
+  @override
+  String get factAvoidedName => 'undviks';
+
+  @override
+  String get factRoleSleepy =>
+      'sömnig: vaknar i korta fönster, går genom sitt ankare';
+
+  @override
+  String get factRoleRelay => 'relä: skickar vidare andras meddelanden';
+
+  @override
+  String get factCarried => 'buren';
+
+  @override
+  String get factFixed => 'stillastående';
+
+  @override
+  String get factAnchored => 'förankrad';
+
+  @override
+  String factAnchoredTo(String node) {
+    return 'förankrad vid $node';
+  }
+
+  @override
+  String get factNoAnchor => 'inget ankare än';
+
+  @override
+  String get factThisNodesAnchor => 'den här nodens ankare';
+
+  @override
+  String get factNoPlace => 'ingen plats än';
+
+  @override
+  String factPlaceByPerson(String place) {
+    return 'angiven för hand\n$place';
+  }
+
+  @override
+  String factPlaceFromGps(String place) {
+    return 'från GPS\n$place';
+  }
+
+  @override
+  String factPlaceAnchors(String place) {
+    return 'ankarets\n$place';
+  }
+
+  @override
+  String get factBatteryLow => 'lågt batteri';
+
+  @override
+  String get notRead => 'inte avläst';
+
+  @override
+  String factPercent(int percent) {
+    return '$percent %';
+  }
+
+  @override
+  String millivolts(int voltage) {
+    return '$voltage mV';
+  }
+
+  @override
+  String get noReading => 'ingen avläsning';
+
+  @override
+  String factGpsTooWeak(int signal) {
+    return '$signal dB-Hz · för svag för en position';
+  }
+
+  @override
+  String factGpsEnough(int signal) {
+    return '$signal dB-Hz · räcker för en position';
+  }
+
+  @override
+  String get factLinkGood => 'bra';
+
+  @override
+  String get factLinkFair => 'medelgod';
+
+  @override
+  String get factLinkFragile => 'skör';
+
+  @override
+  String factLinkDetail(String rssi, String margin) {
+    return 'Den här länken: $rssi dBm, $margin dB över radiobruset.';
+  }
+
+  @override
+  String timeSecondsAgo(int seconds) {
+    return 'för $seconds s sedan';
+  }
+
+  @override
+  String factMetres(int metres) {
+    return '$metres m';
+  }
+
+  @override
+  String factKilometres(String kilometres) {
+    return '$kilometres km';
+  }
+
+  @override
+  String factKnownValue(int heard, int strong, int exchanged) {
+    return 'hörda $heard · starka $strong · med utbyte $exchanged';
+  }
+
+  @override
+  String factVersionGetting(
+    String version,
+    String gathers,
+    int complete,
+    int blocks,
+  ) {
+    return '$version · hämtar $gathers $complete/$blocks';
+  }
+
+  @override
+  String get factExchangedValue =>
+      'den tog emot ett meddelande från den här noden';
+
+  @override
+  String get factDemotedValue => 'den svarade inte på de senaste meddelandena';
+
+  @override
+  String get factAvoidedValue =>
+      'tills vidare: den avböjde ett meddelande eller svarade inte';
+
+  @override
+  String get factPairedWithThis => 'med den här telefonen';
+
+  @override
+  String get mapShowMe => 'Visa var jag är';
+
+  @override
+  String get mapReadAgain => 'Läs igen';
+
+  @override
+  String get mapNotConnected =>
+      'Inte ansluten till en nod: anslut för att se dess grannar.';
+
+  @override
+  String get mapGuest =>
+      'Ansluten som gäst: bara telefonen som är parkopplad med noden ser dess grannar.';
+
+  @override
+  String mapReadFailed(String error) {
+    return 'Det gick inte att läsa grannarna: $error';
+  }
+
+  @override
+  String get mapNothing =>
+      'Noden har ingen plats än och har inte hört någon granne: det finns inget att visa.';
+
+  @override
+  String get mapAttribution => '© OpenStreetMap-bidragsgivare';
+
+  @override
+  String get mapNoPlaceNoLines =>
+      'Noden har ingen egen plats: dess grannar visas utan linjer till den.';
+
+  @override
+  String get mapNoPlaceAtYou =>
+      'Noden har ingen egen plats: den visas där du är.';
+
+  @override
+  String get mapNoTiles =>
+      'Ingen karta här: telefonen har inget internet och har inte sparat det här området sedan tidigare. Noderna och länkarna visas på en tom bakgrund.';
+
+  @override
+  String mapLastReadFailed(String error) {
+    return 'Den senaste läsningen misslyckades: $error';
+  }
+
+  @override
+  String get mapKindSleepy => 'sömnig';
+
+  @override
+  String get mapKindRelay => 'relä';
+
+  @override
+  String get mapThisNode => 'den här noden';
+
+  @override
+  String get mapAsking => 'Frågar den om ström, grannar och version…';
+
+  @override
+  String get mapNoAnswerSleepy =>
+      'Den svarade inte: den sover mellan sina fönster.';
+
+  @override
+  String get mapNoAnswer => 'Den svarade inte.';
+
+  @override
+  String mapNodesHere(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count noder här',
+      one: '$count nod här',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String mapNodesHereNamed(int count, String names) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count noder här: $names',
+      one: '$count nod här: $names',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String mapNeighboursRead(int count, String time) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count grannar, lästa $time',
+      one: '$count granne, läst $time',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String mapBandGood(String good) {
+    return 'bra ≥ $good dB';
+  }
+
+  @override
+  String mapBandFair(String fair, String good) {
+    return 'medelgod $fair–$good dB';
+  }
+
+  @override
+  String mapBandFragile(String fair) {
+    return 'skör < $fair dB över radiobruset';
+  }
+
+  @override
+  String get mapLegendRelay => 'ett relä';
+
+  @override
+  String get mapLegendSleepy => 'en sömnig nod';
+
+  @override
+  String get mapLegendCarried => 'en buren nod';
+
+  @override
+  String get mapLegendShared => 'noder på samma plats';
+
+  @override
+  String get mapLegendYou =>
+      'du: din position stannar på telefonen och skickas eller sparas aldrig';
+
+  @override
+  String mapHomeOf(String names) {
+    return 'Hem: $names';
+  }
+
+  @override
+  String get mapYou => 'du';
+
+  @override
+  String mapLastSeen(String names) {
+    return 'Sågs senast: $names';
+  }
+
+  @override
+  String mapSeenAgo(String name, String ago) {
+    return '$name $ago';
+  }
+
+  @override
   String get ok => 'OK';
 
   @override
   String get debug => 'Felsökning';
+
+  @override
+  String get debugMe => 'Jag';
+
+  @override
+  String get debugBench => 'Testbänk';
+
+  @override
+  String get debugStatus => 'Status';
+
+  @override
+  String get debugGivenBackHeading => 'Återlämnat';
+
+  @override
+  String get debugConnectPaired =>
+      'Anslut en parkopplad nod för att välja en programvarufil.';
+
+  @override
+  String get debugPickFirmware => 'Välj en programvarufil';
+
+  @override
+  String get debugValue => 'Värde';
+
+  @override
+  String get debugEmpty => 'tomt';
+
+  @override
+  String debugGivenBack(String id, int wait) {
+    return '$id, vänta $wait s';
+  }
+
+  @override
+  String get debugSent => 'Skickade';
+
+  @override
+  String get debugReceived => 'Mottagna';
+
+  @override
+  String get debugLog => 'Logg';
+
+  @override
+  String get debugNone => 'Inga';
+
+  @override
+  String get debugNothingYet => 'Inget än';
+
+  @override
+  String get debugIdentity => 'Identitet';
+
+  @override
+  String get debugCardAddress => 'Kortets adress';
+
+  @override
+  String get debugNoneNoHome => 'ingen: inget hem';
+
+  @override
+  String get debugNoValue => 'ingen';
+
+  @override
+  String get debugUnsentAtHome => 'Brevlåda: kvar på hemnoden';
+
+  @override
+  String get debugFetchRounds => 'Hämtningar';
+
+  @override
+  String get debugLastSent => 'Senast skickade';
+
+  @override
+  String get debugAppVersion => 'Appversion';
+
+  @override
+  String get debugDevBuild => 'utvecklingsversion';
+
+  @override
+  String get debugLatestRelease => 'Senaste utgåvan';
+
+  @override
+  String get debugNotKnown => 'okänd';
+
+  @override
+  String debugRelease(int release, int app, int firmware, String checked) {
+    return '$release, app $app, programvara $firmware, kontrollerad $checked';
+  }
+
+  @override
+  String get debugName => 'Namn';
+
+  @override
+  String get debugNodeId => 'Nod-ID';
+
+  @override
+  String get debugLink => 'Anslutning';
+
+  @override
+  String get debugLinkGuest => 'en gästs';
+
+  @override
+  String get debugLinkPaired => 'den parkopplade telefonens';
+
+  @override
+  String get debugLinkVersion => 'Anslutningens version';
+
+  @override
+  String get debugFirmwareImage => 'Programvara';
+
+  @override
+  String get debugClock => 'Klocka';
+
+  @override
+  String get debugPublic => 'Publik';
+
+  @override
+  String get debugYes => 'ja';
+
+  @override
+  String get debugNo => 'nej';
+
+  @override
+  String get debugPublicGuest => 'ja: en gäst hittade den';
+
+  @override
+  String get debugHome => 'Hem';
+
+  @override
+  String get debugAddress => 'Adress';
+
+  @override
+  String get debugNoPlace => 'ingen än: ingen plats';
+
+  @override
+  String get debugAddressCopied => 'Adressen kopierad';
+
+  @override
+  String get debugStatusNotRead => 'Inte avläst';
+
+  @override
+  String get debugReady => 'Redo att ta emot ett meddelande';
+
+  @override
+  String get debugExternalPower => 'Extern ström';
+
+  @override
+  String get debugSleepy => 'Sömnig';
+
+  @override
+  String get debugCarried => 'Buren';
+
+  @override
+  String get debugMapPoint => 'Position angiven för hand';
+
+  @override
+  String get debugPlaced => 'Har en plats';
+
+  @override
+  String get debugAnchorless => 'Utan ankare';
+
+  @override
+  String get debugFirstRotation => 'Första rotationen';
+
+  @override
+  String debugRotationRunning(String left) {
+    return 'pågår, $left kvar';
+  }
+
+  @override
+  String get debugRotationOver => 'klar';
+
+  @override
+  String get debugRelaysKnown => 'Kända reläer';
+
+  @override
+  String get debugNeighboursHeard => 'Hörda grannar';
+
+  @override
+  String get debugAddressPosition => 'Adressens position';
+
+  @override
+  String get debugBattery => 'Batteri';
+
+  @override
+  String get debugBatteryNone => 'inte avläst eller på USB';
+
+  @override
+  String get debugInbox => 'Meddelanden i inkorgen';
+
+  @override
+  String dbHz(int signal) {
+    return '$signal dB-Hz';
+  }
 
   @override
   String get pairAgain => 'Parkoppla igen';
@@ -1395,7 +1975,7 @@ class AppLocalizationsSv extends AppLocalizations {
   String get nodePairedConnecting => 'Parkopplad, ansluter…';
 
   @override
-  String get nodeHeading => 'Nod';
+  String get node => 'Nod';
 
   @override
   String get nodeDisconnect => 'Koppla från';
@@ -1819,7 +2399,7 @@ class AppLocalizationsSv extends AppLocalizations {
   String get homeShowThem => 'Visa listan';
 
   @override
-  String get homeAskAgain => 'Fråga igen';
+  String get askAgain => 'Fråga igen';
 
   @override
   String homeAskFailed(String error) {
@@ -2276,7 +2856,7 @@ class AppLocalizationsSv extends AppLocalizations {
   String get updatesNodeFirmware => 'Nodens programvara';
 
   @override
-  String get updatesNotConnected => 'Inte ansluten';
+  String get nodeNotConnected => 'Inte ansluten';
 
   @override
   String get updatesGuest =>
@@ -2356,6 +2936,14 @@ class AppLocalizationsSv extends AppLocalizations {
   String identitySaveFailed(String error) {
     return 'Det gick inte att spara: $error';
   }
+
+  @override
+  String identityNoStream(String uri) {
+    return 'det gick inte att skriva till $uri';
+  }
+
+  @override
+  String get identitySaveBusy => 'en sparning pågår redan';
 
   @override
   String get identityRestoreTitle => 'Återställa från en fil?';

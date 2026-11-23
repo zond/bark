@@ -35,7 +35,7 @@ class NodeSection extends StatelessWidget {
   List<Widget> _connection(BuildContext context) {
     final s = app.session;
     return [
-      SettingsHeading(tr.nodeHeading),
+      SettingsHeading(tr.node),
       if (app.links.connecting)
         Text(_linking(app.links.linking))
       else

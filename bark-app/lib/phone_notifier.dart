@@ -114,9 +114,13 @@ class PhoneNotifier implements Notifier {
   Future<void> atBoot(Held? held) =>
       _link.invokeMethod<void>('atBoot', held == null ? null : _args(held));
 
+  // The channel's words go with the notification's, as Android shows
+  // them in its settings and the service makes the channel at boot too.
   static Map<String, String> _args(Held h) => {
     'title': h.title,
     'body': h.body,
+    'channel': tr.notifyLinkChannel,
+    'channelAbout': tr.notifyLinkChannelAbout,
   };
 
   @override
@@ -145,7 +149,7 @@ class PhoneNotifier implements Notifier {
         when: last.at.millisecondsSinceEpoch,
         onlyAlertOnce: quiet,
         styleInformation: MessagingStyleInformation(
-          Person(name: tr.notifyYou),
+          Person(name: tr.you),
           messages: [
             for (final t in texts)
               Message(t.text, t.at, Person(name: name, key: key)),

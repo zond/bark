@@ -184,7 +184,7 @@ class MainActivity : FlutterActivity() {
             // "wt" truncates a file the person chose to replace.
             val out = contentResolver.openOutputStream(uri, "wt")
             if (out == null) {
-                result.error("write", "no stream for $uri", null)
+                result.error("no-stream", "no stream for $uri", uri.toString())
                 return
             }
             out.use { it.write(bytes) }

@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
@@ -14,22 +15,21 @@ import android.util.Log
 
 // The foreground service that keeps the process, and the Dart session in
 // it, running while the app holds the link to a node or looks for its
-// paired node. It shows the link's notification, whose words the session
-// gives, and starts the session without a window when nothing else has:
-// at boot, or when Android starts the service again after ending the
-// process.
+// paired node. It shows the link's notification and names its channel,
+// both in words the session gives in the language spoken, and starts the
+// session without a window when nothing else has: at boot, or when Android
+// starts the service again after ending the process.
 class LinkService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val title = intent?.getStringExtra(TITLE) ?: prefs(this).getString(TITLE, null)
-        val body = intent?.getStringExtra(BODY) ?: prefs(this).getString(BODY, null) ?: ""
-        if (title == null) {
+        val words = intent?.let { Words.of(it) } ?: Words.kept(prefs(this))
+        if (words == null) {
             stopSelf()
             return START_NOT_STICKY
         }
         try {
-            val n = notification(this, title, body)
+            val n = notification(this, words)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
             } else {
@@ -53,27 +53,63 @@ class LinkService : Service() {
         super.onDestroy()
     }
 
+    // The notification's title and body, and its channel's name and
+    // description.
+    data class Words(
+        val title: String,
+        val body: String,
+        val channel: String,
+        val about: String,
+    ) {
+        fun into(i: Intent): Intent = i
+            .putExtra(TITLE, title)
+            .putExtra(BODY, body)
+            .putExtra(CHANNEL_NAME, channel)
+            .putExtra(ABOUT, about)
+
+        companion object {
+            fun of(i: Intent): Words? = Words(
+                i.getStringExtra(TITLE) ?: return null,
+                i.getStringExtra(BODY) ?: return null,
+                i.getStringExtra(CHANNEL_NAME) ?: return null,
+                i.getStringExtra(ABOUT) ?: return null,
+            )
+
+            // A build before this one kept no channel words; its English
+            // ones, so that such a phone still starts the service at boot.
+            fun kept(p: SharedPreferences): Words? = Words(
+                p.getString(TITLE, null) ?: return null,
+                p.getString(BODY, null) ?: return null,
+                p.getString(CHANNEL_NAME, null) ?: "Connection to the node",
+                p.getString(ABOUT, null)
+                    ?: "Shown while the app keeps the link to a node or looks for it",
+            )
+        }
+    }
+
     companion object {
         private const val TAG = "bark"
         private const val ID = 1
         private const val CHANNEL = "link"
         private const val TITLE = "title"
         private const val BODY = "body"
+        private const val CHANNEL_NAME = "channel"
+        private const val ABOUT = "channelAbout"
 
         private var running = false
 
         private fun prefs(context: Context) = context.getSharedPreferences("boot", Context.MODE_PRIVATE)
 
-        // Runs the service under a notification of `title` and `body`.
-        fun hold(context: Context, title: String, body: String) {
+        // Runs the service under a notification of `words`.
+        fun hold(context: Context, words: Words) {
             if (running) {
                 // Changed in place: Android 12 and later restrict starting
                 // a service from the background.
                 context.getSystemService(NotificationManager::class.java)
-                    .notify(ID, notification(context, title, body))
+                    .notify(ID, notification(context, words))
                 return
             }
-            start(context, Intent(context, LinkService::class.java).putExtra(TITLE, title).putExtra(BODY, body))
+            start(context, words.into(Intent(context, LinkService::class.java)))
         }
 
         fun letGo(context: Context) {
@@ -85,12 +121,17 @@ class LinkService : Service() {
 
         // Kept for boot: the notification to start under, or none to
         // start nothing.
-        fun atBoot(context: Context, title: String?, body: String?) {
-            prefs(context).edit().putString(TITLE, title).putString(BODY, body).apply()
+        fun atBoot(context: Context, words: Words?) {
+            prefs(context).edit()
+                .putString(TITLE, words?.title)
+                .putString(BODY, words?.body)
+                .putString(CHANNEL_NAME, words?.channel)
+                .putString(ABOUT, words?.about)
+                .apply()
         }
 
         fun boot(context: Context) {
-            if (prefs(context).getString(TITLE, null) == null) return
+            if (Words.kept(prefs(context)) == null) return
             try {
                 // Android 12 and later allow a foreground service to start
                 // from the receiver of BOOT_COMPLETED ("Restrictions on
@@ -110,14 +151,16 @@ class LinkService : Service() {
             }
         }
 
-        private fun notification(context: Context, title: String, body: String): Notification {
+        private fun notification(context: Context, words: Words): Notification {
             val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 // Low importance makes no sound: it is there as long as
                 // the link or the search, and Android requires it of a
                 // foreground service.
                 context.getSystemService(NotificationManager::class.java).createNotificationChannel(
-                    NotificationChannel(CHANNEL, "Connection to the node", NotificationManager.IMPORTANCE_LOW).apply {
-                        description = "Shown while the app keeps the link to a node or looks for it"
+                    // Made again at each notification, which renames it
+                    // when the phone's language changed.
+                    NotificationChannel(CHANNEL, words.channel, NotificationManager.IMPORTANCE_LOW).apply {
+                        description = words.about
                     },
                 )
                 Notification.Builder(context, CHANNEL)
@@ -133,8 +176,8 @@ class LinkService : Service() {
             )
             return builder
                 .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(title)
-                .setContentText(body)
+                .setContentTitle(words.title)
+                .setContentText(words.body)
                 .setOngoing(true)
                 .setShowWhen(false)
                 .setContentIntent(open)

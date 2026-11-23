@@ -12,6 +12,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:intl/intl.dart' show NumberFormat;
 import 'package:latlong2/latlong.dart';
 
 import '../app.dart';
@@ -48,10 +49,18 @@ Color qualityColor(Quality q) => switch (q) {
   Quality.fragile => Colors.red.shade700,
 };
 
+/// A link's quality in a word, as a row's value says it.
 String qualityName(Quality q) => switch (q) {
-  Quality.good => 'good',
-  Quality.fair => 'fair',
-  Quality.fragile => 'fragile',
+  Quality.good => tr.factLinkGood,
+  Quality.fair => tr.factLinkFair,
+  Quality.fragile => tr.factLinkFragile,
+};
+
+/// A link's quality as a screen reader names its row's icon.
+String _qualitySaid(Quality q) => switch (q) {
+  Quality.good => tr.factLinkGoodName,
+  Quality.fair => tr.factLinkFairName,
+  Quality.fragile => tr.factLinkFragileName,
 };
 
 bool _placed(Position p) => p.lat != 0 || p.lon != 0;
@@ -62,12 +71,16 @@ String _signed(num v, {bool plus = false}) {
   return r < 0 ? '\u2212${-r}' : (plus ? '+$r' : '$r');
 }
 
+/// `v` to one decimal, in the language spoken's form, ungrouped.
+String _tenths(double v) => NumberFormat('0.0', tr.localeName).format(v);
+
 /// A distance in metres, in kilometres from 1 km.
 String distance(double m) =>
-    m < 1000 ? '${m.round()} m' : '${(m / 1000).toStringAsFixed(1)} km';
+    m < 1000 ? tr.factMetres(m.round()) : tr.factKilometres(_tenths(m / 1000));
 
 /// Seconds since, as a person says it.
-String secondsAgo(int s) => s < 60 ? '$s s ago' : ago(Duration(seconds: s));
+String secondsAgo(int s) =>
+    s < 60 ? tr.timeSecondsAgo(s) : ago(Duration(seconds: s));
 
 /// A position to five decimals, about a metre.
 String _where(Position p) =>
@@ -77,7 +90,7 @@ String _where(Position p) =>
 /// heard, heard with the margin a full frame needs through a fade, and
 /// those that have taken a message from it (spec "Neighbour status").
 String known(int heard, int strong, int exchanged) =>
-    '$heard heard \u00b7 $strong strong \u00b7 $exchanged exchanged';
+    tr.factKnownValue(heard, strong, exchanged);
 
 /// [known] of the table read.
 String knownOf(NeighbourTable t) => known(
@@ -91,7 +104,9 @@ String knownOf(NeighbourTable t) => known(
 /// guessing, and its value.
 class Fact {
   final IconData icon;
-  final String label;
+
+  /// Which fact it is, whose label and help it shows.
+  final FactKind kind;
   final String name;
   final String value;
   final Color? color;
@@ -103,61 +118,71 @@ class Fact {
   final String? detail;
   const Fact(
     this.icon,
-    this.label,
+    this.kind,
     this.name,
     this.value, {
     this.color,
     this.tooltip,
     this.detail,
   });
+
+  String get label => factLabel(kind);
 }
 
-/// The facts of a node's power, as its answer or status says it.
-Fact _power({required bool usb, String? battery}) => usb
-    ? const Fact(Icons.power, 'Power', 'power', 'USB')
+/// The facts of a node's power: USB, or its battery, which is low, read
+/// as `reading`, or not read.
+Fact _power({required bool usb, bool low = false, String? reading}) => usb
+    ? Fact(Icons.power, FactKind.power, tr.factPowerName, 'USB')
     : Fact(
-        switch (battery) {
-          null => Icons.battery_unknown,
-          'low' => Icons.battery_alert,
-          _ => Icons.battery_std,
-        },
-        'Power',
-        'battery',
-        battery ?? 'not read',
+        low
+            ? Icons.battery_alert
+            : reading == null
+            ? Icons.battery_unknown
+            : Icons.battery_std,
+        FactKind.power,
+        tr.factBatteryName,
+        low ? tr.factBatteryLow : reading ?? tr.notRead,
       );
 
 /// The GPS's signal: its number and, by [gpsFixFloorDbHz], whether a fix
 /// is taken at it; 0 is no reading (spec "Neighbour status").
 Fact gpsFact(int cn0) => Fact(
   Icons.signal_cellular_alt,
-  'GPS signal',
-  'GPS signal',
+  FactKind.gpsSignal,
+  tr.gpsSignal,
   cn0 == 0
-      ? 'no reading'
-      : '$cn0 dB-Hz · ${cn0 < gpsFixFloorDbHz ? 'too weak for a fix' : 'enough for a fix'}',
+      ? tr.noReading
+      : cn0 < gpsFixFloorDbHz
+      ? tr.factGpsTooWeak(cn0)
+      : tr.factGpsEnough(cn0),
 );
 
 /// What a node does for others: a relay passes texts on; a sleepy node
 /// sleeps between windows and sends and receives through its anchor
 /// (spec "Nodes").
 Fact _role(bool sleepy) => sleepy
-    ? const Fact(
+    ? Fact(
         Icons.bedtime,
-        'Role',
-        'role, sleepy',
-        'sleepy: wakes in windows, speaks through its anchor',
+        FactKind.role,
+        tr.factRoleSleepyName,
+        tr.factRoleSleepy,
       )
-    : const Fact(
+    : Fact(
         Icons.cell_tower,
-        'Role',
-        'role, relay',
-        'relay: passes on others\' texts',
+        FactKind.role,
+        tr.factRoleRelayName,
+        tr.factRoleRelay,
       );
 
 /// Whether a node is carried (spec "Nodes").
 Fact _moving(bool carried) => carried
-    ? const Fact(Icons.directions_walk, 'Moving', 'moving', 'carried')
-    : const Fact(Icons.house, 'Moving', 'moving', 'stays put');
+    ? Fact(
+        Icons.directions_walk,
+        FactKind.moving,
+        tr.factMovingName,
+        tr.factCarried,
+      )
+    : Fact(Icons.house, FactKind.moving, tr.factMovingName, tr.factFixed);
 
 /// A sleepy node's anchor: `to` names it when known, as for this node's
 /// own, whose anchor is the neighbour the table marks; a neighbour's
@@ -165,28 +190,28 @@ Fact _moving(bool carried) => carried
 Fact _anchored(bool anchored, {String? to}) => anchored
     ? Fact(
         Icons.anchor,
-        'Anchor',
-        'anchor',
-        to == null ? 'anchored' : 'anchored to $to',
+        FactKind.anchor,
+        tr.factAnchorName,
+        to == null ? tr.factAnchored : tr.factAnchoredTo(to),
       )
-    : const Fact(Icons.link_off, 'Anchor', 'anchor', 'no anchor yet');
+    : Fact(Icons.link_off, FactKind.anchor, tr.factAnchorName, tr.factNoAnchor);
 
 /// Where a node's position comes from, GPS or a map point a person set,
 /// and the position on a second line; none without a place.
 Fact _position(Position p, {required bool mapPoint}) => !_placed(p)
-    ? const Fact(Icons.location_off, 'Place', 'place', 'no place yet')
+    ? Fact(Icons.location_off, FactKind.place, tr.factPlaceName, tr.factNoPlace)
     : mapPoint
     ? Fact(
         Icons.push_pin,
-        'Place',
-        'place, set by a person',
-        'set by a person\n${_where(p)}',
+        FactKind.place,
+        tr.factPlaceByPersonName,
+        tr.factPlaceByPerson(_where(p)),
       )
     : Fact(
         Icons.satellite_alt,
-        'Place',
-        'place, from GPS',
-        'from GPS\n${_where(p)}',
+        FactKind.place,
+        tr.factPlaceFromGpsName,
+        tr.factPlaceFromGps(_where(p)),
       );
 
 /// The people at the node `id`: those whose home it is, "You" first when
@@ -199,7 +224,7 @@ Fact _position(Position p, {required bool mapPoint}) => !_placed(p)
   bool at(Address? a) => a != null && hex(a.id) == hex(id);
   return (
     home: [
-      if (at(app.me.home)) 'You',
+      if (at(app.me.home)) tr.mapYou,
       for (final c in app.contacts.active)
         if (at(c.card.home)) c.name,
     ],
@@ -215,8 +240,8 @@ Fact _position(Position p, {required bool mapPoint}) => !_placed(p)
 String? peopleLine(AppModel app, List<int> id) {
   final p = peopleAt(app, id);
   final parts = [
-    if (p.home.isNotEmpty) 'Home: ${p.home.join(', ')}',
-    if (p.seen.isNotEmpty) 'Last seen: ${p.seen.map((s) => s.$1).join(', ')}',
+    if (p.home.isNotEmpty) tr.mapHomeOf(p.home.join(', ')),
+    if (p.seen.isNotEmpty) tr.mapLastSeen(p.seen.map((s) => s.$1).join(', ')),
   ];
   return parts.isEmpty ? null : parts.join(' · ');
 }
@@ -226,9 +251,13 @@ String? peopleLine(AppModel app, List<int> id) {
 List<String> peopleLines(AppModel app, List<int> id) {
   final p = peopleAt(app, id);
   return [
-    if (p.home.isNotEmpty) 'Home: ${p.home.join(', ')}',
+    if (p.home.isNotEmpty) tr.mapHomeOf(p.home.join(', ')),
     if (p.seen.isNotEmpty)
-      'Last seen: ${p.seen.map((s) => '${s.$1} ${ago(app.now().difference(s.$2))}').join(', ')}',
+      tr.mapLastSeen(
+        p.seen
+            .map((s) => tr.mapSeenAgo(s.$1, ago(app.now().difference(s.$2))))
+            .join(', '),
+      ),
   ];
 }
 
@@ -316,7 +345,7 @@ class _MapScreenState extends State<MapScreen> {
   StreamSubscription<Status>? _seen;
 
   /// Why the last read failed, if it did.
-  String? _error;
+  Object? _error;
 
   /// A tile could not be had: no internet, and not kept on the phone.
   bool _noTiles = false;
@@ -363,7 +392,7 @@ class _MapScreenState extends State<MapScreen> {
         await _s.askNeighbours(t.list);
       }
     } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (mounted) setState(() => _error = e);
     }
   }
 
@@ -385,15 +414,15 @@ class _MapScreenState extends State<MapScreen> {
   Widget build(BuildContext context) => Watch(widget.app, (context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Nearby nodes'),
+        title: Text(tr.nearbyNodes),
         actions: [
           IconButton(
-            tooltip: 'Show where I am',
+            tooltip: tr.mapShowMe,
             icon: const Icon(Icons.person_pin_circle),
             onPressed: _showMe,
           ),
           IconButton(
-            tooltip: 'Read again',
+            tooltip: tr.mapReadAgain,
             icon: const Icon(Icons.refresh),
             onPressed: _readable ? _refresh : null,
           ),
@@ -410,18 +439,13 @@ class _MapScreenState extends State<MapScreen> {
   Widget _body(BuildContext context) {
     final n = _s.node;
     if (n == null) {
-      return _say('Not connected to a node: connect to see its neighbours.');
+      return _say(tr.mapNotConnected);
     }
-    if (_s.guest) {
-      return _say(
-        'Connected as a guest: only the phone paired with this node sees '
-        'its neighbours.',
-      );
-    }
+    if (_s.guest) return _say(tr.mapGuest);
     final t = _s.neighbours;
     if (t == null) {
       return _error != null
-          ? _say('Reading the neighbours failed: $_error')
+          ? _say(tr.mapReadFailed(said(_error!)))
           : const Center(child: CircularProgressIndicator());
     }
     // The node's own position; without one, as a sleepy node's with an
@@ -437,10 +461,7 @@ class _MapScreenState extends State<MapScreen> {
     final anchor = t.list.where((n) => n.anchor).firstOrNull;
     final points = [?drawn, ?you, for (final m in t.list) _at(m.position)];
     if (points.isEmpty) {
-      return _say(
-        'The node has no place yet and has heard no neighbour: nothing '
-        'to draw.',
-      );
+      return _say(tr.mapNothing);
     }
     return Stack(
       children: [
@@ -499,7 +520,7 @@ class _MapScreenState extends State<MapScreen> {
                     point: you,
                     width: 18,
                     height: 18,
-                    child: Semantics(label: 'You', child: _youDot(context)),
+                    child: Semantics(label: tr.you, child: _youDot(context)),
                   ),
                 ],
               ),
@@ -521,9 +542,7 @@ class _MapScreenState extends State<MapScreen> {
                 );
               },
             ),
-            const SimpleAttributionWidget(
-              source: Text('© OpenStreetMap contributors'),
-            ),
+            SimpleAttributionWidget(source: Text(tr.mapAttribution)),
           ],
         ),
         Positioned(
@@ -535,19 +554,10 @@ class _MapScreenState extends State<MapScreen> {
             children: [
               if (own == null)
                 _banner(
-                  you == null
-                      ? 'The node has no place of its own: its neighbours '
-                            'are drawn without lines to it.'
-                      : 'The node has no place of its own: it is drawn '
-                            'where you are.',
+                  you == null ? tr.mapNoPlaceNoLines : tr.mapNoPlaceAtYou,
                 ),
-              if (_noTiles)
-                _banner(
-                  'No street map here: the phone has no internet and has '
-                  'not kept this area from before. The nodes and links are '
-                  'drawn on a blank background.',
-                ),
-              if (_error != null) _banner('The last read failed: $_error'),
+              if (_noTiles) _banner(tr.mapNoTiles),
+              if (_error case final e?) _banner(tr.mapLastReadFailed(said(e))),
               _legend(t),
             ],
           ),
@@ -575,10 +585,10 @@ class _MapScreenState extends State<MapScreen> {
         name: nodeLabel(m.id),
         people: peopleLine(app, m.id),
         kind: m.carried
-            ? 'carried'
+            ? tr.factCarried
             : m.sleepy
-            ? 'sleepy'
-            : 'relay',
+            ? tr.mapKindSleepy
+            : tr.mapKindRelay,
         icon: look.icon,
         color: qualityColor(m.quality(t.floorDbm)),
         look: look.build,
@@ -596,7 +606,7 @@ class _MapScreenState extends State<MapScreen> {
           height: _NodeMarker.size,
           name: nodeLabel(id),
           people: peopleLine(app, id),
-          kind: 'this node',
+          kind: tr.mapThisNode,
           icon: _NodeMarker.icon,
           color: Theme.of(context).colorScheme.primary,
           look: (count) => _NodeMarker.look(context, count),
@@ -640,13 +650,9 @@ class _MapScreenState extends State<MapScreen> {
     final line = said != null
         ? null
         : switch (_s.askState(n.id)) {
-            AskState.asking => const _Line(
-              'Asking it for power, neighbours and version\u2026',
-            ),
+            AskState.asking => _Line(tr.mapAsking),
             AskState.gaveUp => _Line(
-              sleepy
-                  ? 'It did not answer: it sleeps between its windows.'
-                  : 'It did not answer.',
+              sleepy ? tr.mapNoAnswerSleepy : tr.mapNoAnswer,
               again: _readable ? () => _askOne(n) : null,
             ),
             _ => null,
@@ -657,7 +663,7 @@ class _MapScreenState extends State<MapScreen> {
       facts,
       line: line,
       // Where its power would be, the first row an answer gives.
-      lineAt: facts.indexWhere((f) => f.label == 'Place') + 1,
+      lineAt: facts.indexWhere((f) => f.kind == FactKind.place) + 1,
     );
   }
 
@@ -676,9 +682,10 @@ class _MapScreenState extends State<MapScreen> {
         // Its own node, not merged into the map's.
         container: true,
         button: true,
-        label:
-            '${here.length} nodes here: '
-            '${here.map((s) => s.name).join(', ')}',
+        label: tr.mapNodesHereNamed(
+          here.length,
+          here.map((s) => s.name).join(', '),
+        ),
         excludeSemantics: true,
         child: GestureDetector(
           onTap: () => _list(context, here),
@@ -720,7 +727,7 @@ class _MapScreenState extends State<MapScreen> {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Text(
-                    '${here.length} nodes here',
+                    tr.mapNodesHere(here.length),
                     style: Theme.of(sheet).textTheme.titleLarge,
                   ),
                 ),
@@ -749,14 +756,12 @@ class _MapScreenState extends State<MapScreen> {
   );
 
   Widget _legend(NeighbourTable t) {
-    final fair = fairAboveFloorDb.toStringAsFixed(1);
-    final good = goodAboveFloorDb.toStringAsFixed(1);
-    Widget band(Quality q, String range) => Row(
+    Widget band(Quality q, String words) => Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(width: 16, height: 4, color: qualityColor(q)),
         const SizedBox(width: 4),
-        Text('${qualityName(q)} $range', style: const TextStyle(fontSize: 12)),
+        Text(words, style: const TextStyle(fontSize: 12)),
       ],
     );
     Widget kind(IconData icon, String words) => Row(
@@ -775,24 +780,27 @@ class _MapScreenState extends State<MapScreen> {
           runSpacing: 4,
           children: [
             Text(
-              '${t.list.length} neighbours, read ${when(t.at)}',
+              tr.mapNeighboursRead(t.list.length, when(t.at)),
               style: const TextStyle(fontSize: 12),
             ),
-            band(Quality.good, '≥ $good dB'),
-            band(Quality.fair, '$fair–$good dB'),
-            band(Quality.fragile, '< $fair dB over the noise floor'),
-            kind(Icons.cell_tower, 'a relay'),
-            kind(Icons.battery_std, 'a sleepy node'),
-            kind(Icons.directions_walk, 'a carried node'),
+            band(Quality.good, tr.mapBandGood(_tenths(goodAboveFloorDb))),
+            band(
+              Quality.fair,
+              tr.mapBandFair(
+                _tenths(fairAboveFloorDb),
+                _tenths(goodAboveFloorDb),
+              ),
+            ),
+            band(Quality.fragile, tr.mapBandFragile(_tenths(fairAboveFloorDb))),
+            kind(Icons.cell_tower, tr.mapLegendRelay),
+            kind(Icons.battery_std, tr.mapLegendSleepy),
+            kind(Icons.directions_walk, tr.mapLegendCarried),
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Badge.count(count: 2),
                 const SizedBox(width: 4),
-                const Text(
-                  'nodes at one place',
-                  style: TextStyle(fontSize: 12),
-                ),
+                Text(tr.mapLegendShared, style: const TextStyle(fontSize: 12)),
               ],
             ),
             if (_you != null)
@@ -801,11 +809,10 @@ class _MapScreenState extends State<MapScreen> {
                 children: [
                   _youDot(context, size: 12),
                   const SizedBox(width: 4),
-                  const Flexible(
+                  Flexible(
                     child: Text(
-                      'you: your position stays on this phone, never sent '
-                      'or kept',
-                      style: TextStyle(fontSize: 12),
+                      tr.mapLegendYou,
+                      style: const TextStyle(fontSize: 12),
                     ),
                   ),
                 ],
@@ -866,20 +873,31 @@ class _NodeMarker {
       if (!_placed(t.own) && st.sleepy && st.placed)
         Fact(
           Icons.anchor,
-          'Place',
-          'place, its anchor\'s',
-          'its anchor\'s\n${_where(st.address)}',
+          FactKind.place,
+          tr.factPlaceAnchorsName,
+          tr.factPlaceAnchors(_where(st.address)),
         )
       else
         _position(t.own, mapPoint: st.mapPoint),
       _power(
         usb: st.externalPower,
-        battery: st.batteryMv == 0 ? null : '${st.batteryMv} mV',
+        reading: st.batteryMv == 0 ? null : tr.millivolts(st.batteryMv),
       ),
-      Fact(Icons.hub, 'Known', 'neighbours known', knownOf(t)),
+      Fact(Icons.hub, FactKind.known, tr.factKnownName, knownOf(t)),
       gpsFact(st.gpsCn0),
-      Fact(Icons.sell, 'Version', 'firmware version', 'V${s.node!.image}'),
-      const Fact(Icons.smartphone, 'Paired', 'paired', 'with this phone'),
+      // The node's screen's own form of a version.
+      Fact(
+        Icons.sell,
+        FactKind.version,
+        tr.factVersionName,
+        'V${s.node!.image}',
+      ),
+      Fact(
+        Icons.smartphone,
+        FactKind.paired,
+        tr.factPairedName,
+        tr.factPairedWithThis,
+      ),
     ];
   }
 
@@ -892,7 +910,7 @@ class _NodeMarker {
       icon,
       size: 36,
       color: Theme.of(context).colorScheme.primary,
-      semanticLabel: 'this node',
+      semanticLabel: tr.mapThisNode,
     ),
     count,
   );
@@ -933,73 +951,90 @@ class _NeighbourMarker {
       if (sleepy)
         _anchored(s?.anchored ?? !n.anchorless)
       else if (n.anchor)
-        const Fact(Icons.anchor, 'Anchor', 'anchor', 'this node\'s anchor'),
+        Fact(
+          Icons.anchor,
+          FactKind.anchor,
+          tr.factAnchorName,
+          tr.factThisNodesAnchor,
+        ),
       _position(n.position, mapPoint: n.mapPoint),
       if (s != null)
         _power(
           usb: s.usb,
-          battery: s.battery == NeighbourStatus.batteryLow
-              ? 'low'
-              : s.percent == null
-              ? null
-              : '${s.percent}%',
+          low: s.battery == NeighbourStatus.batteryLow,
+          reading: s.percent == null ? null : tr.factPercent(s.percent!),
         ),
       // Good, fair or fragile by the margin over the noise floor, at the
       // thresholds of spec "Phone link", Neighbours ([goodAboveFloorDb],
       // [fairAboveFloorDb]); the numbers go to the row's help.
       Fact(
         Icons.settings_input_antenna,
-        'Link',
-        'link strength, ${qualityName(q)}',
+        FactKind.link,
+        _qualitySaid(q),
         qualityName(q),
         color: qualityColor(q),
-        detail:
-            'This link: ${_signed(n.rssiDbm)} dBm, '
-            '${_signed(n.rssiDbm - t.floorDbm, plus: true)} dB over the '
-            'noise floor.',
+        detail: tr.factLinkDetail(
+          _signed(n.rssiDbm),
+          _signed(n.rssiDbm - t.floorDbm, plus: true),
+        ),
       ),
-      Fact(Icons.schedule, 'Last heard', 'last heard', secondsAgo(n.ageS)),
+      Fact(
+        Icons.schedule,
+        FactKind.lastHeard,
+        tr.factLastHeardName,
+        secondsAgo(n.ageS),
+      ),
       if (far != null)
-        Fact(Icons.straighten, 'Distance', 'distance', distance(far)),
+        Fact(
+          Icons.straighten,
+          FactKind.distance,
+          tr.factDistanceName,
+          distance(far),
+        ),
       if (s != null) ...[
         Fact(
           Icons.hub,
-          'Known',
-          'neighbours known',
+          FactKind.known,
+          tr.factKnownName,
           known(s.heard, s.strong, s.proven),
         ),
         gpsFact(s.gpsCn0),
+        // The versions in the node's screen's own form.
         if (s.version != 0)
           Fact(
             Icons.sell,
-            'Version',
-            'firmware version',
+            FactKind.version,
+            tr.factVersionName,
             s.gathers == 0
                 ? 'V${s.version}'
-                : 'V${s.version} \u00b7 getting V${s.gathers} '
-                      '${s.complete}/${s.blocks}',
+                : tr.factVersionGetting(
+                    'V${s.version}',
+                    'V${s.gathers}',
+                    s.complete,
+                    s.blocks,
+                  ),
           ),
       ],
       if (n.proven)
-        const Fact(
+        Fact(
           Icons.check_box,
-          'Exchanged',
-          'exchanged',
-          'it took a message from this node',
+          FactKind.exchanged,
+          tr.factExchangedName,
+          tr.factExchangedValue,
         ),
       if (n.demoted)
-        const Fact(
+        Fact(
           Icons.trending_down,
-          'Demoted',
-          'demoted',
-          'it did not answer its last texts',
+          FactKind.demoted,
+          tr.factDemotedName,
+          tr.factDemotedValue,
         ),
       if (n.banned)
-        const Fact(
+        Fact(
           Icons.block,
-          'Avoided',
-          'avoided',
-          'for now: it turned a text down or did not answer',
+          FactKind.avoided,
+          tr.factAvoidedName,
+          tr.factAvoidedValue,
         ),
     ];
   }
@@ -1069,7 +1104,7 @@ class _Line extends StatelessWidget {
           ),
         ),
         if (again != null)
-          TextButton(onPressed: again, child: const Text('Ask again')),
+          TextButton(onPressed: again, child: Text(tr.askAgain)),
       ],
     ),
   );
@@ -1125,7 +1160,7 @@ class _Sheet extends StatelessWidget {
               children: [
                 Text(f.label, style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 8),
-                Text(factHelp[f.label]!),
+                Text(factHelp(f.kind)),
                 if (f.detail != null) ...[
                   const SizedBox(height: 8),
                   Text(f.detail!),

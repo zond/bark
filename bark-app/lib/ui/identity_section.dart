@@ -3,12 +3,21 @@
 
 import 'package:flutter/foundation.dart' show Uint8List;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show PlatformException;
 
 import '../app.dart';
 import '../identity_file.dart';
 import '../l10n.dart';
 import 'common.dart';
 import 'settings_parts.dart';
+
+/// Why Android's save dialog failed, as a person reads it.
+String _saveFault(Object e) => switch (e) {
+  PlatformException(code: 'busy') => tr.identitySaveBusy,
+  PlatformException(code: 'no-stream', :final String details) =>
+    tr.identityNoStream(details),
+  _ => said(e),
+};
 
 class IdentitySection extends StatelessWidget {
   final AppModel app;
@@ -62,7 +71,7 @@ class IdentitySection extends StatelessWidget {
         say(context, saved ? tr.identitySaved : tr.identityNotSaved);
       }
     } catch (e) {
-      if (context.mounted) say(context, tr.identitySaveFailed(said(e)));
+      if (context.mounted) say(context, tr.identitySaveFailed(_saveFault(e)));
     }
   }
 

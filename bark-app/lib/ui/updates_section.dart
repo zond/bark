@@ -113,7 +113,7 @@ class _UpdatesSectionState extends State<UpdatesSection> {
         title: Text(tr.updatesNodeFirmware),
         subtitle: Text(
           n == null
-              ? tr.updatesNotConnected
+              ? tr.nodeNotConnected
               : s.guest
               ? tr.updatesGuest
               : newerImage

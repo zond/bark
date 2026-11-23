@@ -72,9 +72,11 @@ languages it has, else English.
   English: `english`, in `lib/l10n.dart`, is the words for a log line.
   An error a person may read implements `Spoken`: a screen shows
   `said(e)`, never `'$e'`, and `'$e'` in a log line is English.
-- **What stays English.** The debug screen's log, which is what a fault
-  report carries; the words on the node's screen, which the app quotes
-  as they are shown; and the twelve backup words.
+- **What stays English.** On the debug screen, the log, the sent and
+  received records and the raw values, which are what a fault report
+  carries; its headings and labels are translated. The words on the
+  node's screen, which the app quotes as they are shown; and the twelve
+  backup words.
 
 The words a translation keeps to, so that a thing has one name on every
 screen and in the manual (`site/sv/`, `site/uk/`):

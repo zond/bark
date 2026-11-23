@@ -1000,11 +1000,23 @@ abstract class AppLocalizations {
   /// **'A text from a contact'**
   String get notifyChannelAbout;
 
-  /// The person, in a notification of a conversation.
+  /// The name, in the phone's settings, of the kind of notification shown while the app keeps its link to the node; notifyLinkChannelAbout describes it there.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection to the node'**
+  String get notifyLinkChannel;
+
+  /// No description provided for @notifyLinkChannelAbout.
+  ///
+  /// In en, this message translates to:
+  /// **'Shown while the app keeps the link to a node or looks for it'**
+  String get notifyLinkChannelAbout;
+
+  /// The person: in a notification of a conversation, among those whose home a node on the map is, and the dot for the phone on the map.
   ///
   /// In en, this message translates to:
   /// **'You'**
-  String get notifyYou;
+  String get you;
 
   /// No description provided for @threadRemovedContact.
   ///
@@ -1546,7 +1558,7 @@ abstract class AppLocalizations {
   /// **'Or paste the card they sent you'**
   String get contactsPasteHelp;
 
-  /// A heading: the heading of Settings' section on the person's home, and a pasted card's home node, with its address under it.
+  /// A heading: the heading of Settings' section on the person's home, and a pasted card's home node, with its address under it. Also a row's label on the debug screen.
   ///
   /// In en, this message translates to:
   /// **'Home node'**
@@ -1846,6 +1858,611 @@ abstract class AppLocalizations {
   /// **'This phone is paired with this node: the node sends your texts into the network, and keeps the ones for you until the app reads them. Only the paired phone sees the node\'s neighbours on this map.'**
   String get factPaired;
 
+  /// The label of a row of a node's sheet on the map; the other fact…Label messages are the labels of the other rows, each with its help in the fact message of the same name without Label.
+  ///
+  /// In en, this message translates to:
+  /// **'Role'**
+  String get factRoleLabel;
+
+  /// The row's value is factCarried or factFixed.
+  ///
+  /// In en, this message translates to:
+  /// **'Moving'**
+  String get factMovingLabel;
+
+  /// No description provided for @factAnchorLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Anchor'**
+  String get factAnchorLabel;
+
+  /// No description provided for @factPlaceLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Place'**
+  String get factPlaceLabel;
+
+  /// The row's value is USB, or the battery's level.
+  ///
+  /// In en, this message translates to:
+  /// **'Power'**
+  String get factPowerLabel;
+
+  /// How well this node hears the other one; the value is factLinkGood, factLinkFair or factLinkFragile.
+  ///
+  /// In en, this message translates to:
+  /// **'Link'**
+  String get factLinkLabel;
+
+  /// No description provided for @factLastHeardLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Last heard'**
+  String get factLastHeardLabel;
+
+  /// No description provided for @factDistanceLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Distance'**
+  String get factDistanceLabel;
+
+  /// The neighbours the node knows; the value is factKnownValue.
+  ///
+  /// In en, this message translates to:
+  /// **'Known'**
+  String get factKnownLabel;
+
+  /// A row's label on a node's sheet on the map and on the debug screen: how strongly the node's GPS hears the satellites. Also what a screen reader says for the row's icon.
+  ///
+  /// In en, this message translates to:
+  /// **'GPS signal'**
+  String get gpsSignal;
+
+  /// The version of the firmware the node runs.
+  ///
+  /// In en, this message translates to:
+  /// **'Version'**
+  String get factVersionLabel;
+
+  /// The other node has taken a text from this one; the value is factExchangedValue.
+  ///
+  /// In en, this message translates to:
+  /// **'Exchanged'**
+  String get factExchangedLabel;
+
+  /// This node tries the other one last for now; the value is factDemotedValue.
+  ///
+  /// In en, this message translates to:
+  /// **'Demoted'**
+  String get factDemotedLabel;
+
+  /// This node sends nothing to the other one for now; the value is factAvoidedValue.
+  ///
+  /// In en, this message translates to:
+  /// **'Avoided'**
+  String get factAvoidedLabel;
+
+  /// On the sheet of the node the phone is on; the value is factPairedWithThis.
+  ///
+  /// In en, this message translates to:
+  /// **'Paired'**
+  String get factPairedLabel;
+
+  /// What a screen reader says for the icon of the row factRoleLabel; lower case. The other fact…Name messages are the same for the other rows' icons.
+  ///
+  /// In en, this message translates to:
+  /// **'role, sleepy'**
+  String get factRoleSleepyName;
+
+  /// No description provided for @factRoleRelayName.
+  ///
+  /// In en, this message translates to:
+  /// **'role, relay'**
+  String get factRoleRelayName;
+
+  /// No description provided for @factMovingName.
+  ///
+  /// In en, this message translates to:
+  /// **'moving'**
+  String get factMovingName;
+
+  /// No description provided for @factAnchorName.
+  ///
+  /// In en, this message translates to:
+  /// **'anchor'**
+  String get factAnchorName;
+
+  /// No description provided for @factPlaceName.
+  ///
+  /// In en, this message translates to:
+  /// **'place'**
+  String get factPlaceName;
+
+  /// No description provided for @factPlaceByPersonName.
+  ///
+  /// In en, this message translates to:
+  /// **'place, set by a person'**
+  String get factPlaceByPersonName;
+
+  /// No description provided for @factPlaceFromGpsName.
+  ///
+  /// In en, this message translates to:
+  /// **'place, from GPS'**
+  String get factPlaceFromGpsName;
+
+  /// The node's place is its anchor's.
+  ///
+  /// In en, this message translates to:
+  /// **'place, its anchor\'s'**
+  String get factPlaceAnchorsName;
+
+  /// For a node on USB.
+  ///
+  /// In en, this message translates to:
+  /// **'power'**
+  String get factPowerName;
+
+  /// For a node on battery.
+  ///
+  /// In en, this message translates to:
+  /// **'battery'**
+  String get factBatteryName;
+
+  /// No description provided for @factLinkGoodName.
+  ///
+  /// In en, this message translates to:
+  /// **'link strength, good'**
+  String get factLinkGoodName;
+
+  /// No description provided for @factLinkFairName.
+  ///
+  /// In en, this message translates to:
+  /// **'link strength, fair'**
+  String get factLinkFairName;
+
+  /// No description provided for @factLinkFragileName.
+  ///
+  /// In en, this message translates to:
+  /// **'link strength, fragile'**
+  String get factLinkFragileName;
+
+  /// No description provided for @factLastHeardName.
+  ///
+  /// In en, this message translates to:
+  /// **'last heard'**
+  String get factLastHeardName;
+
+  /// No description provided for @factDistanceName.
+  ///
+  /// In en, this message translates to:
+  /// **'distance'**
+  String get factDistanceName;
+
+  /// No description provided for @factKnownName.
+  ///
+  /// In en, this message translates to:
+  /// **'neighbours known'**
+  String get factKnownName;
+
+  /// No description provided for @factVersionName.
+  ///
+  /// In en, this message translates to:
+  /// **'firmware version'**
+  String get factVersionName;
+
+  /// No description provided for @factPairedName.
+  ///
+  /// In en, this message translates to:
+  /// **'paired'**
+  String get factPairedName;
+
+  /// No description provided for @factExchangedName.
+  ///
+  /// In en, this message translates to:
+  /// **'exchanged'**
+  String get factExchangedName;
+
+  /// No description provided for @factDemotedName.
+  ///
+  /// In en, this message translates to:
+  /// **'demoted'**
+  String get factDemotedName;
+
+  /// No description provided for @factAvoidedName.
+  ///
+  /// In en, this message translates to:
+  /// **'avoided'**
+  String get factAvoidedName;
+
+  /// The value of the row factRoleLabel, lower case after the label; 'its' is the node's. The other row values are lower case too.
+  ///
+  /// In en, this message translates to:
+  /// **'sleepy: wakes in windows, speaks through its anchor'**
+  String get factRoleSleepy;
+
+  /// No description provided for @factRoleRelay.
+  ///
+  /// In en, this message translates to:
+  /// **'relay: passes on others\' texts'**
+  String get factRoleRelay;
+
+  /// The value of the row factMovingLabel: the node moves with a person. Also a node's kind after its ID in the list of nodes at one place, as mapKindSleepy.
+  ///
+  /// In en, this message translates to:
+  /// **'carried'**
+  String get factCarried;
+
+  /// The value of the row factMovingLabel: the node stays in one place.
+  ///
+  /// In en, this message translates to:
+  /// **'stays put'**
+  String get factFixed;
+
+  /// The value of the row factAnchorLabel, which stands before it: a sleepy node has an anchor, the relay it sends and receives through.
+  ///
+  /// In en, this message translates to:
+  /// **'anchored'**
+  String get factAnchored;
+
+  /// As factAnchored, with the anchor's ID; after the label factAnchorLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'anchored to {node}'**
+  String factAnchoredTo(String node);
+
+  /// The value of the row factAnchorLabel, which stands before it.
+  ///
+  /// In en, this message translates to:
+  /// **'no anchor yet'**
+  String get factNoAnchor;
+
+  /// This neighbour is the anchor of the node the phone is on.
+  ///
+  /// In en, this message translates to:
+  /// **'this node\'s anchor'**
+  String get factThisNodesAnchor;
+
+  /// The value of the row factPlaceLabel, which stands before it.
+  ///
+  /// In en, this message translates to:
+  /// **'no place yet'**
+  String get factNoPlace;
+
+  /// The place was set by hand in the app; the position follows on a line of its own.
+  ///
+  /// In en, this message translates to:
+  /// **'set by a person\n{place}'**
+  String factPlaceByPerson(String place);
+
+  /// No description provided for @factPlaceFromGps.
+  ///
+  /// In en, this message translates to:
+  /// **'from GPS\n{place}'**
+  String factPlaceFromGps(String place);
+
+  /// A sleepy node's place is its anchor's; 'its' is the node's.
+  ///
+  /// In en, this message translates to:
+  /// **'its anchor\'s\n{place}'**
+  String factPlaceAnchors(String place);
+
+  /// The battery's level.
+  ///
+  /// In en, this message translates to:
+  /// **'low'**
+  String get factBatteryLow;
+
+  /// A value the app has not read yet, such as a battery's level on the map or a value on the debug screen; lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'not read'**
+  String get notRead;
+
+  /// The battery left.
+  ///
+  /// In en, this message translates to:
+  /// **'{percent}%'**
+  String factPercent(int percent);
+
+  /// A battery's voltage, on the map and on the debug screen.
+  ///
+  /// In en, this message translates to:
+  /// **'{voltage} mV'**
+  String millivolts(int voltage);
+
+  /// The GPS gave no signal reading; the value of the row gpsSignal, on the map and on the debug screen.
+  ///
+  /// In en, this message translates to:
+  /// **'no reading'**
+  String get noReading;
+
+  /// The GPS's signal, too weak for the node to take a position from it.
+  ///
+  /// In en, this message translates to:
+  /// **'{signal} dB-Hz · too weak for a fix'**
+  String factGpsTooWeak(int signal);
+
+  /// No description provided for @factGpsEnough.
+  ///
+  /// In en, this message translates to:
+  /// **'{signal} dB-Hz · enough for a fix'**
+  String factGpsEnough(int signal);
+
+  /// A link's quality; the link (factLinkLabel) is the other node's signal at this one. Also in the map's legend.
+  ///
+  /// In en, this message translates to:
+  /// **'good'**
+  String get factLinkGood;
+
+  /// No description provided for @factLinkFair.
+  ///
+  /// In en, this message translates to:
+  /// **'fair'**
+  String get factLinkFair;
+
+  /// No description provided for @factLinkFragile.
+  ///
+  /// In en, this message translates to:
+  /// **'fragile'**
+  String get factLinkFragile;
+
+  /// Under the help of the row factLinkLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'This link: {rssi} dBm, {margin} dB over the noise floor.'**
+  String factLinkDetail(String rssi, String margin);
+
+  /// How long ago, in lower case, as timeMinutesAgo.
+  ///
+  /// In en, this message translates to:
+  /// **'{seconds} s ago'**
+  String timeSecondsAgo(int seconds);
+
+  /// A distance under a kilometre.
+  ///
+  /// In en, this message translates to:
+  /// **'{metres} m'**
+  String factMetres(int metres);
+
+  /// No description provided for @factKilometres.
+  ///
+  /// In en, this message translates to:
+  /// **'{kilometres} km'**
+  String factKilometres(String kilometres);
+
+  /// The three counts of the node's neighbours that factKnown explains: Heard, Strong, Exchanged.
+  ///
+  /// In en, this message translates to:
+  /// **'{heard} heard · {strong} strong · {exchanged} exchanged'**
+  String factKnownValue(int heard, int strong, int exchanged);
+
+  /// The firmware version the node runs, and a newer one it gathers over the radio with how many of its blocks it holds.
+  ///
+  /// In en, this message translates to:
+  /// **'{version} · getting {gathers} {complete}/{blocks}'**
+  String factVersionGetting(
+    String version,
+    String gathers,
+    int complete,
+    int blocks,
+  );
+
+  /// 'It' is the other node.
+  ///
+  /// In en, this message translates to:
+  /// **'it took a message from this node'**
+  String get factExchangedValue;
+
+  /// 'It' is the other node; 'its last texts' are the last texts this node passed it.
+  ///
+  /// In en, this message translates to:
+  /// **'it did not answer its last texts'**
+  String get factDemotedValue;
+
+  /// 'It' is the other node.
+  ///
+  /// In en, this message translates to:
+  /// **'for now: it turned a text down or did not answer'**
+  String get factAvoidedValue;
+
+  /// No description provided for @factPairedWithThis.
+  ///
+  /// In en, this message translates to:
+  /// **'with this phone'**
+  String get factPairedWithThis;
+
+  /// The tooltip of a button on the map.
+  ///
+  /// In en, this message translates to:
+  /// **'Show where I am'**
+  String get mapShowMe;
+
+  /// The tooltip of the map's refresh button: read the neighbours again.
+  ///
+  /// In en, this message translates to:
+  /// **'Read again'**
+  String get mapReadAgain;
+
+  /// No description provided for @mapNotConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Not connected to a node: connect to see its neighbours.'**
+  String get mapNotConnected;
+
+  /// No description provided for @mapGuest.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected as a guest: only the phone paired with this node sees its neighbours.'**
+  String get mapGuest;
+
+  /// No description provided for @mapReadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Reading the neighbours failed: {error}'**
+  String mapReadFailed(String error);
+
+  /// No description provided for @mapNothing.
+  ///
+  /// In en, this message translates to:
+  /// **'The node has no place yet and has heard no neighbour: nothing to draw.'**
+  String get mapNothing;
+
+  /// The credit the street map's makers require, in the map's corner.
+  ///
+  /// In en, this message translates to:
+  /// **'© OpenStreetMap contributors'**
+  String get mapAttribution;
+
+  /// No description provided for @mapNoPlaceNoLines.
+  ///
+  /// In en, this message translates to:
+  /// **'The node has no place of its own: its neighbours are drawn without lines to it.'**
+  String get mapNoPlaceNoLines;
+
+  /// No description provided for @mapNoPlaceAtYou.
+  ///
+  /// In en, this message translates to:
+  /// **'The node has no place of its own: it is drawn where you are.'**
+  String get mapNoPlaceAtYou;
+
+  /// No description provided for @mapNoTiles.
+  ///
+  /// In en, this message translates to:
+  /// **'No street map here: the phone has no internet and has not kept this area from before. The nodes and links are drawn on a blank background.'**
+  String get mapNoTiles;
+
+  /// No description provided for @mapLastReadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The last read failed: {error}'**
+  String mapLastReadFailed(String error);
+
+  /// A node's kind after its ID in the list of nodes at one place, as factCarried and mapKindRelay.
+  ///
+  /// In en, this message translates to:
+  /// **'sleepy'**
+  String get mapKindSleepy;
+
+  /// No description provided for @mapKindRelay.
+  ///
+  /// In en, this message translates to:
+  /// **'relay'**
+  String get mapKindRelay;
+
+  /// The node the phone is on: its kind after its ID in the list of nodes at one place, and what a screen reader says for its marker.
+  ///
+  /// In en, this message translates to:
+  /// **'this node'**
+  String get mapThisNode;
+
+  /// On a neighbour's sheet; 'it' is the neighbour, asked over the radio.
+  ///
+  /// In en, this message translates to:
+  /// **'Asking it for power, neighbours and version…'**
+  String get mapAsking;
+
+  /// 'It' is the neighbour, a sleepy node.
+  ///
+  /// In en, this message translates to:
+  /// **'It did not answer: it sleeps between its windows.'**
+  String get mapNoAnswerSleepy;
+
+  /// 'It' is the neighbour.
+  ///
+  /// In en, this message translates to:
+  /// **'It did not answer.'**
+  String get mapNoAnswer;
+
+  /// The title of the list of nodes that share one place on the map; count is two or more.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{{count} node here} other{{count} nodes here}}'**
+  String mapNodesHere(int count);
+
+  /// What a screen reader says for a marker that stands for several nodes.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{{count} node here: {names}} other{{count} nodes here: {names}}}'**
+  String mapNodesHereNamed(int count, String names);
+
+  /// The legend's first line: how many neighbours the node knows, and when the app read them.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{{count} neighbour, read {time}} other{{count} neighbours, read {time}}}'**
+  String mapNeighboursRead(int count, String time);
+
+  /// In the legend: a good link's margin over the noise.
+  ///
+  /// In en, this message translates to:
+  /// **'good ≥ {good} dB'**
+  String mapBandGood(String good);
+
+  /// No description provided for @mapBandFair.
+  ///
+  /// In en, this message translates to:
+  /// **'fair {fair}–{good} dB'**
+  String mapBandFair(String fair, String good);
+
+  /// No description provided for @mapBandFragile.
+  ///
+  /// In en, this message translates to:
+  /// **'fragile < {fair} dB over the noise floor'**
+  String mapBandFragile(String fair);
+
+  /// In the legend, beside the icon of a relay; lower case, as the legend's other words.
+  ///
+  /// In en, this message translates to:
+  /// **'a relay'**
+  String get mapLegendRelay;
+
+  /// No description provided for @mapLegendSleepy.
+  ///
+  /// In en, this message translates to:
+  /// **'a sleepy node'**
+  String get mapLegendSleepy;
+
+  /// No description provided for @mapLegendCarried.
+  ///
+  /// In en, this message translates to:
+  /// **'a carried node'**
+  String get mapLegendCarried;
+
+  /// In the legend, beside a count on a marker.
+  ///
+  /// In en, this message translates to:
+  /// **'nodes at one place'**
+  String get mapLegendShared;
+
+  /// In the legend, beside the dot for the phone.
+  ///
+  /// In en, this message translates to:
+  /// **'you: your position stays on this phone, never sent or kept'**
+  String get mapLegendYou;
+
+  /// Under a node's ID: the people whose home it is, such as you and contacts.
+  ///
+  /// In en, this message translates to:
+  /// **'Home: {names}'**
+  String mapHomeOf(String names);
+
+  /// The person, in the list of those whose home a node on the map is, after mapHomeOf's "Home:": in lower case where the language writes it so in a list.
+  ///
+  /// In en, this message translates to:
+  /// **'You'**
+  String get mapYou;
+
+  /// Under a node's ID: the contacts last seen at it, as names alone or as mapSeenAgo.
+  ///
+  /// In en, this message translates to:
+  /// **'Last seen: {names}'**
+  String mapLastSeen(String names);
+
+  /// A contact and when they were last seen at the node, in mapLastSeen. {ago} is such as timeMinutesAgo.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} {ago}'**
+  String mapSeenAgo(String name, String ago);
+
   /// The button that closes a dialog that only tells something.
   ///
   /// In en, this message translates to:
@@ -1857,6 +2474,366 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Debug'**
   String get debug;
+
+  /// A heading on the debug screen: this phone's own values.
+  ///
+  /// In en, this message translates to:
+  /// **'Me'**
+  String get debugMe;
+
+  /// A heading on the debug screen: tools for testing nodes on the bench.
+  ///
+  /// In en, this message translates to:
+  /// **'Bench'**
+  String get debugBench;
+
+  /// A heading on the debug screen: the node's status; the spec calls this value Status.
+  ///
+  /// In en, this message translates to:
+  /// **'Status'**
+  String get debugStatus;
+
+  /// A heading on the debug screen: the message the node gave back for now; the spec calls this value Given back.
+  ///
+  /// In en, this message translates to:
+  /// **'Given back'**
+  String get debugGivenBackHeading;
+
+  /// No description provided for @debugConnectPaired.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect a paired node to pick a firmware file.'**
+  String get debugConnectPaired;
+
+  /// A button that opens the update screen with a file picker.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a firmware file'**
+  String get debugPickFirmware;
+
+  /// The label of the row under the heading debugGivenBackHeading: the value the node gave.
+  ///
+  /// In en, this message translates to:
+  /// **'Value'**
+  String get debugValue;
+
+  /// The value of debugValue when the node gives nothing back.
+  ///
+  /// In en, this message translates to:
+  /// **'empty'**
+  String get debugEmpty;
+
+  /// A message the node gave back, and the wait it asks before sending it again.
+  ///
+  /// In en, this message translates to:
+  /// **'{id}, wait {wait} s'**
+  String debugGivenBack(String id, int wait);
+
+  /// A heading on the debug screen: the messages sent, as raw records that stay English.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent'**
+  String get debugSent;
+
+  /// A heading on the debug screen, as debugSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Received'**
+  String get debugReceived;
+
+  /// A heading on the debug screen: the app's log, which stays English.
+  ///
+  /// In en, this message translates to:
+  /// **'Log'**
+  String get debugLog;
+
+  /// Under debugSent or debugReceived: no messages.
+  ///
+  /// In en, this message translates to:
+  /// **'None'**
+  String get debugNone;
+
+  /// Under debugLog: no lines.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing yet'**
+  String get debugNothingYet;
+
+  /// A row's label: the start of the person's identity in hex.
+  ///
+  /// In en, this message translates to:
+  /// **'Identity'**
+  String get debugIdentity;
+
+  /// A row's label: the home address the person's card carries.
+  ///
+  /// In en, this message translates to:
+  /// **'Card address'**
+  String get debugCardAddress;
+
+  /// The value of debugCardAddress; lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'none: no home'**
+  String get debugNoneNoHome;
+
+  /// A row's value: there is none; lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'none'**
+  String get debugNoValue;
+
+  /// A row's label: how many texts the home node still keeps for the person.
+  ///
+  /// In en, this message translates to:
+  /// **'Mailbox: unsent at home'**
+  String get debugUnsentAtHome;
+
+  /// A row's label: how many fetches of the mail the app has made.
+  ///
+  /// In en, this message translates to:
+  /// **'Fetch rounds'**
+  String get debugFetchRounds;
+
+  /// A row's label: the number of the last message this phone sent.
+  ///
+  /// In en, this message translates to:
+  /// **'Last sent'**
+  String get debugLastSent;
+
+  /// No description provided for @debugAppVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'App version'**
+  String get debugAppVersion;
+
+  /// The value of debugAppVersion: the app was built by hand, not by a release; lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'development build'**
+  String get debugDevBuild;
+
+  /// A row's label: the newest release the app knows of.
+  ///
+  /// In en, this message translates to:
+  /// **'Latest release'**
+  String get debugLatestRelease;
+
+  /// The value of debugLatestRelease before any is known; lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'not known'**
+  String get debugNotKnown;
+
+  /// The value of debugLatestRelease: its number, its app's version, its node firmware's version, and when the app last looked.
+  ///
+  /// In en, this message translates to:
+  /// **'{release}, app {app}, firmware {firmware}, checked {checked}'**
+  String debugRelease(int release, int app, int firmware, String checked);
+
+  /// A row's label: the node's name over Bluetooth, such as bark-fa4e00000001.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get debugName;
+
+  /// No description provided for @debugNodeId.
+  ///
+  /// In en, this message translates to:
+  /// **'Node ID'**
+  String get debugNodeId;
+
+  /// A row's label: whose Bluetooth link this is, debugLinkGuest or debugLinkPaired.
+  ///
+  /// In en, this message translates to:
+  /// **'Link'**
+  String get debugLink;
+
+  /// Lower case: the link is a guest's.
+  ///
+  /// In en, this message translates to:
+  /// **'a guest\'s'**
+  String get debugLinkGuest;
+
+  /// No description provided for @debugLinkPaired.
+  ///
+  /// In en, this message translates to:
+  /// **'the paired phone\'s'**
+  String get debugLinkPaired;
+
+  /// A row's label: the version of the link's rules the node speaks.
+  ///
+  /// In en, this message translates to:
+  /// **'Link version'**
+  String get debugLinkVersion;
+
+  /// A row's label: the version of the firmware the node runs.
+  ///
+  /// In en, this message translates to:
+  /// **'Firmware image'**
+  String get debugFirmwareImage;
+
+  /// A row's label: the node's clock, as sessionClockNone.
+  ///
+  /// In en, this message translates to:
+  /// **'Clock'**
+  String get debugClock;
+
+  /// A row's label: whether the node serves phones not paired with it, debugYes or debugNo.
+  ///
+  /// In en, this message translates to:
+  /// **'Public'**
+  String get debugPublic;
+
+  /// A row's value; lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'yes'**
+  String get debugYes;
+
+  /// A row's value; lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'no'**
+  String get debugNo;
+
+  /// The value of debugPublic on a guest's link: a guest finds only public nodes.
+  ///
+  /// In en, this message translates to:
+  /// **'yes, as a guest finds it'**
+  String get debugPublicGuest;
+
+  /// A row's label: what the node keeps of homes, in English words.
+  ///
+  /// In en, this message translates to:
+  /// **'Home'**
+  String get debugHome;
+
+  /// A row's label: the node's address, in hex.
+  ///
+  /// In en, this message translates to:
+  /// **'Address'**
+  String get debugAddress;
+
+  /// The value of debugAddress; lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'none yet: no place'**
+  String get debugNoPlace;
+
+  /// No description provided for @debugAddressCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Address copied'**
+  String get debugAddressCopied;
+
+  /// Under the heading debugStatus: the node's status has not been read.
+  ///
+  /// In en, this message translates to:
+  /// **'Not read'**
+  String get debugStatusNotRead;
+
+  /// A row's label under debugStatus; its value is debugYes or debugNo, as are those of the rows after it up to debugPlaced.
+  ///
+  /// In en, this message translates to:
+  /// **'Ready to take a message'**
+  String get debugReady;
+
+  /// No description provided for @debugExternalPower.
+  ///
+  /// In en, this message translates to:
+  /// **'External power'**
+  String get debugExternalPower;
+
+  /// No description provided for @debugSleepy.
+  ///
+  /// In en, this message translates to:
+  /// **'Sleepy'**
+  String get debugSleepy;
+
+  /// No description provided for @debugCarried.
+  ///
+  /// In en, this message translates to:
+  /// **'Carried'**
+  String get debugCarried;
+
+  /// The node's place was set by hand in the app.
+  ///
+  /// In en, this message translates to:
+  /// **'Position from a map point'**
+  String get debugMapPoint;
+
+  /// The node has a place.
+  ///
+  /// In en, this message translates to:
+  /// **'Placed'**
+  String get debugPlaced;
+
+  /// A row's label under debugStatus: a sleepy node that hears no relay to take as its anchor; the spec calls it anchorless.
+  ///
+  /// In en, this message translates to:
+  /// **'Anchorless'**
+  String get debugAnchorless;
+
+  /// A row's label under debugStatus: the node's first round of its channels after start-up; the spec calls it the first rotation. Its value is debugRotationRunning or debugRotationOver.
+  ///
+  /// In en, this message translates to:
+  /// **'First rotation'**
+  String get debugFirstRotation;
+
+  /// The value of the row debugFirstRotation: the node's first round of its channels after start-up runs.
+  ///
+  /// In en, this message translates to:
+  /// **'running, {left} to go'**
+  String debugRotationRunning(String left);
+
+  /// The value of the row debugFirstRotation: it is over.
+  ///
+  /// In en, this message translates to:
+  /// **'over'**
+  String get debugRotationOver;
+
+  /// No description provided for @debugRelaysKnown.
+  ///
+  /// In en, this message translates to:
+  /// **'Relays known'**
+  String get debugRelaysKnown;
+
+  /// No description provided for @debugNeighboursHeard.
+  ///
+  /// In en, this message translates to:
+  /// **'Neighbours heard'**
+  String get debugNeighboursHeard;
+
+  /// A row's label: the position the node's address carries.
+  ///
+  /// In en, this message translates to:
+  /// **'Address position'**
+  String get debugAddressPosition;
+
+  /// A row's label: the node's battery voltage.
+  ///
+  /// In en, this message translates to:
+  /// **'Battery'**
+  String get debugBattery;
+
+  /// The value of debugBattery; lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'not read or on USB'**
+  String get debugBatteryNone;
+
+  /// A row's label: the messages the node holds for this phone.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages in the inbox'**
+  String get debugInbox;
+
+  /// The GPS's signal, the value of the row gpsSignal on the debug screen.
+  ///
+  /// In en, this message translates to:
+  /// **'{signal} dB-Hz'**
+  String dbHz(int signal);
 
   /// A button: pair anew, by the code on the node's screen, with a node that no longer knows this phone.
   ///
@@ -2236,11 +3213,11 @@ abstract class AppLocalizations {
   /// **'Paired, connecting…'**
   String get nodePairedConnecting;
 
-  /// The heading of Settings' section on the node the phone is on.
+  /// The heading of the section on the node the phone is on, in Settings and on the debug screen.
   ///
   /// In en, this message translates to:
   /// **'Node'**
-  String get nodeHeading;
+  String get node;
 
   /// A button that ends the link with the node; the pairing stays.
   ///
@@ -2926,11 +3903,11 @@ abstract class AppLocalizations {
   /// **'Show them'**
   String get homeShowThem;
 
-  /// The button homeShowThem once a list has come.
+  /// A button: the button homeShowThem once a list has come, and on the map, ask a node that did not answer again.
   ///
   /// In en, this message translates to:
   /// **'Ask again'**
-  String get homeAskAgain;
+  String get askAgain;
 
   /// No description provided for @homeAskFailed.
   ///
@@ -3634,11 +4611,11 @@ abstract class AppLocalizations {
   /// **'Node firmware'**
   String get updatesNodeFirmware;
 
-  /// Under updatesNodeFirmware: no node connected.
+  /// No node connected: under updatesNodeFirmware in Settings, and under the heading node on the debug screen.
   ///
   /// In en, this message translates to:
   /// **'Not connected'**
-  String get updatesNotConnected;
+  String get nodeNotConnected;
 
   /// Under updatesNodeFirmware, for a node this phone uses as a guest: 'its' and 'it' are the node.
   ///
@@ -3759,6 +4736,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Saving failed: {error}'**
   String identitySaveFailed(String error);
+
+  /// Why saving the identity file failed: the place picked could not be written; lower case, after identitySaveFailed's words.
+  ///
+  /// In en, this message translates to:
+  /// **'no stream for {uri}'**
+  String identityNoStream(String uri);
+
+  /// Why saving the identity file failed: Android's save dialog is open already; it follows identitySaveFailed's words, so lower case.
+  ///
+  /// In en, this message translates to:
+  /// **'a save is under way'**
+  String get identitySaveBusy;
 
   /// No description provided for @identityRestoreTitle.
   ///

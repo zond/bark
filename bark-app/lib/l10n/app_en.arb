@@ -355,9 +355,14 @@
     "description": "The name of the kind of notification, in the phone's settings."
   },
   "notifyChannelAbout": "A text from a contact",
-  "notifyYou": "You",
-  "@notifyYou": {
-    "description": "The person, in a notification of a conversation."
+  "notifyLinkChannel": "Connection to the node",
+  "@notifyLinkChannel": {
+    "description": "The name, in the phone's settings, of the kind of notification shown while the app keeps its link to the node; notifyLinkChannelAbout describes it there."
+  },
+  "notifyLinkChannelAbout": "Shown while the app keeps the link to a node or looks for it",
+  "you": "You",
+  "@you": {
+    "description": "The person: in a notification of a conversation, among those whose home a node on the map is, and the dot for the phone on the map."
   },
 
   "threadRemovedContact": "Removed contact",
@@ -679,7 +684,7 @@
   },
   "homeNode": "Home node",
   "@homeNode": {
-    "description": "A heading: the heading of Settings' section on the person's home, and a pasted card's home node, with its address under it."
+    "description": "A heading: the heading of Settings' section on the person's home, and a pasted card's home node, with its address under it. Also a row's label on the debug screen."
   },
   "contactsNoHomeNoNode": "none, and no node yet: ask them for a new card",
   "@contactsNoHomeNoNode": {
@@ -801,6 +806,323 @@
   "factDemoted": "It did not answer this node's last three tries to pass it a text, so it may no longer hear this node. Until it answers again, or for six and a half minutes, it is tried only after every other neighbour with a good enough link.",
   "factAvoided": "It turned a text down, asking for a wait, or did not answer one. Nothing is sent to it for a while; texts go round it meanwhile, and wait for it only where there is no other way.",
   "factPaired": "This phone is paired with this node: the node sends your texts into the network, and keeps the ones for you until the app reads them. Only the paired phone sees the node's neighbours on this map.",
+  "factRoleLabel": "Role",
+  "@factRoleLabel": {
+    "description": "The label of a row of a node's sheet on the map; the other fact…Label messages are the labels of the other rows, each with its help in the fact message of the same name without Label."
+  },
+  "factMovingLabel": "Moving",
+  "@factMovingLabel": {
+    "description": "The row's value is factCarried or factFixed."
+  },
+  "factAnchorLabel": "Anchor",
+  "factPlaceLabel": "Place",
+  "factPowerLabel": "Power",
+  "@factPowerLabel": {
+    "description": "The row's value is USB, or the battery's level."
+  },
+  "factLinkLabel": "Link",
+  "@factLinkLabel": {
+    "description": "How well this node hears the other one; the value is factLinkGood, factLinkFair or factLinkFragile."
+  },
+  "factLastHeardLabel": "Last heard",
+  "factDistanceLabel": "Distance",
+  "factKnownLabel": "Known",
+  "@factKnownLabel": {
+    "description": "The neighbours the node knows; the value is factKnownValue."
+  },
+  "gpsSignal": "GPS signal",
+  "@gpsSignal": {
+    "description": "A row's label on a node's sheet on the map and on the debug screen: how strongly the node's GPS hears the satellites. Also what a screen reader says for the row's icon."
+  },
+  "factVersionLabel": "Version",
+  "@factVersionLabel": {
+    "description": "The version of the firmware the node runs."
+  },
+  "factExchangedLabel": "Exchanged",
+  "@factExchangedLabel": {
+    "description": "The other node has taken a text from this one; the value is factExchangedValue."
+  },
+  "factDemotedLabel": "Demoted",
+  "@factDemotedLabel": {
+    "description": "This node tries the other one last for now; the value is factDemotedValue."
+  },
+  "factAvoidedLabel": "Avoided",
+  "@factAvoidedLabel": {
+    "description": "This node sends nothing to the other one for now; the value is factAvoidedValue."
+  },
+  "factPairedLabel": "Paired",
+  "@factPairedLabel": {
+    "description": "On the sheet of the node the phone is on; the value is factPairedWithThis."
+  },
+  "factRoleSleepyName": "role, sleepy",
+  "@factRoleSleepyName": {
+    "description": "What a screen reader says for the icon of the row factRoleLabel; lower case. The other fact…Name messages are the same for the other rows' icons."
+  },
+  "factRoleRelayName": "role, relay",
+  "factMovingName": "moving",
+  "factAnchorName": "anchor",
+  "factPlaceName": "place",
+  "factPlaceByPersonName": "place, set by a person",
+  "factPlaceFromGpsName": "place, from GPS",
+  "factPlaceAnchorsName": "place, its anchor's",
+  "@factPlaceAnchorsName": {
+    "description": "The node's place is its anchor's."
+  },
+  "factPowerName": "power",
+  "@factPowerName": {
+    "description": "For a node on USB."
+  },
+  "factBatteryName": "battery",
+  "@factBatteryName": {
+    "description": "For a node on battery."
+  },
+  "factLinkGoodName": "link strength, good",
+  "factLinkFairName": "link strength, fair",
+  "factLinkFragileName": "link strength, fragile",
+  "factLastHeardName": "last heard",
+  "factDistanceName": "distance",
+  "factKnownName": "neighbours known",
+  "factVersionName": "firmware version",
+  "factPairedName": "paired",
+  "factExchangedName": "exchanged",
+  "factDemotedName": "demoted",
+  "factAvoidedName": "avoided",
+  "factRoleSleepy": "sleepy: wakes in windows, speaks through its anchor",
+  "@factRoleSleepy": {
+    "description": "The value of the row factRoleLabel, lower case after the label; 'its' is the node's. The other row values are lower case too."
+  },
+  "factRoleRelay": "relay: passes on others' texts",
+  "factCarried": "carried",
+  "@factCarried": {
+    "description": "The value of the row factMovingLabel: the node moves with a person. Also a node's kind after its ID in the list of nodes at one place, as mapKindSleepy."
+  },
+  "factFixed": "stays put",
+  "@factFixed": {
+    "description": "The value of the row factMovingLabel: the node stays in one place."
+  },
+  "factAnchored": "anchored",
+  "@factAnchored": {
+    "description": "The value of the row factAnchorLabel, which stands before it: a sleepy node has an anchor, the relay it sends and receives through."
+  },
+  "factAnchoredTo": "anchored to {node}",
+  "@factAnchoredTo": {
+    "description": "As factAnchored, with the anchor's ID; after the label factAnchorLabel.",
+    "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}}
+  },
+  "factNoAnchor": "no anchor yet",
+  "@factNoAnchor": {
+    "description": "The value of the row factAnchorLabel, which stands before it."
+  },
+  "factThisNodesAnchor": "this node's anchor",
+  "@factThisNodesAnchor": {
+    "description": "This neighbour is the anchor of the node the phone is on."
+  },
+  "factNoPlace": "no place yet",
+  "@factNoPlace": {
+    "description": "The value of the row factPlaceLabel, which stands before it."
+  },
+  "factPlaceByPerson": "set by a person\n{place}",
+  "@factPlaceByPerson": {
+    "description": "The place was set by hand in the app; the position follows on a line of its own.",
+    "placeholders": {"place": {"type": "String", "example": "59.32930, 18.06860", "description": "Latitude and longitude in degrees."}}
+  },
+  "factPlaceFromGps": "from GPS\n{place}",
+  "@factPlaceFromGps": {
+    "placeholders": {"place": {"type": "String", "example": "59.32930, 18.06860"}}
+  },
+  "factPlaceAnchors": "its anchor's\n{place}",
+  "@factPlaceAnchors": {
+    "description": "A sleepy node's place is its anchor's; 'its' is the node's.",
+    "placeholders": {"place": {"type": "String", "example": "59.32930, 18.06860"}}
+  },
+  "factBatteryLow": "low",
+  "@factBatteryLow": {
+    "description": "The battery's level."
+  },
+  "notRead": "not read",
+  "@notRead": {
+    "description": "A value the app has not read yet, such as a battery's level on the map or a value on the debug screen; lower case."
+  },
+  "factPercent": "{percent}%",
+  "@factPercent": {
+    "description": "The battery left.",
+    "placeholders": {"percent": {"type": "int"}}
+  },
+  "millivolts": "{voltage} mV",
+  "@millivolts": {
+    "description": "A battery's voltage, on the map and on the debug screen.",
+    "placeholders": {"voltage": {"type": "int"}}
+  },
+  "noReading": "no reading",
+  "@noReading": {
+    "description": "The GPS gave no signal reading; the value of the row gpsSignal, on the map and on the debug screen."
+  },
+  "factGpsTooWeak": "{signal} dB-Hz · too weak for a fix",
+  "@factGpsTooWeak": {
+    "description": "The GPS's signal, too weak for the node to take a position from it.",
+    "placeholders": {"signal": {"type": "int"}}
+  },
+  "factGpsEnough": "{signal} dB-Hz · enough for a fix",
+  "@factGpsEnough": {
+    "placeholders": {"signal": {"type": "int"}}
+  },
+  "factLinkGood": "good",
+  "@factLinkGood": {
+    "description": "A link's quality; the link (factLinkLabel) is the other node's signal at this one. Also in the map's legend."
+  },
+  "factLinkFair": "fair",
+  "factLinkFragile": "fragile",
+  "factLinkDetail": "This link: {rssi} dBm, {margin} dB over the noise floor.",
+  "@factLinkDetail": {
+    "description": "Under the help of the row factLinkLabel.",
+    "placeholders": {"rssi": {"type": "String", "example": "−115", "description": "The signal's strength, signed."}, "margin": {"type": "String", "example": "+3", "description": "How far the signal is above the noise, signed."}}
+  },
+  "timeSecondsAgo": "{seconds} s ago",
+  "@timeSecondsAgo": {
+    "description": "How long ago, in lower case, as timeMinutesAgo.",
+    "placeholders": {"seconds": {"type": "int"}}
+  },
+  "factMetres": "{metres} m",
+  "@factMetres": {
+    "description": "A distance under a kilometre.",
+    "placeholders": {"metres": {"type": "int"}}
+  },
+  "factKilometres": "{kilometres} km",
+  "@factKilometres": {
+    "placeholders": {"kilometres": {"type": "String", "example": "6.9", "description": "A number with one decimal, in the language's own form."}}
+  },
+  "factKnownValue": "{heard} heard · {strong} strong · {exchanged} exchanged",
+  "@factKnownValue": {
+    "description": "The three counts of the node's neighbours that factKnown explains: Heard, Strong, Exchanged.",
+    "placeholders": {"heard": {"type": "int"}, "strong": {"type": "int"}, "exchanged": {"type": "int"}}
+  },
+  "factVersionGetting": "{version} · getting {gathers} {complete}/{blocks}",
+  "@factVersionGetting": {
+    "description": "The firmware version the node runs, and a newer one it gathers over the radio with how many of its blocks it holds.",
+    "placeholders": {"version": {"type": "String", "example": "V7", "description": "The version in the node's screen's form, which stays as it is."}, "gathers": {"type": "String", "example": "V8", "description": "As version."}, "complete": {"type": "int"}, "blocks": {"type": "int"}}
+  },
+  "factExchangedValue": "it took a message from this node",
+  "@factExchangedValue": {
+    "description": "'It' is the other node."
+  },
+  "factDemotedValue": "it did not answer its last texts",
+  "@factDemotedValue": {
+    "description": "'It' is the other node; 'its last texts' are the last texts this node passed it."
+  },
+  "factAvoidedValue": "for now: it turned a text down or did not answer",
+  "@factAvoidedValue": {
+    "description": "'It' is the other node."
+  },
+  "factPairedWithThis": "with this phone",
+
+  "mapShowMe": "Show where I am",
+  "@mapShowMe": {
+    "description": "The tooltip of a button on the map."
+  },
+  "mapReadAgain": "Read again",
+  "@mapReadAgain": {
+    "description": "The tooltip of the map's refresh button: read the neighbours again."
+  },
+  "mapNotConnected": "Not connected to a node: connect to see its neighbours.",
+  "mapGuest": "Connected as a guest: only the phone paired with this node sees its neighbours.",
+  "mapReadFailed": "Reading the neighbours failed: {error}",
+  "@mapReadFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "mapNothing": "The node has no place yet and has heard no neighbour: nothing to draw.",
+  "mapAttribution": "© OpenStreetMap contributors",
+  "@mapAttribution": {
+    "description": "The credit the street map's makers require, in the map's corner."
+  },
+  "mapNoPlaceNoLines": "The node has no place of its own: its neighbours are drawn without lines to it.",
+  "mapNoPlaceAtYou": "The node has no place of its own: it is drawn where you are.",
+  "mapNoTiles": "No street map here: the phone has no internet and has not kept this area from before. The nodes and links are drawn on a blank background.",
+  "mapLastReadFailed": "The last read failed: {error}",
+  "@mapLastReadFailed": {
+    "placeholders": {"error": {"type": "String"}}
+  },
+  "mapKindSleepy": "sleepy",
+  "@mapKindSleepy": {
+    "description": "A node's kind after its ID in the list of nodes at one place, as factCarried and mapKindRelay."
+  },
+  "mapKindRelay": "relay",
+  "mapThisNode": "this node",
+  "@mapThisNode": {
+    "description": "The node the phone is on: its kind after its ID in the list of nodes at one place, and what a screen reader says for its marker."
+  },
+  "mapAsking": "Asking it for power, neighbours and version…",
+  "@mapAsking": {
+    "description": "On a neighbour's sheet; 'it' is the neighbour, asked over the radio."
+  },
+  "mapNoAnswerSleepy": "It did not answer: it sleeps between its windows.",
+  "@mapNoAnswerSleepy": {
+    "description": "'It' is the neighbour, a sleepy node."
+  },
+  "mapNoAnswer": "It did not answer.",
+  "@mapNoAnswer": {
+    "description": "'It' is the neighbour."
+  },
+  "mapNodesHere": "{count, plural, one{{count} node here} other{{count} nodes here}}",
+  "@mapNodesHere": {
+    "description": "The title of the list of nodes that share one place on the map; count is two or more.",
+    "placeholders": {"count": {"type": "int"}}
+  },
+  "mapNodesHereNamed": "{count, plural, one{{count} node here: {names}} other{{count} nodes here: {names}}}",
+  "@mapNodesHereNamed": {
+    "description": "What a screen reader says for a marker that stands for several nodes.",
+    "placeholders": {"count": {"type": "int"}, "names": {"type": "String", "example": "ID FA4E00000001, ID 0CE400000004"}}
+  },
+  "mapNeighboursRead": "{count, plural, one{{count} neighbour, read {time}} other{{count} neighbours, read {time}}}",
+  "@mapNeighboursRead": {
+    "description": "The legend's first line: how many neighbours the node knows, and when the app read them.",
+    "placeholders": {"count": {"type": "int"}, "time": {"type": "String", "example": "14:05", "description": "Hours and minutes, with the date before them when not today."}}
+  },
+  "mapBandGood": "good ≥ {good} dB",
+  "@mapBandGood": {
+    "description": "In the legend: a good link's margin over the noise.",
+    "placeholders": {"good": {"type": "String", "example": "6.9", "description": "A number with one decimal, in the language's own form."}}
+  },
+  "mapBandFair": "fair {fair}–{good} dB",
+  "@mapBandFair": {
+    "placeholders": {"fair": {"type": "String", "example": "6.9", "description": "A number with one decimal, in the language's own form."}, "good": {"type": "String", "example": "6.9", "description": "A number with one decimal, in the language's own form."}}
+  },
+  "mapBandFragile": "fragile < {fair} dB over the noise floor",
+  "@mapBandFragile": {
+    "placeholders": {"fair": {"type": "String", "example": "6.9", "description": "A number with one decimal, in the language's own form."}}
+  },
+  "mapLegendRelay": "a relay",
+  "@mapLegendRelay": {
+    "description": "In the legend, beside the icon of a relay; lower case, as the legend's other words."
+  },
+  "mapLegendSleepy": "a sleepy node",
+  "mapLegendCarried": "a carried node",
+  "mapLegendShared": "nodes at one place",
+  "@mapLegendShared": {
+    "description": "In the legend, beside a count on a marker."
+  },
+  "mapLegendYou": "you: your position stays on this phone, never sent or kept",
+  "@mapLegendYou": {
+    "description": "In the legend, beside the dot for the phone."
+  },
+  "mapHomeOf": "Home: {names}",
+  "@mapHomeOf": {
+    "description": "Under a node's ID: the people whose home it is, such as you and contacts.",
+    "placeholders": {"names": {"type": "String", "example": "You, Ann"}}
+  },  "mapYou": "You",
+  "@mapYou": {
+    "description": "The person, in the list of those whose home a node on the map is, after mapHomeOf's \"Home:\": in lower case where the language writes it so in a list."
+  },
+
+  "mapLastSeen": "Last seen: {names}",
+  "@mapLastSeen": {
+    "description": "Under a node's ID: the contacts last seen at it, as names alone or as mapSeenAgo.",
+    "placeholders": {"names": {"type": "String", "example": "Bo 5 min ago, Ann 1 h ago"}}
+  },
+  "mapSeenAgo": "{name} {ago}",
+  "@mapSeenAgo": {
+    "description": "A contact and when they were last seen at the node, in mapLastSeen. {ago} is such as timeMinutesAgo.",
+    "placeholders": {"name": {"type": "String"}, "ago": {"type": "String"}}
+  },
 
   "ok": "OK",
   "@ok": {
@@ -809,6 +1131,220 @@
   "debug": "Debug",
   "@debug": {
     "description": "The screen of the app's log, and the row in Settings that opens it."
+  },
+  "debugMe": "Me",
+  "@debugMe": {
+    "description": "A heading on the debug screen: this phone's own values."
+  },
+  "debugBench": "Bench",
+  "@debugBench": {
+    "description": "A heading on the debug screen: tools for testing nodes on the bench."
+  },  "debugStatus": "Status",
+  "@debugStatus": {
+    "description": "A heading on the debug screen: the node's status; the spec calls this value Status."
+  },  "debugGivenBackHeading": "Given back",
+  "@debugGivenBackHeading": {
+    "description": "A heading on the debug screen: the message the node gave back for now; the spec calls this value Given back."
+  },
+
+
+  "debugConnectPaired": "Connect a paired node to pick a firmware file.",
+  "debugPickFirmware": "Pick a firmware file",
+  "@debugPickFirmware": {
+    "description": "A button that opens the update screen with a file picker."
+  },
+  "debugValue": "Value",
+  "@debugValue": {
+    "description": "The label of the row under the heading debugGivenBackHeading: the value the node gave."
+  },
+  "debugEmpty": "empty",
+  "@debugEmpty": {
+    "description": "The value of debugValue when the node gives nothing back."
+  },
+  "debugGivenBack": "{id}, wait {wait} s",
+  "@debugGivenBack": {
+    "description": "A message the node gave back, and the wait it asks before sending it again.",
+    "placeholders": {"id": {"type": "String", "example": "0a1b2c3d", "description": "A message ID in hex."}, "wait": {"type": "int"}}
+  },
+  "debugSent": "Sent",
+  "@debugSent": {
+    "description": "A heading on the debug screen: the messages sent, as raw records that stay English."
+  },
+  "debugReceived": "Received",
+  "@debugReceived": {
+    "description": "A heading on the debug screen, as debugSent."
+  },
+  "debugLog": "Log",
+  "@debugLog": {
+    "description": "A heading on the debug screen: the app's log, which stays English."
+  },
+  "debugNone": "None",
+  "@debugNone": {
+    "description": "Under debugSent or debugReceived: no messages."
+  },
+  "debugNothingYet": "Nothing yet",
+  "@debugNothingYet": {
+    "description": "Under debugLog: no lines."
+  },
+  "debugIdentity": "Identity",
+  "@debugIdentity": {
+    "description": "A row's label: the start of the person's identity in hex."
+  },
+  "debugCardAddress": "Card address",
+  "@debugCardAddress": {
+    "description": "A row's label: the home address the person's card carries."
+  },
+  "debugNoneNoHome": "none: no home",
+  "@debugNoneNoHome": {
+    "description": "The value of debugCardAddress; lower case."
+  },
+  "debugNoValue": "none",
+  "@debugNoValue": {
+    "description": "A row's value: there is none; lower case."
+  },
+  "debugUnsentAtHome": "Mailbox: unsent at home",
+  "@debugUnsentAtHome": {
+    "description": "A row's label: how many texts the home node still keeps for the person."
+  },
+  "debugFetchRounds": "Fetch rounds",
+  "@debugFetchRounds": {
+    "description": "A row's label: how many fetches of the mail the app has made."
+  },
+  "debugLastSent": "Last sent",
+  "@debugLastSent": {
+    "description": "A row's label: the number of the last message this phone sent."
+  },
+  "debugAppVersion": "App version",
+  "debugDevBuild": "development build",
+  "@debugDevBuild": {
+    "description": "The value of debugAppVersion: the app was built by hand, not by a release; lower case."
+  },
+  "debugLatestRelease": "Latest release",
+  "@debugLatestRelease": {
+    "description": "A row's label: the newest release the app knows of."
+  },
+  "debugNotKnown": "not known",
+  "@debugNotKnown": {
+    "description": "The value of debugLatestRelease before any is known; lower case."
+  },
+  "debugRelease": "{release}, app {app}, firmware {firmware}, checked {checked}",
+  "@debugRelease": {
+    "description": "The value of debugLatestRelease: its number, its app's version, its node firmware's version, and when the app last looked.",
+    "placeholders": {"release": {"type": "int"}, "app": {"type": "int"}, "firmware": {"type": "int"}, "checked": {"type": "String", "example": "2026-11-23 14:05:00.000"}}
+  },
+  "debugName": "Name",
+  "@debugName": {
+    "description": "A row's label: the node's name over Bluetooth, such as bark-fa4e00000001."
+  },
+  "debugNodeId": "Node ID",
+  "debugLink": "Link",
+  "@debugLink": {
+    "description": "A row's label: whose Bluetooth link this is, debugLinkGuest or debugLinkPaired."
+  },
+  "debugLinkGuest": "a guest's",
+  "@debugLinkGuest": {
+    "description": "Lower case: the link is a guest's."
+  },
+  "debugLinkPaired": "the paired phone's",
+  "debugLinkVersion": "Link version",
+  "@debugLinkVersion": {
+    "description": "A row's label: the version of the link's rules the node speaks."
+  },
+  "debugFirmwareImage": "Firmware image",
+  "@debugFirmwareImage": {
+    "description": "A row's label: the version of the firmware the node runs."
+  },
+  "debugClock": "Clock",
+  "@debugClock": {
+    "description": "A row's label: the node's clock, as sessionClockNone."
+  },
+  "debugPublic": "Public",
+  "@debugPublic": {
+    "description": "A row's label: whether the node serves phones not paired with it, debugYes or debugNo."
+  },
+  "debugYes": "yes",
+  "@debugYes": {
+    "description": "A row's value; lower case."
+  },
+  "debugNo": "no",
+  "@debugNo": {
+    "description": "A row's value; lower case."
+  },
+  "debugPublicGuest": "yes, as a guest finds it",
+  "@debugPublicGuest": {
+    "description": "The value of debugPublic on a guest's link: a guest finds only public nodes."
+  },
+  "debugHome": "Home",
+  "@debugHome": {
+    "description": "A row's label: what the node keeps of homes, in English words."
+  },
+  "debugAddress": "Address",
+  "@debugAddress": {
+    "description": "A row's label: the node's address, in hex."
+  },
+  "debugNoPlace": "none yet: no place",
+  "@debugNoPlace": {
+    "description": "The value of debugAddress; lower case."
+  },
+  "debugAddressCopied": "Address copied",
+  "debugStatusNotRead": "Not read",
+  "@debugStatusNotRead": {
+    "description": "Under the heading debugStatus: the node's status has not been read."
+  },
+  "debugReady": "Ready to take a message",
+  "@debugReady": {
+    "description": "A row's label under debugStatus; its value is debugYes or debugNo, as are those of the rows after it up to debugPlaced."
+  },
+  "debugExternalPower": "External power",
+  "debugSleepy": "Sleepy",
+  "debugCarried": "Carried",
+  "debugMapPoint": "Position from a map point",
+  "@debugMapPoint": {
+    "description": "The node's place was set by hand in the app."
+  },
+  "debugPlaced": "Placed",
+  "@debugPlaced": {
+    "description": "The node has a place."
+  },  "debugAnchorless": "Anchorless",
+  "@debugAnchorless": {
+    "description": "A row's label under debugStatus: a sleepy node that hears no relay to take as its anchor; the spec calls it anchorless."
+  },  "debugFirstRotation": "First rotation",
+  "@debugFirstRotation": {
+    "description": "A row's label under debugStatus: the node's first round of its channels after start-up; the spec calls it the first rotation. Its value is debugRotationRunning or debugRotationOver."
+  },
+
+
+  "debugRotationRunning": "running, {left} to go",
+  "@debugRotationRunning": {
+    "description": "The value of the row debugFirstRotation: the node's first round of its channels after start-up runs.",
+    "placeholders": {"left": {"type": "String", "example": "2:15"}}
+  },
+  "debugRotationOver": "over",
+  "@debugRotationOver": {
+    "description": "The value of the row debugFirstRotation: it is over."
+  },
+  "debugRelaysKnown": "Relays known",
+  "debugNeighboursHeard": "Neighbours heard",
+  "debugAddressPosition": "Address position",
+  "@debugAddressPosition": {
+    "description": "A row's label: the position the node's address carries."
+  },
+  "debugBattery": "Battery",
+  "@debugBattery": {
+    "description": "A row's label: the node's battery voltage."
+  },
+  "debugBatteryNone": "not read or on USB",
+  "@debugBatteryNone": {
+    "description": "The value of debugBattery; lower case."
+  },
+  "debugInbox": "Messages in the inbox",
+  "@debugInbox": {
+    "description": "A row's label: the messages the node holds for this phone."
+  },
+  "dbHz": "{signal} dB-Hz",
+  "@dbHz": {
+    "description": "The GPS's signal, the value of the row gpsSignal on the debug screen.",
+    "placeholders": {"signal": {"type": "int"}}
   },
   "pairAgain": "Pair again",
   "@pairAgain": {
@@ -1029,9 +1565,9 @@
     "description": "While the phone pairs with a node."
   },
   "nodePairedConnecting": "Paired, connecting…",
-  "nodeHeading": "Node",
-  "@nodeHeading": {
-    "description": "The heading of Settings' section on the node the phone is on."
+  "node": "Node",
+  "@node": {
+    "description": "The heading of the section on the node the phone is on, in Settings and on the debug screen."
   },
   "nodeDisconnect": "Disconnect",
   "@nodeDisconnect": {
@@ -1434,9 +1970,9 @@
   "@homeShowThem": {
     "description": "A button: ask the home for the list of homePeople."
   },
-  "homeAskAgain": "Ask again",
-  "@homeAskAgain": {
-    "description": "The button homeShowThem once a list has come."
+  "askAgain": "Ask again",
+  "@askAgain": {
+    "description": "A button: the button homeShowThem once a list has come, and on the map, ask a node that did not answer again."
   },
   "homeAskFailed": "Asking failed: {error}",
   "@homeAskFailed": {
@@ -1839,9 +2375,9 @@
   "@updatesNodeFirmware": {
     "description": "The row on the connected node's firmware; releaseFirmwareOut names it too."
   },
-  "updatesNotConnected": "Not connected",
-  "@updatesNotConnected": {
-    "description": "Under updatesNodeFirmware: no node connected."
+  "nodeNotConnected": "Not connected",
+  "@nodeNotConnected": {
+    "description": "No node connected: under updatesNodeFirmware in Settings, and under the heading node on the debug screen."
   },
   "updatesGuest": "Only its paired phones update it",
   "@updatesGuest": {
@@ -1930,7 +2466,16 @@
   "identitySaveFailed": "Saving failed: {error}",
   "@identitySaveFailed": {
     "placeholders": {"error": {"type": "String"}}
+  },  "identityNoStream": "no stream for {uri}",
+  "@identityNoStream": {
+    "description": "Why saving the identity file failed: the place picked could not be written; lower case, after identitySaveFailed's words.",
+    "placeholders": {"uri": {"type": "String", "example": "content://com.android.providers.downloads.documents/document/42", "description": "Where the person chose to save, as Android names it."}}
+  },  "identitySaveBusy": "a save is under way",
+  "@identitySaveBusy": {
+    "description": "Why saving the identity file failed: Android's save dialog is open already; it follows identitySaveFailed's words, so lower case."
   },
+
+
   "identityRestoreTitle": "Restore from a file?",
   "identityRestoreHow": "This replaces the identity, contacts and messages on this phone.",
   "identityChooseFile": "Choose file",

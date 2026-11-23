@@ -611,7 +611,14 @@ class AppLocalizationsUk extends AppLocalizations {
   String get notifyChannelAbout => 'Повідомлення від контакту';
 
   @override
-  String get notifyYou => 'Ви';
+  String get notifyLinkChannel => 'Зв\'язок із вузлом';
+
+  @override
+  String get notifyLinkChannelAbout =>
+      'Показується, поки застосунок тримає зв\'язок із вузлом або шукає його';
+
+  @override
+  String get you => 'Ви';
 
   @override
   String get threadRemovedContact => 'Видалений контакт';
@@ -1176,10 +1183,588 @@ class AppLocalizationsUk extends AppLocalizations {
       'Цей телефон спарений із цим вузлом: вузол надсилає ваші повідомлення в мережу й зберігає ті, що для вас, доки застосунок їх не прочитає. Лише спарений телефон бачить сусідів вузла на цій карті.';
 
   @override
+  String get factRoleLabel => 'Роль';
+
+  @override
+  String get factMovingLabel => 'Рух';
+
+  @override
+  String get factAnchorLabel => 'Якір';
+
+  @override
+  String get factPlaceLabel => 'Місце';
+
+  @override
+  String get factPowerLabel => 'Живлення';
+
+  @override
+  String get factLinkLabel => 'Зв\'язок';
+
+  @override
+  String get factLastHeardLabel => 'Востаннє чути';
+
+  @override
+  String get factDistanceLabel => 'Відстань';
+
+  @override
+  String get factKnownLabel => 'Відомі сусіди';
+
+  @override
+  String get gpsSignal => 'Сигнал GPS';
+
+  @override
+  String get factVersionLabel => 'Версія';
+
+  @override
+  String get factExchangedLabel => 'Обмінялися';
+
+  @override
+  String get factDemotedLabel => 'Нижчий пріоритет';
+
+  @override
+  String get factAvoidedLabel => 'Оминають';
+
+  @override
+  String get factPairedLabel => 'Спарений';
+
+  @override
+  String get factRoleSleepyName => 'роль, сонний';
+
+  @override
+  String get factRoleRelayName => 'роль, ретранслятор';
+
+  @override
+  String get factMovingName => 'рух';
+
+  @override
+  String get factAnchorName => 'якір';
+
+  @override
+  String get factPlaceName => 'місце';
+
+  @override
+  String get factPlaceByPersonName => 'місце, задане вручну';
+
+  @override
+  String get factPlaceFromGpsName => 'місце, з GPS';
+
+  @override
+  String get factPlaceAnchorsName => 'місце, як у якоря';
+
+  @override
+  String get factPowerName => 'живлення';
+
+  @override
+  String get factBatteryName => 'батарея';
+
+  @override
+  String get factLinkGoodName => 'зв\'язок, добрий';
+
+  @override
+  String get factLinkFairName => 'зв\'язок, середній';
+
+  @override
+  String get factLinkFragileName => 'зв\'язок, крихкий';
+
+  @override
+  String get factLastHeardName => 'востаннє чути';
+
+  @override
+  String get factDistanceName => 'відстань';
+
+  @override
+  String get factKnownName => 'відомі сусіди';
+
+  @override
+  String get factVersionName => 'версія прошивки';
+
+  @override
+  String get factPairedName => 'спарений';
+
+  @override
+  String get factExchangedName => 'обмінялися';
+
+  @override
+  String get factDemotedName => 'нижчий пріоритет';
+
+  @override
+  String get factAvoidedName => 'оминають';
+
+  @override
+  String get factRoleSleepy =>
+      'сонний: прокидається на короткі вікна, зв\'язується через свій якір';
+
+  @override
+  String get factRoleRelay => 'ретранслятор: передає чужі повідомлення';
+
+  @override
+  String get factCarried => 'його носять';
+
+  @override
+  String get factFixed => 'нерухомий';
+
+  @override
+  String get factAnchored => 'є';
+
+  @override
+  String factAnchoredTo(String node) {
+    return '$node';
+  }
+
+  @override
+  String get factNoAnchor => 'ще немає';
+
+  @override
+  String get factThisNodesAnchor => 'якір цього вузла';
+
+  @override
+  String get factNoPlace => 'ще немає';
+
+  @override
+  String factPlaceByPerson(String place) {
+    return 'задано вручну\n$place';
+  }
+
+  @override
+  String factPlaceFromGps(String place) {
+    return 'з GPS\n$place';
+  }
+
+  @override
+  String factPlaceAnchors(String place) {
+    return 'як у якоря\n$place';
+  }
+
+  @override
+  String get factBatteryLow => 'низький заряд';
+
+  @override
+  String get notRead => 'не зчитано';
+
+  @override
+  String factPercent(int percent) {
+    return '$percent%';
+  }
+
+  @override
+  String millivolts(int voltage) {
+    return '$voltage мВ';
+  }
+
+  @override
+  String get noReading => 'немає вимірювань';
+
+  @override
+  String factGpsTooWeak(int signal) {
+    return '$signal дБ·Гц · надто слабкий для позиції';
+  }
+
+  @override
+  String factGpsEnough(int signal) {
+    return '$signal дБ·Гц · досить для позиції';
+  }
+
+  @override
+  String get factLinkGood => 'добрий';
+
+  @override
+  String get factLinkFair => 'середній';
+
+  @override
+  String get factLinkFragile => 'крихкий';
+
+  @override
+  String factLinkDetail(String rssi, String margin) {
+    return 'Цей зв\'язок: $rssi дБм, $margin дБ над радіошумом.';
+  }
+
+  @override
+  String timeSecondsAgo(int seconds) {
+    return '$seconds с тому';
+  }
+
+  @override
+  String factMetres(int metres) {
+    return '$metres м';
+  }
+
+  @override
+  String factKilometres(String kilometres) {
+    return '$kilometres км';
+  }
+
+  @override
+  String factKnownValue(int heard, int strong, int exchanged) {
+    return 'чутні $heard · сильні $strong · обмінялися $exchanged';
+  }
+
+  @override
+  String factVersionGetting(
+    String version,
+    String gathers,
+    int complete,
+    int blocks,
+  ) {
+    return '$version · отримує $gathers $complete/$blocks';
+  }
+
+  @override
+  String get factExchangedValue => 'він прийняв повідомлення від цього вузла';
+
+  @override
+  String get factDemotedValue => 'він не відповів на останні повідомлення';
+
+  @override
+  String get factAvoidedValue =>
+      'поки що: він відхилив повідомлення або не відповів';
+
+  @override
+  String get factPairedWithThis => 'з цим телефоном';
+
+  @override
+  String get mapShowMe => 'Показати, де я';
+
+  @override
+  String get mapReadAgain => 'Зчитати знову';
+
+  @override
+  String get mapNotConnected =>
+      'Немає підключення до вузла: підключіться, щоб побачити його сусідів.';
+
+  @override
+  String get mapGuest =>
+      'Ви підключені як гість: сусідів цього вузла бачить лише спарений із ним телефон.';
+
+  @override
+  String mapReadFailed(String error) {
+    return 'Не вдалося зчитати сусідів: $error';
+  }
+
+  @override
+  String get mapNothing =>
+      'Вузол ще не має місця й не чув жодного сусіда: нема чого показувати.';
+
+  @override
+  String get mapAttribution => '© учасники OpenStreetMap';
+
+  @override
+  String get mapNoPlaceNoLines =>
+      'Вузол не має власного місця: його сусідів показано без ліній до нього.';
+
+  @override
+  String get mapNoPlaceAtYou =>
+      'Вузол не має власного місця: його показано там, де ви.';
+
+  @override
+  String get mapNoTiles =>
+      'Карти тут немає: телефон не має інтернету й раніше не зберіг цю місцевість. Вузли та зв\'язки показано на порожньому тлі.';
+
+  @override
+  String mapLastReadFailed(String error) {
+    return 'Останнє зчитування не вдалося: $error';
+  }
+
+  @override
+  String get mapKindSleepy => 'сонний';
+
+  @override
+  String get mapKindRelay => 'ретранслятор';
+
+  @override
+  String get mapThisNode => 'цей вузол';
+
+  @override
+  String get mapAsking => 'Запитуємо в нього живлення, сусідів і версію…';
+
+  @override
+  String get mapNoAnswerSleepy =>
+      'Він не відповів: він спить між своїми вікнами.';
+
+  @override
+  String get mapNoAnswer => 'Він не відповів.';
+
+  @override
+  String mapNodesHere(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count вузла тут',
+      many: '$count вузлів тут',
+      few: '$count вузли тут',
+      one: '$count вузол тут',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String mapNodesHereNamed(int count, String names) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count вузла тут: $names',
+      many: '$count вузлів тут: $names',
+      few: '$count вузли тут: $names',
+      one: '$count вузол тут: $names',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String mapNeighboursRead(int count, String time) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count сусіда, зчитано $time',
+      many: '$count сусідів, зчитано $time',
+      few: '$count сусіди, зчитано $time',
+      one: '$count сусід, зчитано $time',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String mapBandGood(String good) {
+    return 'добрий ≥ $good дБ';
+  }
+
+  @override
+  String mapBandFair(String fair, String good) {
+    return 'середній $fair–$good дБ';
+  }
+
+  @override
+  String mapBandFragile(String fair) {
+    return 'крихкий < $fair дБ над радіошумом';
+  }
+
+  @override
+  String get mapLegendRelay => 'ретранслятор';
+
+  @override
+  String get mapLegendSleepy => 'сонний вузол';
+
+  @override
+  String get mapLegendCarried => 'вузол, який носять';
+
+  @override
+  String get mapLegendShared => 'вузли в одному місці';
+
+  @override
+  String get mapLegendYou =>
+      'ви: ваша позиція лишається на цьому телефоні, її ніколи не надсилають і не зберігають';
+
+  @override
+  String mapHomeOf(String names) {
+    return 'Дім: $names';
+  }
+
+  @override
+  String get mapYou => 'ви';
+
+  @override
+  String mapLastSeen(String names) {
+    return 'Востаннє бачили: $names';
+  }
+
+  @override
+  String mapSeenAgo(String name, String ago) {
+    return '$name $ago';
+  }
+
+  @override
   String get ok => 'OK';
 
   @override
   String get debug => 'Налагодження';
+
+  @override
+  String get debugMe => 'Я';
+
+  @override
+  String get debugBench => 'Стенд';
+
+  @override
+  String get debugStatus => 'Стан';
+
+  @override
+  String get debugGivenBackHeading => 'Повернуто';
+
+  @override
+  String get debugConnectPaired =>
+      'Підключіть спарений вузол, щоб вибрати файл прошивки.';
+
+  @override
+  String get debugPickFirmware => 'Вибрати файл прошивки';
+
+  @override
+  String get debugValue => 'Значення';
+
+  @override
+  String get debugEmpty => 'порожньо';
+
+  @override
+  String debugGivenBack(String id, int wait) {
+    return '$id, чекати $wait с';
+  }
+
+  @override
+  String get debugSent => 'Надіслані';
+
+  @override
+  String get debugReceived => 'Отримані';
+
+  @override
+  String get debugLog => 'Журнал';
+
+  @override
+  String get debugNone => 'Немає';
+
+  @override
+  String get debugNothingYet => 'Поки нічого';
+
+  @override
+  String get debugIdentity => 'Особа';
+
+  @override
+  String get debugCardAddress => 'Адреса в картці';
+
+  @override
+  String get debugNoneNoHome => 'немає: дому немає';
+
+  @override
+  String get debugNoValue => 'немає';
+
+  @override
+  String get debugUnsentAtHome => 'Скринька: лишилося вдома';
+
+  @override
+  String get debugFetchRounds => 'Запити пошти';
+
+  @override
+  String get debugLastSent => 'Останнє надіслане';
+
+  @override
+  String get debugAppVersion => 'Версія застосунку';
+
+  @override
+  String get debugDevBuild => 'збірка для розробки';
+
+  @override
+  String get debugLatestRelease => 'Останній випуск';
+
+  @override
+  String get debugNotKnown => 'невідомо';
+
+  @override
+  String debugRelease(int release, int app, int firmware, String checked) {
+    return '$release, застосунок $app, прошивка $firmware, перевірено $checked';
+  }
+
+  @override
+  String get debugName => 'Назва';
+
+  @override
+  String get debugNodeId => 'ID вузла';
+
+  @override
+  String get debugLink => 'Зв\'язок';
+
+  @override
+  String get debugLinkGuest => 'гостя';
+
+  @override
+  String get debugLinkPaired => 'спареного телефону';
+
+  @override
+  String get debugLinkVersion => 'Версія зв\'язку';
+
+  @override
+  String get debugFirmwareImage => 'Прошивка';
+
+  @override
+  String get debugClock => 'Годинник';
+
+  @override
+  String get debugPublic => 'Публічний';
+
+  @override
+  String get debugYes => 'так';
+
+  @override
+  String get debugNo => 'ні';
+
+  @override
+  String get debugPublicGuest => 'так: його знайшов гість';
+
+  @override
+  String get debugHome => 'Дім';
+
+  @override
+  String get debugAddress => 'Адреса';
+
+  @override
+  String get debugNoPlace => 'ще немає: немає місця';
+
+  @override
+  String get debugAddressCopied => 'Адресу скопійовано';
+
+  @override
+  String get debugStatusNotRead => 'Не зчитано';
+
+  @override
+  String get debugReady => 'Готовий прийняти повідомлення';
+
+  @override
+  String get debugExternalPower => 'Зовнішнє живлення';
+
+  @override
+  String get debugSleepy => 'Сонний';
+
+  @override
+  String get debugCarried => 'Його носять';
+
+  @override
+  String get debugMapPoint => 'Позицію задано вручну';
+
+  @override
+  String get debugPlaced => 'Має місце';
+
+  @override
+  String get debugAnchorless => 'Без якоря';
+
+  @override
+  String get debugFirstRotation => 'Перша ротація';
+
+  @override
+  String debugRotationRunning(String left) {
+    return 'триває, лишилося $left';
+  }
+
+  @override
+  String get debugRotationOver => 'завершено';
+
+  @override
+  String get debugRelaysKnown => 'Відомі ретранслятори';
+
+  @override
+  String get debugNeighboursHeard => 'Чутні сусіди';
+
+  @override
+  String get debugAddressPosition => 'Позиція адреси';
+
+  @override
+  String get debugBattery => 'Батарея';
+
+  @override
+  String get debugBatteryNone => 'не зчитано або від USB';
+
+  @override
+  String get debugInbox => 'Повідомлення у вхідних';
+
+  @override
+  String dbHz(int signal) {
+    return '$signal дБ·Гц';
+  }
 
   @override
   String get pairAgain => 'Створити пару знову';
@@ -1404,7 +1989,7 @@ class AppLocalizationsUk extends AppLocalizations {
   String get nodePairedConnecting => 'Пару створено, підключення…';
 
   @override
-  String get nodeHeading => 'Вузол';
+  String get node => 'Вузол';
 
   @override
   String get nodeDisconnect => 'Відключитися';
@@ -1831,7 +2416,7 @@ class AppLocalizationsUk extends AppLocalizations {
   String get homeShowThem => 'Показати список';
 
   @override
-  String get homeAskAgain => 'Запитати знову';
+  String get askAgain => 'Запитати знову';
 
   @override
   String homeAskFailed(String error) {
@@ -2294,7 +2879,7 @@ class AppLocalizationsUk extends AppLocalizations {
   String get updatesNodeFirmware => 'Прошивка вузла';
 
   @override
-  String get updatesNotConnected => 'Не підключено';
+  String get nodeNotConnected => 'Не підключено';
 
   @override
   String get updatesGuest =>
@@ -2374,6 +2959,14 @@ class AppLocalizationsUk extends AppLocalizations {
   String identitySaveFailed(String error) {
     return 'Не вдалося зберегти: $error';
   }
+
+  @override
+  String identityNoStream(String uri) {
+    return 'не вдалося записати в $uri';
+  }
+
+  @override
+  String get identitySaveBusy => 'збереження вже триває';
 
   @override
   String get identityRestoreTitle => 'Відновити з файлу?';

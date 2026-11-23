@@ -24,9 +24,27 @@ object Engine {
         MethodChannel(engine.dartExecutor.binaryMessenger, LINK).setMethodCallHandler { call, result ->
             try {
                 when (call.method) {
-                    "hold" -> LinkService.hold(app, call.argument<String>("title")!!, call.argument<String>("body")!!)
+                    "hold" -> LinkService.hold(
+                        app,
+                        LinkService.Words(
+                            call.argument<String>("title")!!,
+                            call.argument<String>("body")!!,
+                            call.argument<String>("channel")!!,
+                            call.argument<String>("channelAbout")!!,
+                        ),
+                    )
                     "letGo" -> LinkService.letGo(app)
-                    "atBoot" -> LinkService.atBoot(app, call.argument<String>("title"), call.argument<String>("body"))
+                    "atBoot" -> LinkService.atBoot(
+                        app,
+                        call.argument<String>("title")?.let {
+                            LinkService.Words(
+                                it,
+                                call.argument<String>("body")!!,
+                                call.argument<String>("channel")!!,
+                                call.argument<String>("channelAbout")!!,
+                            )
+                        },
+                    )
                     else -> return@setMethodCallHandler result.notImplemented()
                 }
                 result.success(null)

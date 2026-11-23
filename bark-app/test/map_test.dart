@@ -609,9 +609,9 @@ void main() {
   });
 
   test('every fact has its help, two to four sentences', () {
-    for (final MapEntry(:key, :value) in factHelp.entries) {
-      final sentences = RegExp(r'[.!?](\s|$)').allMatches(value).length;
-      expect(sentences, inInclusiveRange(2, 4), reason: key);
+    for (final k in FactKind.values) {
+      final sentences = RegExp(r'[.!?](\s|$)').allMatches(factHelp(k)).length;
+      expect(sentences, inInclusiveRange(2, 4), reason: k.name);
     }
   });
 
@@ -621,7 +621,7 @@ void main() {
         .firstMatch(gnss)
         ?.group(1);
     expect(floor, '$gpsFixFloorDbHz');
-    expect(factHelp['GPS signal'], contains('Under $gpsFixFloorDbHz '));
+    expect(factHelp(FactKind.gpsSignal), contains('Under $gpsFixFloorDbHz '));
   });
 
   testWidgets('every row of a sheet opens its help', (t) async {
@@ -634,7 +634,7 @@ void main() {
     final app = await openMap(t);
     final fake = app.fakeNode!;
     await t.pump(FakeNode.answerAfter);
-    final seen = <String>{};
+    final seen = <FactKind>{};
     Future<void> each(Finder marker) async {
       await t.tap(marker);
       await t.pumpAndSettle();
@@ -642,10 +642,10 @@ void main() {
       final rows = find.descendant(of: sheet, matching: find.byType(InkWell));
       for (var i = 0; i < rows.evaluate().length; i++) {
         final row = rows.at(i);
-        final label = factHelp.keys
+        final label = FactKind.values
             .where(
-              (l) => find
-                  .descendant(of: row, matching: find.text(l))
+              (k) => find
+                  .descendant(of: row, matching: find.text(factLabel(k)))
                   .evaluate()
                   .isNotEmpty,
             )
@@ -656,7 +656,7 @@ void main() {
         await t.tap(row);
         await t.pumpAndSettle();
         expect(find.byType(BottomSheet), findsNWidgets(2));
-        expect(find.text(factHelp[label]!), findsOneWidget);
+        expect(find.text(factHelp(label)), findsOneWidget);
         seen.add(label);
         Navigator.pop(t.element(find.byType(BottomSheet).last));
         await t.pumpAndSettle();
@@ -671,8 +671,8 @@ void main() {
     }
     await each(icon('this node'));
     // All but the anchor's own note, as the fake's node is a relay.
-    expect(seen, containsAll(factHelp.keys.toSet()..remove('Anchor')));
-    expect(seen, contains('Anchor'));
+    expect(seen, containsAll(FactKind.values.toSet()..remove(FactKind.anchor)));
+    expect(seen, contains(FactKind.anchor));
     await shut(t, app);
     debugPrint = print;
   });

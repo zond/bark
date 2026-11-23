@@ -5,37 +5,76 @@
 import '../l10n.dart';
 import '../link.dart';
 
-/// The help for a row, by its label as the English names it: two to four
-/// plain sentences, in the language now spoken.
-Map<String, String> get factHelp => {
+/// Which fact a row of a node's sheet gives: its identity, from which its
+/// label and its help are made in the language spoken.
+enum FactKind {
+  role,
+  moving,
+  anchor,
+  place,
+  power,
+  link,
+  lastHeard,
+  distance,
+  known,
+  gpsSignal,
+  version,
+  exchanged,
+  demoted,
+  avoided,
+  paired,
+}
+
+/// A row's label, in the language spoken.
+String factLabel(FactKind k) => switch (k) {
+  FactKind.role => tr.factRoleLabel,
+  FactKind.moving => tr.factMovingLabel,
+  FactKind.anchor => tr.factAnchorLabel,
+  FactKind.place => tr.factPlaceLabel,
+  FactKind.power => tr.factPowerLabel,
+  FactKind.link => tr.factLinkLabel,
+  FactKind.lastHeard => tr.factLastHeardLabel,
+  FactKind.distance => tr.factDistanceLabel,
+  FactKind.known => tr.factKnownLabel,
+  FactKind.gpsSignal => tr.gpsSignal,
+  FactKind.version => tr.factVersionLabel,
+  FactKind.exchanged => tr.factExchangedLabel,
+  FactKind.demoted => tr.factDemotedLabel,
+  FactKind.avoided => tr.factAvoidedLabel,
+  FactKind.paired => tr.factPairedLabel,
+};
+
+/// The help for a row: two to four plain sentences, in the language now
+/// spoken.
+String factHelp(FactKind k) => switch (k) {
   // Spec "Nodes", "Sleepy nodes", A forced role.
-  'Role': tr.factRole,
+  FactKind.role => tr.factRole,
   // Spec "Nodes", "Position", Fixed and carried.
-  'Moving': tr.factMoving,
+  FactKind.moving => tr.factMoving,
   // Spec "Relay choice", "Sleepy nodes", "Addresses".
-  'Anchor': tr.factAnchor,
+  FactKind.anchor => tr.factAnchor,
   // Spec "Position", "Addresses".
-  'Place': tr.factPlace,
+  FactKind.place => tr.factPlace,
   // Spec "Nodes", "Sleepy nodes", "Neighbour status".
-  'Power': tr.factPower,
+  FactKind.power => tr.factPower,
   // Spec "Phone link", Neighbours; "Neighbour table".
-  'Link': tr.factLink,
+  FactKind.link => tr.factLink,
   // Spec "Heartbeat", "Beats", "Neighbour table", Expiry.
-  'Last heard': tr.factLastHeard,
+  FactKind.lastHeard => tr.factLastHeard,
   // The app's own reckoning from the two places.
-  'Distance': tr.factDistance,
+  FactKind.distance => tr.factDistance,
   // Spec "Neighbour status".
-  'Known': tr.factKnown,
+  FactKind.known => tr.factKnown,
   // Spec "Neighbour status", "Position", Checks.
-  'GPS signal': tr.factGpsSignal(gpsFixFloorDbHz),
+  FactKind.gpsSignal => tr.factGpsSignal(gpsFixFloorDbHz),
   // Spec "Updates over the mesh".
-  'Version': tr.factVersion,
+  FactKind.version => tr.factVersion,
   // Spec "Phone link", Neighbours, flag bit 7.
-  'Exchanged': tr.factExchanged,
+  FactKind.exchanged => tr.factExchanged,
   // Spec "Neighbour table", Demotion.
-  'Demoted': tr.factDemoted,
+  FactKind.demoted => tr.factDemoted,
   // Spec "Bans".
-  'Avoided': tr.factAvoided,
+  FactKind.avoided => tr.factAvoided,
   // Spec "Phone link", Sending, Receiving.
-  'Paired': tr.factPaired,
+  FactKind.paired => tr.factPaired,
 };
