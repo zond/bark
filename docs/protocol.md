@@ -1147,10 +1147,11 @@ neighbour. A parent that answers seen: the relay drops the message
 **A sleepy parent.** A return to a sleepy node with an anchor that the
 relay hears beat, its own message come back, waits in the delivery queue
 as a message for that node does and goes in the node's window
-([delivery](#delivery)), never with the long preamble. With no place in
-the queue it is dropped, as is one whose node the relay no longer hears,
-and one the relay still holds when it turns sleepy
-([sleepy nodes](#sleepy-nodes)); nobody is told (roadmap D244).
+([delivery](#delivery)), with the long preamble only in the flush of a
+relay that turns sleepy ([sleepy nodes](#sleepy-nodes)): one attempt, as
+for any message it holds, and what that does not deliver is dropped, not
+handed on. With no place in the queue a return is dropped, as is one
+whose node the relay no longer hears; nobody is told (roadmap D244).
 
 **The origin** has no parent: with no candidate left it gives the message
 back to its application, no way ([addresses](#addresses);
