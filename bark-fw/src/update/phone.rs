@@ -71,11 +71,13 @@ pub struct Phone {
 }
 
 impl Phone {
-    /// The update at boot: committed if a swap is still asked for, as when
-    /// the node was committed and not rebooted, else idle.
+    /// The update at boot: committed if a swap to a later image is still
+    /// asked for, as when the node was committed and not rebooted, else
+    /// idle. An image on trial reads as a swap asked for too, with its own
+    /// header in the record: that one is running, and nothing is held.
     pub fn new(internal: &'static SharedFlash, flash: &'static super::Flash) -> Phone {
         let committed = match swap_requested(flash) {
-            Ok(true) => super::recorded(flash),
+            Ok(true) => super::recorded(flash).filter(|h| h.version > super::BARK_IMAGE_VERSION),
             _ => None,
         };
         let phone = Phone {
