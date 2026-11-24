@@ -508,7 +508,7 @@ in the instrumental in Ukrainian ("вузол відхилив", not "відхи
   mailbox state; Node, what Home reads, every Status field, its GPS signal among them, the last
   Given back value with why, each sent and received message's kind, `sent`, ID
   and payload in hex, and a log of the link's events since the app
-  started. Each log line also goes to the Android log, so on the bench
+  started, which **Copy the log** copies, oldest line first. Each log line also goes to the Android log, so on the bench
   `adb logcat -s flutter` shows them as, for example,
   `11-06 14:03:27.513  8812  8840 I flutter : bark 14:03:27.512 Disconnected`.
 
@@ -1059,14 +1059,15 @@ A node out of reach, on a roof, is updated from the phone over the link
 (spec "Phone link", Updates; roadmap D145). Settings, under
 **Updates**, says the version the connected node runs on the **Node
 firmware** row; its **Send to the node**, when the latest release has a newer
-image, opens the update screen, which takes the image from **Latest
-release**, the `bark-fw-<F>.img` of the latest release the app knows of
-(Newer releases), signed by the release that built it. For the bench, Debug, under
+image, opens the update screen with the image downloaded and chosen, the
+`bark-fw-<F>.img` of the latest release the app knows of (Newer
+releases), signed by the release that built it; **Download latest
+release** fetches it when it is not the image chosen. For the bench, Debug, under
 **Bench**, has **Pick a firmware file**, which opens the same screen
 with **Pick a file** beside it for an image
 `bark-fw/scripts/image.py pack` made and `image.py sign` signed; the
 node refuses an image no key of its own signed (`bark-fw/README.md`,
-"Updates"). **Latest release** is offered only when that release's
+"Updates"). **Download latest release** is offered only when that release's
 image is newer than the node's; otherwise a line under the buttons
 says why: no release known yet, or the node already runs the latest.
 The app checks the file's header and hash before it offers it, and shows its
@@ -1186,11 +1187,11 @@ Settings' **Updates** section has **Check for updates**, which asks at
 once by the same check, with a spinner while it runs, and then says in
 one line how this app and the node stand against the latest release,
 such as "App up to date (22); node firmware 21, up to date", "App up to
-date (22); node firmware 23 is out: send it below", "App 22 is out: tap
-App below; no node linked", or "Could not reach the release list"
+date (22); node firmware 23 is out: send it below", "App 22 is out: install
+it below; no node linked", or "Could not reach the release list"
 without a network. Under it the **App** row gives the app's version and,
-when the release is newer, a tap downloads and installs it as the bar
-does; the **Node firmware** row
+when the release is newer, **Install**, which downloads and installs it
+as the bar does; the **Node firmware** row
 gives the node's version and, when the release's image is newer, **Send
 to the node**. A dismissed
 bar does not hide a newer version here.

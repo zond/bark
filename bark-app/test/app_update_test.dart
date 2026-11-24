@@ -229,34 +229,31 @@ void main() {
     testWidgets('Settings\' App row', (t) async {
       final (app, apks, n) = await model(t);
       await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
-      Future<void> tapApp() async {
-        final row = find.text('App');
-        await t.ensureVisible(row);
-        await t.tap(row);
+      Future<void> press(String label) async {
+        final button = find.widgetWithText(FilledButton, label);
+        await t.ensureVisible(button);
+        await t.tap(button);
         await t.pump();
       }
 
-      expect(find.text('Version 3; 5 is out. Tap to install'), findsOneWidget);
-      await tapApp();
+      expect(find.text('Version 3; 5 is out'), findsOneWidget);
+      await press('Install');
       expect(find.text('Version 3; downloading 5…'), findsOneWidget);
+      // No button while it downloads.
+      expect(find.widgetWithText(FilledButton, 'Install'), findsNothing);
       apks.progress!(0.07);
       await t.pump();
       expect(find.text('Version 3; downloading 5… 7%'), findsOneWidget);
       apks.fail = const HttpException('cut off');
       apks.gate!.complete();
       await t.pump();
-      expect(
-        find.text('Version 3; 5 did not download. Tap to try again'),
-        findsOneWidget,
-      );
+      expect(find.text('Version 3; 5 did not download'), findsOneWidget);
       apks
         ..fail = null
         ..gate = null;
-      await tapApp();
-      expect(
-        find.text('Version 3; 5 is downloaded. Tap to install'),
-        findsOneWidget,
-      );
+      await press('Try again');
+      expect(find.text('Version 3; 5 is downloaded'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Install'), findsOneWidget);
       expect(n.installed, ['/apk/bark-5.apk']);
       app.disposeWithNode();
     });
@@ -265,7 +262,7 @@ void main() {
       final (app, _, _) = await model(t, app: 0);
       await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
       expect(find.text('A development build'), findsOneWidget);
-      expect(find.textContaining('Tap to install'), findsNothing);
+      expect(find.widgetWithText(FilledButton, 'Install'), findsNothing);
       app.disposeWithNode();
     });
   });

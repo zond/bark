@@ -2735,7 +2735,16 @@ class AppLocalizationsUk extends AppLocalizations {
   }
 
   @override
-  String get updateLatest => 'Останній випуск';
+  String get updatesInstall => 'Встановити';
+
+  @override
+  String get debugCopyLog => 'Копіювати журнал';
+
+  @override
+  String get debugLogCopied => 'Журнал скопійовано';
+
+  @override
+  String get updateLatest => 'Завантажити останній випуск';
 
   @override
   String get updatePickFile => 'Вибрати файл';
@@ -2894,7 +2903,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String updatesAppOut(int version, int latest) {
-    return 'Версія $version; вийшла $latest. Натисніть, щоб встановити';
+    return 'Версія $version; вийшла $latest';
   }
 
   @override
@@ -2909,12 +2918,12 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String updatesAppReady(int version, int latest) {
-    return 'Версія $version; версію $latest завантажено. Натисніть, щоб встановити';
+    return 'Версія $version; версію $latest завантажено';
   }
 
   @override
   String updatesAppFailed(int version, int latest) {
-    return 'Версія $version; не вдалося завантажити $latest. Натисніть, щоб спробувати знову';
+    return 'Версія $version; не вдалося завантажити $latest';
   }
 
   @override
@@ -2946,7 +2955,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String releaseAppOut(int version) {
-    return 'Вийшла версія застосунку $version: натисніть «Застосунок» нижче';
+    return 'Вийшла версія застосунку $version: встановіть її нижче';
   }
 
   @override

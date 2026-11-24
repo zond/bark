@@ -2714,7 +2714,16 @@ class AppLocalizationsSv extends AppLocalizations {
   }
 
   @override
-  String get updateLatest => 'Senaste utgåvan';
+  String get updatesInstall => 'Installera';
+
+  @override
+  String get debugCopyLog => 'Kopiera loggen';
+
+  @override
+  String get debugLogCopied => 'Loggen kopierad';
+
+  @override
+  String get updateLatest => 'Ladda ner senaste utgåvan';
 
   @override
   String get updatePickFile => 'Välj en fil';
@@ -2873,7 +2882,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String updatesAppOut(int version, int latest) {
-    return 'Version $version; $latest finns nu. Tryck för att installera';
+    return 'Version $version; $latest finns nu';
   }
 
   @override
@@ -2888,12 +2897,12 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String updatesAppReady(int version, int latest) {
-    return 'Version $version; $latest är nedladdad. Tryck för att installera';
+    return 'Version $version; $latest är nedladdad';
   }
 
   @override
   String updatesAppFailed(int version, int latest) {
-    return 'Version $version; $latest kunde inte laddas ner. Tryck för att försöka igen';
+    return 'Version $version; $latest kunde inte laddas ner';
   }
 
   @override
@@ -2925,7 +2934,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String releaseAppOut(int version) {
-    return 'Appversion $version finns nu: tryck på App nedan';
+    return 'App $version finns nu: installera den nedan';
   }
 
   @override

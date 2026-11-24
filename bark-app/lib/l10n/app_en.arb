@@ -2225,7 +2225,10 @@
     "description": "As updateRuns, after this phone updated the node. {ago} is how long ago, such as timeMinutesAgo or timeJustNow.",
     "placeholders": {"node": {"type": "String", "example": "ID FA4E00000001"}, "version": {"type": "int"}, "from": {"type": "int"}, "ago": {"type": "String"}}
   },
-  "updateLatest": "Latest release",
+  "updatesInstall": "Install",
+  "debugCopyLog": "Copy the log",
+  "debugLogCopied": "Log copied",
+  "updateLatest": "Download latest release",
   "@updateLatest": {
     "description": "A button: download the firmware of the project's latest release, to send it to the node."
   },
@@ -2386,7 +2389,7 @@
   "@updatesDevBuild": {
     "description": "Under updatesApp: this app was built by hand, not by a release, and so has no version."
   },
-  "updatesAppOut": "Version {version}; {latest} is out. Tap to install",
+  "updatesAppOut": "Version {version}; {latest} is out",
   "@updatesAppOut": {
     "description": "Under updatesApp: this app's version, and the newer one of the latest release.",
     "placeholders": {"version": {"type": "int"}, "latest": {"type": "int"}}
@@ -2399,11 +2402,11 @@
   "@updatesAppDownloadingPercent": {
     "placeholders": {"version": {"type": "int"}, "latest": {"type": "int"}, "percent": {"type": "int"}}
   },
-  "updatesAppReady": "Version {version}; {latest} is downloaded. Tap to install",
+  "updatesAppReady": "Version {version}; {latest} is downloaded",
   "@updatesAppReady": {
     "placeholders": {"version": {"type": "int"}, "latest": {"type": "int"}}
   },
-  "updatesAppFailed": "Version {version}; {latest} did not download. Tap to try again",
+  "updatesAppFailed": "Version {version}; {latest} did not download",
   "@updatesAppFailed": {
     "placeholders": {"version": {"type": "int"}, "latest": {"type": "int"}}
   },
@@ -2438,7 +2441,7 @@
   "@releaseAppDev": {
     "description": "This app was built by hand, not by a release. It begins releaseLine."
   },
-  "releaseAppOut": "App {version} is out: tap App below",
+  "releaseAppOut": "App {version} is out: install it below",
   "@releaseAppOut": {
     "description": "App below is the row updatesApp. It begins releaseLine, so it has a capital; so does releaseAppUpToDate.",
     "placeholders": {"version": {"type": "int"}}

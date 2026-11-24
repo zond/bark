@@ -46,6 +46,7 @@ import 'package:bark_app/ui/conversations_screen.dart';
 import 'package:bark_app/ui/settings_screen.dart';
 import 'package:bark_app/ui/thread_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -394,6 +395,33 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('Bench'), findsOneWidget);
+
+    // The log, copied oldest line first.
+    String? copied;
+    t.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied = (call.arguments as Map)['text'] as String;
+        }
+        return null;
+      },
+    );
+    await t.scrollUntilVisible(
+      find.text('Copy the log'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await t.tap(find.text('Copy the log'));
+    await t.pump();
+    expect(find.text('Log copied'), findsOneWidget);
+    final log = app.session.log.toList();
+    expect(copied!.split('\n'), hasLength(log.length));
+    expect(copied!.split('\n').first, endsWith(log.first.text));
+    t.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      null,
+    );
 
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();

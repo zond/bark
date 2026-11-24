@@ -86,6 +86,21 @@ class DebugScreen extends StatelessWidget {
               ),
             heading(tr.debugLog),
             if (s.log.isEmpty) Text(tr.debugNothingYet),
+            if (s.log.isNotEmpty)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton(
+                  onPressed: () {
+                    // Oldest first, as a log is read.
+                    final lines = s.log.map(
+                      (l) => '${logTime(l.at)} ${l.text}',
+                    );
+                    Clipboard.setData(ClipboardData(text: lines.join('\n')));
+                    say(context, tr.debugLogCopied);
+                  },
+                  child: Text(tr.debugCopyLog),
+                ),
+              ),
             for (final l in s.log.toList().reversed)
               Text(
                 '${logTime(l.at)} ${l.text}',

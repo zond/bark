@@ -2684,7 +2684,16 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get updateLatest => 'Latest release';
+  String get updatesInstall => 'Install';
+
+  @override
+  String get debugCopyLog => 'Copy the log';
+
+  @override
+  String get debugLogCopied => 'Log copied';
+
+  @override
+  String get updateLatest => 'Download latest release';
 
   @override
   String get updatePickFile => 'Pick a file';
@@ -2842,7 +2851,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String updatesAppOut(int version, int latest) {
-    return 'Version $version; $latest is out. Tap to install';
+    return 'Version $version; $latest is out';
   }
 
   @override
@@ -2857,12 +2866,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String updatesAppReady(int version, int latest) {
-    return 'Version $version; $latest is downloaded. Tap to install';
+    return 'Version $version; $latest is downloaded';
   }
 
   @override
   String updatesAppFailed(int version, int latest) {
-    return 'Version $version; $latest did not download. Tap to try again';
+    return 'Version $version; $latest did not download';
   }
 
   @override
@@ -2892,7 +2901,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String releaseAppOut(int version) {
-    return 'App $version is out: tap App below';
+    return 'App $version is out: install it below';
   }
 
   @override

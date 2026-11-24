@@ -4395,10 +4395,28 @@ abstract class AppLocalizations {
   /// **'{node} runs version {version}, updated from version {from} {ago}.'**
   String updateRunsSince(String node, int version, int from, String ago);
 
+  /// No description provided for @updatesInstall.
+  ///
+  /// In en, this message translates to:
+  /// **'Install'**
+  String get updatesInstall;
+
+  /// No description provided for @debugCopyLog.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy the log'**
+  String get debugCopyLog;
+
+  /// No description provided for @debugLogCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Log copied'**
+  String get debugLogCopied;
+
   /// A button: download the firmware of the project's latest release, to send it to the node.
   ///
   /// In en, this message translates to:
-  /// **'Latest release'**
+  /// **'Download latest release'**
   String get updateLatest;
 
   /// A button: choose a firmware file on the phone, to send it to the node.
@@ -4638,7 +4656,7 @@ abstract class AppLocalizations {
   /// Under updatesApp: this app's version, and the newer one of the latest release.
   ///
   /// In en, this message translates to:
-  /// **'Version {version}; {latest} is out. Tap to install'**
+  /// **'Version {version}; {latest} is out'**
   String updatesAppOut(int version, int latest);
 
   /// No description provided for @updatesAppDownloading.
@@ -4656,13 +4674,13 @@ abstract class AppLocalizations {
   /// No description provided for @updatesAppReady.
   ///
   /// In en, this message translates to:
-  /// **'Version {version}; {latest} is downloaded. Tap to install'**
+  /// **'Version {version}; {latest} is downloaded'**
   String updatesAppReady(int version, int latest);
 
   /// No description provided for @updatesAppFailed.
   ///
   /// In en, this message translates to:
-  /// **'Version {version}; {latest} did not download. Tap to try again'**
+  /// **'Version {version}; {latest} did not download'**
   String updatesAppFailed(int version, int latest);
 
   /// A sentence after the line on the app's version, when the node runs newer firmware than this app knows; 'it' is the app. The app adds the full stop before it.
@@ -4710,7 +4728,7 @@ abstract class AppLocalizations {
   /// App below is the row updatesApp. It begins releaseLine, so it has a capital; so does releaseAppUpToDate.
   ///
   /// In en, this message translates to:
-  /// **'App {version} is out: tap App below'**
+  /// **'App {version} is out: install it below'**
   String releaseAppOut(int version);
 
   /// This app is the latest release's. It begins releaseLine, so it has a capital.

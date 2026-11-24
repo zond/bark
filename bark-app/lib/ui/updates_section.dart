@@ -104,8 +104,13 @@ class _UpdatesSectionState extends State<UpdatesSection> {
         subtitle: Text(
           s.nodeNewer ? '$appLine. ${tr.updatesNodeNewer}' : appLine,
         ),
-        onTap: newerApp && get != AppGet.downloading
-            ? () => app.appUpdate.get(latest)
+        trailing: newerApp && get != AppGet.downloading
+            ? FilledButton(
+                onPressed: () => app.appUpdate.get(latest),
+                child: Text(
+                  get == AppGet.failed ? tr.updateTryAgain : tr.updatesInstall,
+                ),
+              )
             : null,
       ),
       ListTile(

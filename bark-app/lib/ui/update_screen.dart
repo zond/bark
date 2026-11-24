@@ -101,18 +101,20 @@ class _UpdateScreenState extends State<UpdateScreen> {
             Wrap(
               spacing: 8,
               children: [
-                FilledButton(
-                  onPressed: _getting || busy || latest == null
-                      ? null
-                      : () => _get(
-                          () => downloadImage(
-                            latest,
-                            app.session.note,
-                            app.releases.download,
+                // Not beside the release's own image, already chosen.
+                if (image == null || image.version != latest?.firmware)
+                  FilledButton(
+                    onPressed: _getting || busy || latest == null
+                        ? null
+                        : () => _get(
+                            () => downloadImage(
+                              latest,
+                              app.session.note,
+                              app.releases.download,
+                            ),
                           ),
-                        ),
-                  child: Text(tr.updateLatest),
-                ),
+                    child: Text(tr.updateLatest),
+                  ),
                 // Only for the bench, which comes here from Debug.
                 if (widget.pick)
                   OutlinedButton(

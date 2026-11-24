@@ -542,7 +542,7 @@ void main() {
     await app.connectFake();
     final u = app.updater;
     await t.pumpWidget(MaterialApp(home: UpdateScreen(app)));
-    final latest = find.widgetWithText(FilledButton, 'Latest release');
+    final latest = find.widgetWithText(FilledButton, 'Download latest release');
     final pick = find.widgetWithText(OutlinedButton, 'Pick a file');
     expect(t.widget<FilledButton>(latest).enabled, isTrue);
     // Picking a file is the bench's, from Debug.
@@ -553,6 +553,8 @@ void main() {
     await t.pump();
     expect(u.phase, Phase.committed, reason: u.message);
     expect(find.text('Version 2'), findsOneWidget);
+    // The release's image is chosen: no button to fetch it again.
+    expect(latest, findsNothing);
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
     await u.reboot();
     await t.pump();

@@ -546,10 +546,10 @@ void main() {
     testWidgets('a newer app, and no node linked', (t) async {
       final a = await settings(t, app: 3);
       expect(
-        find.text('App 5 is out: tap App below; no node linked'),
+        find.text('App 5 is out: install it below; no node linked'),
         findsOneWidget,
       );
-      expect(find.textContaining('5 is out. Tap to install'), findsOneWidget);
+      expect(find.text('Version 3; 5 is out'), findsOneWidget);
       await shut(t, a);
     });
 
@@ -583,10 +583,12 @@ void main() {
     testWidgets('an app fix: a newer app, the firmware up to date', (t) async {
       final a = await settings(t, app: 21, image: 21, release: appFix);
       expect(
-        find.text('App 22 is out: tap App below; node firmware 21, up to date'),
+        find.text(
+          'App 22 is out: install it below; node firmware 21, up to date',
+        ),
         findsOneWidget,
       );
-      expect(find.textContaining('22 is out. Tap to install'), findsOneWidget);
+      expect(find.text('Version 21; 22 is out'), findsOneWidget);
       expect(find.text('Send to the node'), findsNothing);
       await shut(t, a);
     });
