@@ -484,8 +484,11 @@ class _MapScreenState extends State<MapScreen> {
               userAgentPackageName: 'org.bark.bark_app',
               maxNativeZoom: osmMaxZoom,
               tileProvider: _tiles,
-              errorTileCallback: (_, _, _) {
-                if (!_noTiles && mounted) setState(() => _noTiles = true);
+              errorTileCallback: (_, error, _) {
+                if (_noTiles || !mounted) return;
+                // Once a screen: why, for whoever reads the log.
+                _s.note('Map: no tile: $error');
+                setState(() => _noTiles = true);
               },
             ),
             if (own != null)
