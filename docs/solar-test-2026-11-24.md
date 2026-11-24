@@ -4,6 +4,14 @@ A relay on the roof, fed over USB by a solar unit with its own battery, ran on i
 internal cell all night and never saw USB power. This plan finds out why, and whether the
 unit can carry a relay through winter.
 
+## The unit
+
+A 9 W, 5 V panel with a battery built in behind it, sold for charging battery cameras
+(seller's page, read 2026-11-24): rated 15 600 mAh, which is about 58 Wh at a lithium
+cell's 3.7 V if the rating holds; one cable out, ending in micro-USB, USB-C and a barrel
+plug; IP66. The panel is wired to the battery inside, so its yield cannot be metered
+alone: only what comes out of the cable can.
+
 ## What we want to know
 
 1. Does the unit keep its USB output on with only a T-Echo as load?
@@ -32,8 +40,8 @@ Each step says what to do, what to write down, and what decides the next step.
 
 ### 0. Prepare
 
-Dry the unit. Charge its battery full. Note its rated capacity in Wh or mAh. Charge the
-T-Echo's cell full from a wall charger.
+Dry the unit. Charge its battery full. Charge the T-Echo's cell full from a wall
+charger.
 
 ### 1. Does the output stay on? (1 hour, no meter)
 
@@ -79,12 +87,15 @@ winter leaves.
 
 ### 6. Panel yield (3 days or more)
 
-Charge the unit full, then run it outdoors under open sky, where the roof's light is; a
-window understates it. If the panel plugs into the unit by USB, put the meter there
-instead and read it each day. Otherwise note each day whether the unit's level rose or
-fell.
+Run the unit down until USB power stops (as step 4 ends), then put it outdoors under
+open sky, where the roof's light is; a window understates it. Leave the T-Echo
+unplugged for three days, so that everything the panel gives is stored. Then plug the
+T-Echo in with the meter, indoors, panel covered, and run to USB off again: the meter's
+total is three days' yield. An empty start matters: a full battery takes no more, and the
+yield would read as zero.
 
-Write down: per day, the weather in a word and the yield, or up or down.
+Write down: the weather of each day in a word, and the total. Yield per day = the total
+÷ 3, to set against the draw of step 3.
 
 ## Results
 
