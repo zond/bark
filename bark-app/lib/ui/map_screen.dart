@@ -459,7 +459,15 @@ class _MapScreenState extends State<MapScreen> {
     final drawn =
         own ?? you ?? (st != null && st.placed ? _at(st.address) : null);
     final anchor = t.list.where((n) => n.anchor).firstOrNull;
-    final points = [?drawn, ?you, for (final m in t.list) _at(m.position)];
+    // A neighbour with no place is no point of the map: it is drawn with
+    // this node, which hears it, and has no line.
+    final unplaced = t.list.where((m) => !_placed(m.position)).length;
+    final points = [
+      ?drawn,
+      ?you,
+      for (final m in t.list)
+        if (_placed(m.position)) _at(m.position),
+    ];
     if (points.isEmpty) {
       return _say(tr.mapNothing);
     }
@@ -494,7 +502,7 @@ class _MapScreenState extends State<MapScreen> {
             if (own != null)
               PolylineLayer(
                 polylines: [
-                  for (final m in t.list)
+                  for (final m in t.list.where((m) => _placed(m.position)))
                     Polyline(
                       points: [own, _at(m.position)],
                       color: qualityColor(m.quality(t.floorDbm)),
@@ -506,7 +514,10 @@ class _MapScreenState extends State<MapScreen> {
                     ),
                 ],
               ),
-            if (own == null && you != null && anchor != null)
+            if (own == null &&
+                you != null &&
+                anchor != null &&
+                _placed(anchor.position))
               PolylineLayer(
                 polylines: [
                   Polyline(
@@ -559,6 +570,8 @@ class _MapScreenState extends State<MapScreen> {
                 _banner(
                   you == null ? tr.mapNoPlaceNoLines : tr.mapNoPlaceAtYou,
                 ),
+              if (unplaced > 0 && drawn != null)
+                _banner(tr.mapNeighboursNoPlace(unplaced)),
               if (_noTiles) _banner(tr.mapNoTiles),
               if (_error case final e?) _banner(tr.mapLastReadFailed(said(e))),
               _legend(t),
@@ -578,7 +591,7 @@ class _MapScreenState extends State<MapScreen> {
       final said = _s.answers[hex(m.id)];
       final look = _NeighbourMarker(m, t, own, said);
       return _Spot(
-        _at(m.position),
+        _placed(m.position) ? _at(m.position) : own!,
         width: said == null
             ? _NeighbourMarker.size
             : _NeighbourMarker.labelledWidth,
@@ -619,10 +632,11 @@ class _MapScreenState extends State<MapScreen> {
             _NodeMarker(widget.app, t).facts(),
           ),
         ),
+      // One with no place is drawn with this node, if that is drawn.
       for (final m in t.list)
-        if (!m.sleepy) neighbour(m),
+        if (!m.sleepy && (own != null || _placed(m.position))) neighbour(m),
       for (final m in t.list)
-        if (m.sleepy) neighbour(m),
+        if (m.sleepy && (own != null || _placed(m.position))) neighbour(m),
     ];
   }
 
@@ -943,7 +957,7 @@ class _NeighbourMarker {
   /// cannot say.
   List<Fact> facts() {
     final q = n.quality(t.floorDbm);
-    final far = own == null
+    final far = own == null || !_placed(n.position)
         ? null
         : const Distance().as(LengthUnit.Meter, own!, _at(n.position));
     final s = said;

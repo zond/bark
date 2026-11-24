@@ -1469,6 +1469,17 @@ class AppLocalizationsEn extends AppLocalizations {
       'The node has no place of its own: it is drawn where you are.';
 
   @override
+  String mapNeighboursNoPlace(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count neighbours have no place: they are drawn at this node',
+      one: '$count neighbour has no place: it is drawn at this node',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get mapNoTiles =>
       'No street map here: the phone has no internet and has not kept this area from before. The nodes and links are drawn on a blank background.';
 

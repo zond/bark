@@ -2379,6 +2379,12 @@ abstract class AppLocalizations {
   /// **'The node has no place of its own: it is drawn where you are.'**
   String get mapNoPlaceAtYou;
 
+  /// No description provided for @mapNeighboursNoPlace.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{{count} neighbour has no place: it is drawn at this node} other{{count} neighbours have no place: they are drawn at this node}}'**
+  String mapNeighboursNoPlace(int count);
+
   /// No description provided for @mapNoTiles.
   ///
   /// In en, this message translates to:

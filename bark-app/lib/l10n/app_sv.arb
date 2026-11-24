@@ -403,6 +403,7 @@
   "mapAttribution": "© OpenStreetMap-bidragsgivare",
   "mapNoPlaceNoLines": "Noden har ingen egen plats: dess grannar visas utan linjer till den.",
   "mapNoPlaceAtYou": "Noden har ingen egen plats: den visas där du är.",
+  "mapNeighboursNoPlace": "{count, plural, one{{count} granne har ingen plats: den ritas vid den här noden} other{{count} grannar har ingen plats: de ritas vid den här noden}}",
   "mapNoTiles": "Ingen karta här: telefonen har inget internet och har inte sparat det här området sedan tidigare. Noderna och länkarna visas på en tom bakgrund.",
   "mapLastReadFailed": "Den senaste läsningen misslyckades: {error}",
   "mapKindSleepy": "sömnig",

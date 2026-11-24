@@ -1067,6 +1067,10 @@
   },
   "mapNoPlaceNoLines": "The node has no place of its own: its neighbours are drawn without lines to it.",
   "mapNoPlaceAtYou": "The node has no place of its own: it is drawn where you are.",
+  "mapNeighboursNoPlace": "{count, plural, one{{count} neighbour has no place: it is drawn at this node} other{{count} neighbours have no place: they are drawn at this node}}",
+  "@mapNeighboursNoPlace": {
+    "placeholders": {"count": {"type": "int"}}
+  },
   "mapNoTiles": "No street map here: the phone has no internet and has not kept this area from before. The nodes and links are drawn on a blank background.",
   "mapLastReadFailed": "The last read failed: {error}",
   "@mapLastReadFailed": {

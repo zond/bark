@@ -1494,6 +1494,19 @@ class AppLocalizationsUk extends AppLocalizations {
       'Вузол не має власного місця: його показано там, де ви.';
 
   @override
+  String mapNeighboursNoPlace(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count сусіда не мають місця: їх показано біля цього вузла',
+      many: '$count сусідів не мають місця: їх показано біля цього вузла',
+      few: '$count сусіди не мають місця: їх показано біля цього вузла',
+      one: '$count сусід не має місця: його показано біля цього вузла',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get mapNoTiles =>
       'Карти тут немає: телефон не має інтернету й раніше не зберіг цю місцевість. Вузли та зв\'язки показано на порожньому тлі.';
 

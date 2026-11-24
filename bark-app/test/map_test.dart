@@ -708,6 +708,54 @@ void main() {
     debugPrint = print;
   });
 
+  testWidgets('a neighbour with no place is drawn with this node, without a '
+      'line, and the map stays where the placed nodes are', (t) async {
+    final print = debugPrint;
+    debugPrint = (_, {wrapWidth}) {};
+    final app = await openMap(t);
+    final fake = app.fakeNode!;
+    final a = fake.neighbours[0]!;
+    final lines = t
+        .widgetList<PolylineLayer>(find.byType(PolylineLayer))
+        .first
+        .polylines
+        .length;
+    fake.neighbours[0] = Neighbour(
+      a.id,
+      Position(0, 0),
+      rssiDdbm: a.rssiDdbm,
+      ageS: a.ageS,
+    );
+    fake.changed();
+    await t.pump(FakeNode.answerAfter);
+    await t.pumpAndSettle();
+    expect(
+      find.text('1 neighbour has no place: it is drawn at this node'),
+      findsOneWidget,
+    );
+    final drawn = t
+        .widgetList<PolylineLayer>(find.byType(PolylineLayer))
+        .first
+        .polylines;
+    expect(drawn, hasLength(lines - 1));
+    // No line and no marker out where a zero position would be.
+    for (final l in drawn) {
+      for (final p in l.points) {
+        expect(p.latitude.abs() + p.longitude.abs(), greaterThan(1));
+      }
+    }
+    for (final m in t.widgetList<MarkerLayer>(find.byType(MarkerLayer))) {
+      for (final k in m.markers) {
+        expect(
+          k.point.latitude.abs() + k.point.longitude.abs(),
+          greaterThan(1),
+        );
+      }
+    }
+    await shut(t, app);
+    debugPrint = print;
+  });
+
   test('places: markers whose tap targets overlap share one', () {
     const s = 48.0;
     for (final (at, want) in [

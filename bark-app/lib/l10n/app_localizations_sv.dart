@@ -1489,6 +1489,17 @@ class AppLocalizationsSv extends AppLocalizations {
       'Noden har ingen egen plats: den visas där du är.';
 
   @override
+  String mapNeighboursNoPlace(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count grannar har ingen plats: de ritas vid den här noden',
+      one: '$count granne har ingen plats: den ritas vid den här noden',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get mapNoTiles =>
       'Ingen karta här: telefonen har inget internet och har inte sparat det här området sedan tidigare. Noderna och länkarna visas på en tom bakgrund.';
 
@@ -2934,7 +2945,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String releaseAppOut(int version) {
-    return 'App $version finns nu: installera den nedan';
+    return 'Appversion $version finns nu: installera den nedan';
   }
 
   @override

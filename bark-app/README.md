@@ -503,7 +503,8 @@ in the instrumental in Ukrainian ("вузол відхилив", not "відхи
   location permissions it had; no background location. Tiles come from the network and are
   kept on the phone for a year, so an area seen once draws again
   without internet; without either, the markers and lines are drawn on
-  a blank background and a line says why.
+  a blank background and a line says why. A neighbour with no place
+  is drawn with this node, without a line, and a line says how many.
 - **Debug**, at the bottom of Settings. Your identity, card address, home node and
   mailbox state; Node, what Home reads, every Status field, its GPS signal among them, the last
   Given back value with why, each sent and received message's kind, `sent`, ID
