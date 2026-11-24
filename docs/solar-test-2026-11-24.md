@@ -101,7 +101,7 @@ Write down: the weather of each day in a word, and the total. Yield per day = th
 
 | Step | Date | Result |
 |---|---|---|
-| 1. Output stays on | | |
+| 1. Output stays on | 2026-11-24 | Yes: `usb` in 13 of 15 asks over 68 minutes, 12:54 to 14:02, no meter. Two asks in a row (13:08, 13:13) got no answer; none showed battery. |
 | 2. Meter reads | | |
 | 3. Draw over 24 h | | |
 | 4. Warm: hours, total | | |
