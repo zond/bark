@@ -102,7 +102,7 @@ Write down: the weather of each day in a word, and the total. Yield per day = th
 | Step | Date | Result |
 |---|---|---|
 | 1. Output stays on | 2026-11-24 | Yes: `usb` in 13 of 15 asks over 68 minutes, 12:54 to 14:02, no meter. Two asks in a row (13:08, 13:13) got no answer; none showed battery. |
-| 2. Meter reads | | |
+| 2. Meter reads | 2026-11-25 | Yes, at 5.13 V. The node's place from GPS, so its GPS running: 136 mA at first, falling as the cell's charger finished, then steady at 66 mA. Its place set as a map point, so its GPS at rest: 28 mA. |
 | 3. Draw over 24 h | | |
 | 4. Warm: hours, total | | |
 | 5. Cold: hours, total | | |
