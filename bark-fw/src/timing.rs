@@ -129,10 +129,13 @@ impl core::fmt::Display for Span {
 // The tasks.
 
 /// A task's longest poll since the minute's line, less the interrupts in
-/// it, in cycles, and the place in it that took longest ([`at`]).
+/// it, in cycles, and the place in it that took longest ([`at`]); and how
+/// many times it was polled since, which tells a task that is woken
+/// without end.
 pub struct Longest {
     name: &'static str,
     longest: Mutex<ThreadModeRawMutex, Cell<(u32, &'static str)>>,
+    polls: AtomicU32,
 }
 
 impl Longest {
@@ -140,6 +143,7 @@ impl Longest {
         Longest {
             name,
             longest: Mutex::new(Cell::new((0, "-"))),
+            polls: AtomicU32::new(0),
         }
     }
 }
@@ -269,6 +273,7 @@ impl<F: Future> Future for Timed<F> {
             g.close();
             (own_since(g.began), g.longest.1)
         });
+        task.polls.fetch_add(1, Relaxed);
         task.longest.lock(|l| {
             if own > l.get().0 {
                 l.set((own, place));
@@ -339,16 +344,17 @@ impl core::fmt::Display for Beside {
 static MINUTE_FROM: AtomicU32 = AtomicU32::new(0);
 
 /// Once a minute, with the busy estimates: each task's longest poll since
-/// the last, less the interrupts in it, and where; the interrupts' time
-/// and their longest span.
+/// the last, less the interrupts in it, and where, and its polls; the
+/// interrupts' time and their longest span.
 pub fn log_minute() {
     for task in TASKS {
         let (longest, at) = task.longest.lock(|l| l.replace((0, "-")));
         log::info!(
-            "bench: longest poll task={} us={} at={}",
+            "bench: longest poll task={} us={} at={} polls={}",
             task.name,
             us(longest),
-            at
+            at,
+            task.polls.swap(0, Relaxed)
         );
     }
     let total = IN_INTERRUPTS.load(Relaxed);

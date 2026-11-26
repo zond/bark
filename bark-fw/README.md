@@ -1801,8 +1801,9 @@ the interrupts' time and the longest of them.
 Once a minute `bench: busy home=<k> tenths=[…] floor_dbm=[…]` gives each
 channel's busy estimate in tenths of a percent and its noise floor (spec
 "Busy estimate"), followed by `bench: longest poll task=<task> us=<n>
-at=<place>` for each task but the radio's, its longest poll since the
-last line less the interrupts in it, and `bench: interrupts us=<n>
+at=<place> polls=<n>` for each task but the radio's, its longest poll
+since the last line less the interrupts in it and how many times it was
+polled since, and `bench: interrupts us=<n>
 longest=<interrupt>:<us>`, the time in interrupts since the last line and
 the longest. The tasks are `update`, `phone` (the phone link's host),
 `link` (its links' slots), `gps`, `screen`, `store`, `mailbox`, `log`,

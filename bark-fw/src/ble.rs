@@ -637,9 +637,22 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
 
 /// The node's answer to the request: taken, or not.
 static ANSWER: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+/// A turn that every link's slot may wait for at once. An embassy-sync
+/// `Mutex` keeps one waker, so two tasks waiting on it wake each other
+/// until it is free, and the processor does not sleep
+/// (`WakerRegistration::register`); this keeps a waker for each slot.
+type Queue = embassy_sync::semaphore::FairSemaphore<CriticalSectionRawMutex, LINKS>;
+
+/// Wait for `turn`; it is given back when the value is dropped.
+async fn turn(turn: &'static Queue) -> impl Drop {
+    use embassy_sync::semaphore::Semaphore as _;
+    turn.acquire(1).await.expect("a place for each slot")
+}
+
 /// One request at a time goes to the node, from whichever link.
-static ASKING: embassy_sync::mutex::Mutex<CriticalSectionRawMutex, ()> =
-    embassy_sync::mutex::Mutex::new(());
+static ASKING: Queue = Queue::new(1);
+/// One slot at a time waits for the advertising ([`Advertising`]).
+static ADVERTISING: Queue = Queue::new(1);
 /// Raised for each link when its phone is to be notified: the status or a
 /// message given back.
 static NOTIFY: [Signal<CriticalSectionRawMutex, Notify>; LINKS] = [const { Signal::new() }; LINKS];
@@ -905,7 +918,7 @@ const ANSWER_WAIT: embassy_time::Duration = embassy_time::Duration::from_secs(15
 /// Hand `request` from `from` to the node and wait for its answer, after
 /// any other link's.
 async fn ask(from: From, request: Request) -> bool {
-    let _one = ASKING.lock().await;
+    let _one = turn(&ASKING).await;
     ANSWER.reset();
     LINK.lock(|l| l.borrow_mut().request = Some((from, request)));
     crate::node::WAKE.link_asks();
@@ -1019,7 +1032,8 @@ pub struct Staging {
     header: [u8; bark_link::update::HEADER_LEN],
 }
 
-/// The advertising, which one slot does at a time.
+/// The advertising, which one slot does at a time. Only the slot whose
+/// turn it is ([`ADVERTISING`]) waits here.
 type Advertising = embassy_sync::mutex::Mutex<
     NoopRawMutex,
     Peripheral<'static, SoftdeviceController<'static>, DefaultPacketPool>,
@@ -1163,6 +1177,7 @@ async fn serve(
 ) {
     loop {
         let conn = {
+            let _turn = turn(&ADVERTISING).await;
             let mut p = advertising.lock().await;
             loop {
                 let public = public();

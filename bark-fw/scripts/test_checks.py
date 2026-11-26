@@ -182,6 +182,25 @@ class Stack(unittest.TestCase):
         self.assertEqual(len(checks.stack(log, room=63384)), 1)
 
 
+class Polls(unittest.TestCase):
+    def line(self, task: str, polls: int) -> str:
+        return f"bench: longest poll task={task} us=457 at=- polls={polls}"
+
+    def test_a_task_woken_without_end(self):
+        log = board_log("x", [(1060.0, 60.0, self.line("link", 4_560_000)), (1120.0, 120.0, self.line("link", 4_590_000))])
+        (f,) = checks.polls(log)
+        self.assertIn("task link", f.what)
+
+    def test_tasks_polled_as_events_ask(self):
+        limit = checks.POLLS_A_SECOND * checks.POLLS_LINE_S
+        log = board_log("x", [(1060.0, 60.0, self.line("usb", 4380)), (1060.0, 60.0, self.line("log", limit))])
+        self.assertEqual(checks.polls(log), [])
+
+    def test_a_line_without_the_count_is_passed_over(self):
+        log = board_log("x", [(1060.0, 60.0, "bench: longest poll task=link us=457 at=-")])
+        self.assertEqual(checks.polls(log), [])
+
+
 class Heartbeats(unittest.TestCase):
     def two(self, tx: str | None, offset: float) -> list[checks.Log]:
         """A skips at 1025 s on the host's clock, its uptime 25 s; B, up

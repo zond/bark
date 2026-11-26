@@ -609,6 +609,32 @@ def rate_lines(logs: list[Log], labels: dict[str, str] | None = None) -> list[st
     return out
 
 
+POLLS = re.compile(r"^bench: longest poll task=(\w+) .* polls=(\d+)$")
+
+# A task's polls in a second, at most: a choice. Each poll follows an
+# event, an interrupt or a timer. The busiest task seen, the USB's while
+# the log went out, was polled 73 times a second, and two tasks that woke
+# each other without end 76 000 (2026-11-26): this lies well between.
+POLLS_A_SECOND = 1000
+# The line comes once a minute (bark-fw/README.md, "Bench build").
+POLLS_LINE_S = 60
+
+
+def polls(log: Log) -> list[Finding]:
+    """A task polled without end, which keeps the processor from
+    sleeping: more polls in a minute's line than events can ask for.
+    Once for each task of a boot, at its first such line."""
+    out = []
+    for boot in log.boots:
+        seen = set()
+        for x in boot.lines:
+            m = POLLS.match(x.text)
+            if m and m.group(1) not in seen and int(m.group(2)) > POLLS_A_SECOND * POLLS_LINE_S:
+                seen.add(m.group(1))
+                out.append(Finding("polls", FAIL, log.name, f"task {m.group(1)} polled {m.group(2)} times in a minute", x.n))
+    return out
+
+
 def standing(
     logs: list[Log],
     asked: dict[str, list[float]] | None = None,
@@ -625,6 +651,7 @@ def standing(
         out += resets(log, None if asked is None else asked.get(log.name, []))
         out += radio(log)
         out += stack(log, (rooms or {}).get(log.name))
+        out += polls(log)
         out += gaps(log, end, log.name in silent_at_end)
         out += anchor(log)
     out += heartbeats(logs)

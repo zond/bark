@@ -46,6 +46,9 @@ and any one fails the run:
   unless each of the board's checks before it read the channel: that is
   noise the board measured;
 - the stack's free room below its margin (`core-interface.md`, Memory);
+- a task polled more than 1000 times a second over a minute: two tasks
+  that wake each other without end keep the processor from sleeping, and
+  nothing else shows it (found 2026-11-26, at 76 000 a second);
 - a gap in a board's log longer than its status line's period;
 - a sleepy node that hears fewer of the anchor heartbeats it wakes for
   than a node that loses one in ten would hear, but for one run in a
