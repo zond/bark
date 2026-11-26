@@ -47,6 +47,24 @@ pub const SEARCH_LIMIT: Duration = COLD_START.mul(2);
 /// [`SLEEPY_CURRENT_UA`]; 8.6 h is the least, rounded up to the hour.
 pub const BACKOFF: Duration = Duration::from_secs(9 * 3600);
 
+/// How long a relay on external power stands still, fixed at a place it
+/// took, before its GPS rests: a day, the owner's choice (roadmap D250).
+/// Running, the GPS draws 38 mA, a node on USB 54 mA against 16 mA with
+/// it at rest (`docs/solar-test-2026-11-24.md`): more than a small solar
+/// unit gives back in winter.
+pub const STILL_REST: Duration = Duration::from_secs(24 * 3600);
+
+/// How often a still relay's resting GPS searches: every half hour in its
+/// second still day, every hour after [`STILL_SLOWER`], the owner's
+/// choices. At the measured 38 mA a search of [`SEARCH_LIMIT`], its worst
+/// case, adds 1.3 and 0.6 mA.
+pub const STILL_SEARCH_EVERY: [Duration; 2] =
+    [Duration::from_secs(30 * 60), Duration::from_secs(3600)];
+
+/// When a still relay's searches slow to the second of
+/// [`STILL_SEARCH_EVERY`]: after two still days.
+pub const STILL_SLOWER: Duration = STILL_REST.mul(2);
+
 /// A sleepy node's mean current with an anchor, µA, as measured in the
 /// simulator (spec "Delivery").
 pub const SLEEPY_CURRENT_UA: u64 = 560;
@@ -63,5 +81,18 @@ mod tests {
         // 8.6 h is the least that keeps it.
         let least_s = search_uas as f64 / (SLEEPY_CURRENT_UA as f64 / 10.0);
         assert!((least_s / 3600.0 - 8.6).abs() < 0.05, "{least_s}");
+    }
+
+    /// A still relay's searches at their worst, each run to its limit at
+    /// the GPS's 38 mA on USB (`docs/solar-test-2026-11-24.md`), cost 1.3
+    /// and 0.6 mA.
+    #[test]
+    fn a_still_relay_s_searches_cost_little() {
+        const MEASURED_UA: f64 = 38_000.0;
+        let search_s = SEARCH_LIMIT.as_micros() as f64 / 1e6;
+        let ma = STILL_SEARCH_EVERY
+            .map(|every| MEASURED_UA * search_s / (every.as_micros() as f64 / 1e6) / 1e3);
+        assert!((ma[0] - 1.27).abs() < 0.005, "{ma:?}");
+        assert!((ma[1] - 0.63).abs() < 0.005, "{ma:?}");
     }
 }

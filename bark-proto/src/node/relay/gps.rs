@@ -1,11 +1,15 @@
 //! When a node runs its GPS (spec "Position", "Beats"): a sleepy node's
 //! searches ([`Action::Locate`]), and a relay's GPS that runs or rests and,
-//! resting, watches its neighbours' heartbeats for a sign that it moved.
+//! resting, watches its neighbours' heartbeats for a sign that it moved;
+//! a relay that has stood still for a day rests it and searches now and
+//! then.
 
 use super::{Node, Stage};
 use crate::event::{Action, Trace};
 use crate::geo::LocalPlane;
-use crate::gps::{BACKOFF, HEARING_RADIUS_M, SEARCH_LIMIT};
+use crate::gps::{
+    BACKOFF, HEARING_RADIUS_M, SEARCH_LIMIT, STILL_REST, STILL_SEARCH_EVERY, STILL_SLOWER,
+};
 use crate::node::Config;
 use crate::position::Position;
 use crate::radio::FADE_DEPTH_DB;
@@ -22,6 +26,40 @@ const SURPRISE_SIGMAS: f32 = 2.0;
 /// deep fade are not heard, so a still relay's surprises vary less, and the
 /// test errs towards silence.
 const SURPRISE_VAR_DB2: f32 = FADE_DEPTH_DB * FADE_DEPTH_DB * 4.0 / 3.0;
+
+const fn minutes(d: Duration) -> u32 {
+    (d.as_micros() / 60_000_000) as u32
+}
+
+const REST_MIN: u32 = minutes(STILL_REST);
+const SLOWER_MIN: u32 = minutes(STILL_SLOWER);
+const EVERY_MIN: [u32; 2] = [
+    minutes(STILL_SEARCH_EVERY[0]),
+    minutes(STILL_SEARCH_EVERY[1]),
+];
+// The searches fall on whole multiples of their interval.
+const _: () =
+    assert!(REST_MIN.is_multiple_of(EVERY_MIN[0]) && SLOWER_MIN.is_multiple_of(EVERY_MIN[1]));
+
+/// The still time, in minutes, at which a relay that has stood still `m`
+/// next rests its GPS or searches.
+fn still_mark(m: u32) -> u32 {
+    if m < REST_MIN {
+        return REST_MIN;
+    }
+    let every = EVERY_MIN[usize::from(m >= SLOWER_MIN)];
+    (m / every + 1) * every
+}
+
+/// `m` with whole intervals past [`SLOWER_MIN`] taken off, so that it
+/// fits its field and keeps its marks.
+fn fold(m: u32) -> u16 {
+    let m = match m.checked_sub(SLOWER_MIN) {
+        Some(past) => SLOWER_MIN + past % EVERY_MIN[1],
+        None => m,
+    };
+    m as u16
+}
 
 /// The point [`SURPRISE_SIGMAS`] above the mean of a chi-square of `k`
 /// degrees of freedom, by the Wilson–Hilferty approximation.
@@ -108,6 +146,10 @@ const FOLLOW: u8 = 2;
 
 /// It has been on battery longer than its grace: its GPS rests.
 const PAST_GRACE: u8 = 4;
+
+/// It has stood still to a mark of its searches: it searches, unless it
+/// is past its grace on battery.
+const STILL_DUE: u8 = 8;
 
 impl Watch {
     fn has(&self, flag: u8) -> bool {
@@ -210,18 +252,22 @@ pub(super) struct Situation {
     pub(super) anchorless: bool,
     /// Since when a relay has been on battery, or leaving.
     pub(super) unplugged: Option<Instant>,
+    /// The minutes a relay has stood still, folded ([`fold`]).
+    pub(super) still_min: u16,
 }
 
 impl Gps {
     /// Whether the driver is to run the GPS all the time now
-    /// (spec "Position", a relay's GPS); a sleepy node's runs only in the
-    /// searches it asks for.
+    /// (spec "Position", a relay's GPS): until the relay has stood still
+    /// a day, or is past its grace on battery; a sleepy node's runs only
+    /// in the searches it asks for.
     pub(super) fn tracks(&self, s: &Situation) -> bool {
         if s.sleepy || s.map_point {
             return false;
         }
         let w = self.watch_now();
-        let rests = s.unplugged.is_some() && w.has(PAST_GRACE);
+        let rests =
+            s.unplugged.is_some() && w.has(PAST_GRACE) || u32::from(s.still_min) >= REST_MIN;
         s.carried || w.has(FOLLOW) || !rests
     }
 
@@ -320,6 +366,11 @@ impl Gps {
         *self = Gps::DEFAULT;
     }
 
+    /// A relay's still time reached a mark of its searches.
+    fn still_due(&mut self) {
+        self.watch(|w| w.set(STILL_DUE, true));
+    }
+
     /// The node turned sleepy: a search under way runs on as a sleepy
     /// node's.
     pub(super) fn sleepy(&mut self) {
@@ -399,7 +450,11 @@ impl Gps {
             self.searches(|s| core::mem::take(&mut s.due)) && !held
         } else {
             let rests = !self.tracks(s) && !s.map_point;
-            self.watch(|w| w.take(DUE)) && rests
+            // On battery past its grace a relay searches only at boot and
+            // at a sign that it moved.
+            let past = s.unplugged.is_some() && self.watch_now().has(PAST_GRACE);
+            let due = self.watch(|w| w.take(DUE) | (w.take(STILL_DUE) && !past));
+            due && rests
         };
         if !due || self.until > 0 {
             return;
@@ -435,7 +490,49 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             anchored: self.anchored_sleepy(),
             anchorless: self.anchorless(),
             unplugged: self.unplugged(),
+            still_min: self.still_min,
         }
+    }
+
+    /// Count the time this relay has stood still up to `now`, by what the
+    /// node has been since it last counted (spec "Position", a relay's
+    /// GPS): a relay that stands at its place counts, a sleepy node pauses
+    /// the count, and anything else ends it. Counted at the start of each
+    /// event and at its end, so that each stretch is counted by what the
+    /// node was through it.
+    pub(super) fn count_still(&mut self, now: Instant) {
+        let t = mark(now);
+        if !self.motion.stands() {
+            self.still_min = 0;
+        } else if !self.sleepy() && self.still_counted > 0 {
+            let mins = (t - self.still_counted) / 60;
+            let was = u32::from(self.still_min);
+            let is = was + mins;
+            if is > REST_MIN && is >= still_mark(was.max(REST_MIN)) {
+                self.gps.still_due();
+            }
+            self.still_min = fold(is);
+            // The part of a minute left counts on.
+            self.still_counted += mins * 60;
+            return;
+        }
+        self.still_counted = t;
+    }
+
+    /// The node took a new place at `now`: it has stood still there for
+    /// no time.
+    pub(super) fn still_from(&mut self, now: Instant) {
+        self.still_min = 0;
+        self.still_counted = mark(now);
+    }
+
+    /// When a relay that stands still next rests its GPS or searches.
+    pub(super) fn still_wakeup(&self) -> Option<Instant> {
+        if !self.motion.stands() || self.sleepy() || self.still_counted == 0 {
+            return None;
+        }
+        let m = u32::from(self.still_min);
+        at(self.still_counted + (still_mark(m) - m) * 60)
     }
 
     /// Whether the driver is to run the GPS all the time now

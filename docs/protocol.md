@@ -348,19 +348,30 @@ A node whose position changes heartbeats the new one
 mail flushes its delivery queue ([delivery](#delivery)).
 
 **A relay's GPS.** Runs all the time on external power and for the grace
-after it is lost ([sleepy nodes](#sleepy-nodes)). After the grace, and
-whenever the position is a map point, it rests in standby (roadmap D81,
-D82). A resting relay searches as a sleepy node does ([beats](#beats)),
-with no back-off, at boot and when the radio says it may have moved: over
-each worst-case rotation it sums the squared **surprises** of the
-heartbeats of its fixed relay neighbours, each heartbeat's RSSI less that
-neighbour's averaged RSSI before it ([neighbour table](#neighbour-table)),
-and searches when the sum passes the point below. A search that finds a
-far fix keeps the GPS running until the node is carried or a fix is near
-again.
+after it is lost ([sleepy nodes](#sleepy-nodes)) until the relay has
+stood **still** a day; then it rests in standby and searches every half
+hour, and every hour once it has stood still two days (roadmap D250).
+After the grace, and whenever the position is a map point, it rests and
+searches at no set time (roadmap D81, D82). A relay's still time counts
+while it is a relay with a place, fixed, its position not a map point
+and not waiting for the fix that is its place; it waits while the node
+is sleepy, and starts again from none when the node is carried, its map
+point is set, or it takes a new place from a fix. It is kept across a
+reboot in whole hours ([implementation notes](#implementation-notes)).
+
+A resting relay, but at a map point, also searches as a sleepy node does ([beats](#beats)),
+with no back-off, at boot, when it turns relay, and when the radio says
+it may have moved: over each worst-case rotation it sums the squared
+**surprises** of the heartbeats of its fixed relay neighbours, each
+heartbeat's RSSI less that neighbour's averaged RSSI before it
+([neighbour table](#neighbour-table)), and searches when the sum passes
+the point below. A search that finds a far fix keeps the GPS running
+until the node is carried or a fix is near again.
 
 | | |
 |---|---|
+| still | a day, 24 h, the owner's choice: running, the GPS draws 38 mA of a node's 54 mA on USB (`docs/solar-test-2026-11-24.md`) |
+| searches while still | every 30 min in the second still day, every hour after it, the owner's choices: a search to its limit of 60 s at 38 mA adds at most 1.3 and 0.6 mA |
 | fading | σ = 4 dB ([relay choice](#relay-choice), roadmap D38) |
 | a surprise's variance | 4σ²/3, 21.3 dB² |
 | the sum | the squared surprises of a rotation, 195 s, each over 4σ²/3 |
@@ -2970,13 +2981,14 @@ comes back with ([channel at boot](#channel-at-boot)):
 | home channel | a relay keeps it and makes no choice at the end of its first rotation; a carried sleepy node keeps the one it had when last fixed |
 | the place a fixed node stands | its position after the reboot, and whether it is a map point ([position](#position)) |
 | carried flag | kept; still since the boot |
+| how long a relay has stood still | in whole hours, up to 48, past which its GPS changes no more; it counts on from there ([position](#position)) |
 | a fixed sleepy node's anchor, ID and position | taken at once ([relay choice](#relay-choice)) |
 | whether it is a relay | a fixed relay that boots on battery relays on, its grace counted from the boot ([sleepy nodes](#sleepy-nodes)) |
 | its battery readings' scale | from its last calibration ([sleepy nodes](#sleepy-nodes)) |
 | the drains it learned on battery | a relay's and a sleepy node's, each in steps of 2.2 % of its first, up to 16 times it either way ([sleepy nodes](#sleepy-nodes)); one write a sample at most |
 | record | 32 bytes with a checksum, appended to one of two 4 KiB pages of flash of 128 slots (`bark-fw/logic/src/store.rs`) |
 
-Not kept: any timer; a carried node's place; a carried sleepy node's
+Not kept: any other timer; a carried node's place; a carried sleepy node's
 anchor; the noise floor.
 
 The same pages keep the phone link's state, in entries of one record or

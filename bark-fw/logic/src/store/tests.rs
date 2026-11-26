@@ -214,6 +214,7 @@ fn stored(n: u32) -> Stored {
         relay: true,
         battery_scale: Some(n as u16),
         drain: None,
+        still_hours: 0,
     }
 }
 
