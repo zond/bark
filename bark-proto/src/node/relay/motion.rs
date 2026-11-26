@@ -138,6 +138,13 @@ impl Motion {
         self.placed
     }
 
+    /// Whether it stands fixed at a place it has taken, not at a map point
+    /// nor waiting for the fix that is its place: its still time counts
+    /// (`relay/gps.rs`).
+    pub(super) fn stands(&self) -> bool {
+        self.placed && !self.first_fix && !self.carried && !self.map_point
+    }
+
     /// Whether its last fix was far, or it is carried: it flushes what
     /// it holds for its sleepy nodes.
     pub(super) fn far(&self) -> bool {
@@ -363,6 +370,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         self.set_position(at);
         self.motion = Motion::fixed(at);
+        self.still_from(now);
         if had && moved && !self.sleepy() {
             self.changed();
         }

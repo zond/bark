@@ -1,12 +1,16 @@
-//! How a relay runs its GPS (spec "Beats"): all the time on
-//! external power and through its grace on battery; after that, and with a
-//! map point, it rests, searching at boot and when the heartbeats of its
-//! fixed relay neighbours change more than fading explains; a far fix
-//! keeps it on until it is carried.
+//! How a relay runs its GPS (spec "Position", a relay's GPS): all the time
+//! on external power and through its grace on battery until it has stood
+//! still a day, then resting and searching every half hour, every hour
+//! after two days; past the grace on battery, and with a map point, it
+//! rests; resting, it searches at boot and when the heartbeats of its fixed
+//! relay neighbours change more than fading explains; a far fix keeps it on
+//! until it is carried.
 
 mod common;
 
-use bark_proto::{AppCommand, BatteryLevels, Config, Duration, Instant, MsgId, Position, Relay};
+use bark_proto::{
+    AppCommand, BatteryLevels, Config, Duration, Instant, MsgId, Position, Relay, Stored,
+};
 use common::{secs, Harness};
 
 /// A position `east` metres from a point in Kyiv.
@@ -246,4 +250,286 @@ fn the_status_tells_the_signal_while_the_gps_runs() {
     );
     assert!(!h.nodes[0].core.gps_tracks());
     assert_eq!(cn0(&h), 0);
+}
+
+const HOUR: u64 = 3600;
+
+/// One relay on USB at `pos(0.0)`, alone, with `config`'s changes.
+fn alone(config: Config, seed: u64) -> Harness<Relay> {
+    let config = Config {
+        position: pos(0.0),
+        ..config
+    };
+    Harness::powered(vec![(Relay::new(config, seed), true)])
+}
+
+/// The searches node 0 started from `from` until now, in hours after it.
+fn searched_at(h: &Harness<Relay>, from: Instant) -> Vec<f64> {
+    h.nodes[0]
+        .located
+        .iter()
+        .filter(|(t, _)| *t >= from)
+        .map(|(t, _)| t.since(from).as_micros() as f64 / 3.6e9)
+        .collect()
+}
+
+/// `n` searches `every_min` apart, the first at `first_h`.
+fn every(first_h: f64, every_min: f64, n: usize) -> Vec<f64> {
+    (0..n)
+        .map(|k| first_h + k as f64 * every_min / 60.0)
+        .collect()
+}
+
+/// Whether two lists of hours agree to the minute.
+fn near(a: &[f64], b: &[f64]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1.0 / 60.0)
+}
+
+/// On USB a placed relay's GPS runs for its first still day, then rests
+/// and searches every half hour, and after two days every hour.
+#[test]
+fn after_a_still_day_it_rests_and_searches() {
+    let mut h = alone(Config::default(), 1);
+    h.run_until(at(24 * HOUR - 60), |_| false);
+    assert!(h.nodes[0].core.gps_tracks());
+    assert!(searched_at(&h, Instant::ZERO).is_empty());
+    h.run_until(at(24 * HOUR + 60), |_| false);
+    assert!(!h.nodes[0].core.gps_tracks());
+    h.run_until(at(51 * HOUR - 60), |_| false);
+    assert!(!h.nodes[0].core.gps_tracks());
+    let mut want = every(24.5, 30.0, 48);
+    want.extend(every(49.0, 60.0, 2));
+    let got = searched_at(&h, Instant::ZERO);
+    assert!(near(&got, &want), "{got:?}");
+}
+
+/// A relay with no place keeps its GPS running; its still day counts from
+/// the fix that is its place.
+#[test]
+fn the_day_counts_from_its_first_fix() {
+    let mut h = alone(
+        Config {
+            placed: false,
+            ..Config::default()
+        },
+        2,
+    );
+    h.run_until(at(30 * HOUR), |_| false);
+    assert!(h.nodes[0].core.gps_tracks());
+    h.command(0, AppCommand::Fix { position: pos(0.0) });
+    assert!(h.nodes[0].core.placed());
+    h.run_until(at(54 * HOUR - 60), |_| false);
+    assert!(h.nodes[0].core.gps_tracks());
+    h.run_until(at(54 * HOUR + 60), |_| false);
+    assert!(!h.nodes[0].core.gps_tracks());
+}
+
+/// A map point starts its still time over, from the fix that is its
+/// place once the point is cleared.
+#[test]
+fn a_map_point_starts_the_day_over() {
+    let mut h = alone(Config::default(), 3);
+    h.run_until(at(25 * HOUR), |_| false);
+    assert!(!h.nodes[0].core.gps_tracks());
+    h.command(0, AppCommand::SetPosition { position: pos(0.0) });
+    h.command(0, AppCommand::ClearMapPoint);
+    assert!(h.nodes[0].core.gps_tracks());
+    h.run_until(at(30 * HOUR), |_| false);
+    assert!(h.nodes[0].core.gps_tracks());
+    h.command(0, AppCommand::Fix { position: pos(5.0) });
+    h.run_until(at(54 * HOUR - 60), |_| false);
+    assert!(h.nodes[0].core.gps_tracks());
+    h.run_until(at(54 * HOUR + 60), |_| false);
+    assert!(!h.nodes[0].core.gps_tracks());
+}
+
+/// A far fix keeps the resting GPS on; carried, the relay's still time
+/// starts over once it is fixed again.
+#[test]
+fn carried_its_day_starts_over() {
+    let fixed_after = secs(600);
+    let mut h = alone(
+        Config {
+            fixed_after,
+            ..Config::default()
+        },
+        4,
+    );
+    h.run_until(at(25 * HOUR), |_| false);
+    assert!(!h.nodes[0].core.gps_tracks());
+    h.command(
+        0,
+        AppCommand::Fix {
+            position: pos(300.0),
+        },
+    );
+    assert!(h.nodes[0].core.gps_tracks());
+    for s in 1..=72 {
+        h.run_until(at(25 * HOUR + s), |_| false);
+        h.command(
+            0,
+            AppCommand::Fix {
+                position: pos(300.0 + s as f64),
+            },
+        );
+    }
+    assert!(h.nodes[0].core.carried() && h.nodes[0].core.gps_tracks());
+    let mut t = 25 * HOUR + 72;
+    while h.nodes[0].core.carried() {
+        t += 1;
+        h.run_until(at(t), |_| false);
+        h.command(
+            0,
+            AppCommand::Fix {
+                position: pos(400.0),
+            },
+        );
+    }
+    assert!(h.nodes[0].core.gps_tracks());
+    h.run_until(at(t + 24 * HOUR - 60), |_| false);
+    assert!(h.nodes[0].core.gps_tracks());
+    h.run_until(at(t + 24 * HOUR + 60), |_| false);
+    assert!(!h.nodes[0].core.gps_tracks());
+}
+
+/// On battery within its grace a still relay searches as on USB; past the
+/// grace it searches only as before, at boot and at a sign that it moved.
+#[test]
+fn past_its_grace_on_battery_it_keeps_the_battery_rule() {
+    let mut h = alone(
+        Config {
+            battery: Some(BatteryLevels::DESIGN),
+            grace: secs(2 * HOUR),
+            ..Config::default()
+        },
+        5,
+    );
+    h.run_until(at(30 * HOUR), |_| false);
+    h.command(0, AppCommand::Power { external: false });
+    h.command(
+        0,
+        AppCommand::Battery {
+            millivolts: BatteryLevels::DESIGN.high_mv + 100,
+        },
+    );
+    h.run_until(at(32 * HOUR - 60), |_| false);
+    assert!(!h.nodes[0].core.gps_tracks());
+    let within = searched_at(&h, at(30 * HOUR));
+    assert!(near(&within, &every(0.0, 30.0, 4)), "{within:?}");
+    h.run_until(at(40 * HOUR), |_| false);
+    assert!(!h.nodes[0].core.sleepy() && !h.nodes[0].core.gps_tracks());
+    assert_eq!(searched_at(&h, at(32 * HOUR)), Vec::<f64>::new());
+}
+
+/// Rebooted with `stored`, on USB.
+fn reboot(h: &mut Harness<Relay>, stored: Stored, seed: u64) {
+    let core = Relay::new(
+        Config {
+            position: pos(0.0),
+            stored: Some(stored),
+            ..Config::default()
+        },
+        seed,
+    );
+    h.reboot(0, core);
+}
+
+/// Its still time survives a restart in whole hours: at boot it rests and
+/// searches, and a near fix leaves the count running on.
+#[test]
+fn its_still_time_survives_a_restart() {
+    let mut h = alone(Config::default(), 6);
+    h.run_until(at(30 * HOUR + 1800), |_| false);
+    let stored = h.nodes[0].stored.expect("kept");
+    assert_eq!(stored.still_hours, 30);
+    let boot = h.now;
+    reboot(&mut h, stored, 7);
+    h.run_for(secs(1));
+    assert!(!h.nodes[0].core.gps_tracks());
+    assert_eq!(searched_at(&h, boot).len(), 1, "a search at boot");
+    h.command(
+        0,
+        AppCommand::Fix {
+            position: pos(10.0),
+        },
+    );
+    assert!(!h.nodes[0].core.gps_tracks());
+    // From 30 h of still time it searches at 30.5 h, and hourly past 48 h.
+    h.run_until(boot + secs(21 * HOUR - 60), |_| false);
+    let got = searched_at(&h, boot);
+    let mut want = vec![0.0];
+    want.extend(every(0.5, 30.0, 36));
+    want.extend(every(19.0, 60.0, 2));
+    assert!(near(&got, &want), "{got:?}");
+}
+
+/// A relay stored early in its day runs its GPS for what is left of it.
+#[test]
+fn a_restart_early_in_the_day_runs_the_rest_of_it() {
+    let mut h = alone(Config::default(), 8);
+    h.run_until(at(10 * HOUR + 1800), |_| false);
+    let stored = h.nodes[0].stored.expect("kept");
+    assert_eq!(stored.still_hours, 10);
+    let boot = h.now;
+    reboot(&mut h, stored, 9);
+    h.run_for(secs(1));
+    assert!(h.nodes[0].core.gps_tracks());
+    h.run_until(boot + secs(14 * HOUR - 60), |_| false);
+    assert!(h.nodes[0].core.gps_tracks());
+    h.run_until(boot + secs(14 * HOUR + 60), |_| false);
+    assert!(!h.nodes[0].core.gps_tracks());
+}
+
+/// A far first fix after a restart keeps the GPS on until a fix is near
+/// again.
+#[test]
+fn a_far_fix_after_a_restart_keeps_it_on() {
+    let mut h = alone(Config::default(), 10);
+    h.run_until(at(30 * HOUR), |_| false);
+    let stored = h.nodes[0].stored.expect("kept");
+    let boot = h.now;
+    reboot(&mut h, stored, 11);
+    h.run_for(secs(1));
+    assert!(!h.nodes[0].core.gps_tracks());
+    h.command(
+        0,
+        AppCommand::Fix {
+            position: pos(300.0),
+        },
+    );
+    assert!(h.nodes[0].core.gps_tracks());
+    h.run_until(boot + secs(30), |_| false);
+    h.command(
+        0,
+        AppCommand::Fix {
+            position: pos(20.0),
+        },
+    );
+    assert!(!h.nodes[0].core.gps_tracks());
+}
+
+/// Sleepy, a node's still time waits; turned relay again it rests its
+/// GPS at once, and searches for where it is now.
+#[test]
+fn a_sleepy_spell_pauses_its_still_time() {
+    let mut h = alone(
+        Config {
+            battery: Some(BatteryLevels::DESIGN),
+            ..Config::default()
+        },
+        12,
+    );
+    h.run_until(at(25 * HOUR), |_| false);
+    let before = h.nodes[0].stored.expect("kept").still_hours;
+    assert!(before >= 24);
+    h.command(0, AppCommand::ForceRole);
+    h.run_until(at(26 * HOUR), |h| h.nodes[0].core.sleepy());
+    assert!(h.nodes[0].core.sleepy());
+    h.run_until(at(40 * HOUR), |_| false);
+    let turned = h.now;
+    h.command(0, AppCommand::ForceRole);
+    assert!(!h.nodes[0].core.sleepy());
+    assert!(!h.nodes[0].core.gps_tracks());
+    assert_eq!(searched_at(&h, turned).len(), 1);
+    assert_eq!(h.nodes[0].stored.expect("kept").still_hours, before);
 }

@@ -1174,13 +1174,31 @@ impl Sim {
                 .ok_or_else(|| format!("home {}: no channel {}", h.node, h.channel))?;
             homes[resolve(&placed, &h.node)? as usize] = Some(c);
         }
+        let core_seed = |i: usize| stream_seed(sc.seed, Purpose::CoreSeed, i as u64);
+        let channels = Channel::all().count();
+        let stored: Vec<Option<Stored>> = (0..n)
+            .map(|i| {
+                let hours = sc.gps.relays_still_h.filter(|_| i < n_relays as usize)?;
+                Some(Stored {
+                    home: Channel::all().nth(core_seed(i) as usize % channels)?,
+                    place: positions[i],
+                    carried: false,
+                    map_point: false,
+                    anchor: None,
+                    relay: true,
+                    battery_scale: None,
+                    drain: None,
+                    still_hours: hours,
+                })
+            })
+            .collect();
         let config_for = |i: usize| Config {
             position: positions[i],
             node_id: ids[i],
             home_override: homes[i],
+            stored: stored[i],
             ..base
         };
-        let core_seed = |i: usize| stream_seed(sc.seed, Purpose::CoreSeed, i as u64);
         let relays: Vec<Relay> = (0..n)
             .map(|i| Relay::new(config_for(i), core_seed(i)))
             .collect();
@@ -1337,7 +1355,7 @@ impl Sim {
             handovers: Default::default(),
             boots: Boots::new(n),
             next_tx: vec![TxMark::None; n],
-            stored: vec![None; n],
+            stored,
             store_writes: vec![StoreCount::default(); n],
             boot_rng: Stream::new(sc.seed, Purpose::BootText, 0),
         };

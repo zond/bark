@@ -243,16 +243,18 @@ no neighbour, since the core cannot rebuild their positions.
 fix that passes its checks as `AppCommand::Fix`, then stop it; a later one moves the end,
 and one at or before `now` ends the search at once. A sleepy node asks while it has no
 anchor, and ends the search under way when it takes one (spec "Beats", roadmap D80, D91);
-a resting relay asks at boot and at its radio's sign of motion (spec "Position", roadmap
-D82).
+a resting relay asks at boot, when it turns relay and at its radio's sign of motion, and
+one that rests for its still time every half hour or hour (spec "Position", roadmap D82,
+D250).
 
 `gps_tracks()` says whether the GPS is to run all the time now: a relay's on external
-power, for a fixed relay's grace on battery, while it follows a far fix and while it is
-carried, never with a map point; a sleepy node's never, a carried node's on battery among
+power and for a fixed relay's grace on battery until it has stood still a day, while it
+follows a far fix and while it is carried, never with a map point; a sleepy node's never, a carried node's on battery among
 them. The driver reads it after every `handle` call, as
 it reads `next_wakeup`, runs the receiver while it holds and keeps it in standby when it
 does not, but for a search under way, and hands each fix as `AppCommand::Fix`. The end of
-a fixed relay's grace on battery is a wakeup of its own.
+a fixed relay's grace on battery is a wakeup of its own, as are the still day's end and
+each search after it.
 
 `AppCommand::Power` says whether external power, USB, is present. The driver sends it
 right after the boot wakeup and at every change, and may repeat it. On external power
@@ -412,7 +414,8 @@ or at once when it resumes a stored anchor.
 what it kept before (spec "Implementation notes"). The core emits it at boot and then only
 when the state changes: the home channel, but a carried sleepy node's, the place a fixed
 node stands, the carried flag, a fixed sleepy node's anchor, whether it is a relay, its
-battery readings' scale and the drains it learned. The driver hands the last one back in `Config::stored`
+battery readings' scale, the drains it learned, and the whole hours a relay has stood
+still, up to 48. The driver hands the last one back in `Config::stored`
 when it builds the core at the next boot; a fresh board has `None`. `Stored::record` lays
 it out as 32 bytes with a checksum, and `Stored::from_record` takes back only a whole
 record. The firmware appends records to one of two pages of flash (`bark-fw/src/store.rs`); the

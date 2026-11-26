@@ -298,6 +298,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.replane();
         self.gps.relay();
         self.fixed_here(now);
+        // Its GPS may rest by the time it stood still before it was sleepy;
+        // it searches all the same for the fix that tells where it is now.
+        if !self.gps_tracks() {
+            self.gps.due(false);
+        }
         self.unwatch();
         self.neighbours.pin(None);
         // Its slots at a random phase, as at boot, without the first

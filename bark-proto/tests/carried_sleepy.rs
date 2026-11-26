@@ -47,6 +47,7 @@ fn carried_node(east: f64, seed: u64) -> (Relay, bool) {
         relay: false,
         battery_scale: None,
         drain: None,
+        still_hours: 0,
     };
     let config = Config {
         position: pos(east),

@@ -255,6 +255,9 @@ pub struct RelayGpsSummary {
     /// Searches a relay that never walks started, per relay-hour of such
     /// relays: every one a search for nothing.
     pub still_searches_per_h: f64,
+    /// The receiver's mean current of the nodes placed as relays that
+    /// never walk and were relays all the time, mA, as `gps_ma`.
+    pub still_gps_ma: f64,
     /// The radio's mean current of the nodes that were relays all the
     /// time, mA, at the currents of `bark_proto::sniff`.
     pub radio_ma: f64,
@@ -616,21 +619,33 @@ impl Sim {
         if window == 0 || total == 0.0 {
             return None;
         }
-        let gps_ma = |b: usize| {
-            if relay_us[b] == 0.0 {
+        let ma = |on_us: f64, relay_us: f64| {
+            if relay_us == 0.0 {
                 return 0.0;
             }
-            let on = on_us[b] / relay_us[b];
+            let on = on_us / relay_us;
             (on * GPS_CURRENT_UA as f64 + (1.0 - on) * GPS_STANDBY_UA as f64) / 1e3
         };
+        let gps_ma = |b: usize| ma(on_us[b], relay_us[b]);
         let searches = sum(&|m| m.gps.relay_searches[0]);
         let found = sum(&|m| m.gps.relay_searches[1]);
         let walks = |i: usize| self.walks.as_ref().is_some_and(|w| w.walks(i as u32));
         let still = nodes.iter().enumerate().filter(|(i, _)| !walks(*i));
-        let (still_searches, still_us) = still.fold((0, 0), |(n, us), (_, m)| {
+        let (still_searches, still_us) = still.clone().fold((0, 0), |(n, us), (_, m)| {
             let g = &m.gps;
             (n + g.relay_searches[0], us + g.relay_us[0] + g.relay_us[1])
         });
+        let relays = self.relays() as usize;
+        let (fixed_us, fixed_on_us) = still
+            .filter(|&(i, _)| i < relays)
+            .map(|(_, m)| &m.gps)
+            .filter(|g| g.relay_us[0] + g.relay_us[1] == window)
+            .fold((0, 0), |(us, on), g| {
+                (
+                    us + g.relay_us[0] + g.relay_us[1],
+                    on + g.relay_on_us[0] + g.relay_on_us[1],
+                )
+            });
         let full: Vec<f64> = nodes
             .iter()
             .filter(|m| m.gps.relay_us[0] + m.gps.relay_us[1] == window)
@@ -645,6 +660,7 @@ impl Sim {
             searches_per_h: searches * 3.6e9 / total,
             found: found / searches.max(1.0),
             still_searches_per_h: still_searches as f64 * 3.6e9 / (still_us as f64).max(1.0),
+            still_gps_ma: ma(fixed_on_us as f64, fixed_us as f64),
             radio_ma: full.iter().sum::<f64>() / full.len().max(1) as f64,
         })
     }
@@ -950,13 +966,14 @@ impl Summary {
         if let Some(g) = &self.relay_gps {
             let _ = writeln!(
                 s,
-                "relays' GPS: on USB {:.3} mA over {:.0} relay-hours, on battery {:.3} mA over {:.1}; {:.3} searches a relay-hour ({:.3} by relays that do not walk), {:.1} % found a fix; relays' radio {:.3} mA",
+                "relays' GPS: on USB {:.3} mA over {:.0} relay-hours, on battery {:.3} mA over {:.1}; {:.3} searches a relay-hour ({:.3} by relays that do not walk; placed relays that stay relays and do not walk, GPS {:.3} mA), {:.1} % found a fix; relays' radio {:.3} mA",
                 g.gps_ma[0],
                 g.hours[0],
                 g.gps_ma[1],
                 g.hours[1],
                 g.searches_per_h,
                 g.still_searches_per_h,
+                g.still_gps_ma,
                 g.found * 100.0,
                 g.radio_ma
             );

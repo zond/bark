@@ -50,7 +50,7 @@ use crate::node::{Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
-use crate::store::Stored;
+use crate::store::{Stored, STILL_KEPT_H};
 use crate::tables::busy::BusyEstimator;
 use crate::tables::delivered::Delivered;
 use crate::tables::delivery::{DeliveryQueue, DELIVERY_QUEUE, INBOX};
@@ -222,6 +222,11 @@ pub type SleepyNode = Node<0, 0>;
 #[repr(C)]
 pub struct Node<const H: usize, const Q: usize> {
     stage: Stage,
+    /// The minutes this relay has stood still, up to `still_counted`, a
+    /// whole second as the GPS keeps its times (`relay/gps.rs`). Here, in
+    /// the bytes `stage` leaves before `mode`.
+    still_min: u16,
+    still_counted: u32,
     mode: Mode,
     battery: Battery,
     config: Config,
@@ -283,6 +288,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             plane: LocalPlane::ORIGIN,
             home: channel,
             stage: Stage::Off,
+            still_min: 0,
+            still_counted: 0,
             mode: Self::mode_at_boot(),
             battery: Battery::UNSET,
             radio: Radio::new(&config, channel, channel),
@@ -346,6 +353,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             rng: r,
             home: h,
             stage,
+            still_min,
+            still_counted,
             mode,
             battery,
             gps_signal,
@@ -368,6 +377,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *plane = LocalPlane::new(config.position);
         *h = home;
         *stage = Stage::Off;
+        // It counts on from what it had stood still, once it is a relay
+        // that stands at its place (`relay/gps.rs`).
+        *still_min = config
+            .stored
+            .filter(|s| !s.carried)
+            .map_or(0, |s| u16::from(s.still_hours) * 60);
+        *still_counted = 0;
         *mode = Self::mode_at_boot();
         *battery = Battery::at_boot(config.stored);
         *gps_signal = 0;
@@ -623,6 +639,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             relay: !self.sleepy() && self.config.battery.is_some(),
             battery_scale,
             drain,
+            still_hours: (self.still_min / 60).min(u16::from(STILL_KEPT_H)) as u8,
         }
     }
 
@@ -683,6 +700,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.radio.sweep.move_at(),
             self.power_wakeup(),
             self.gps.next_wakeup(&self.gps_situation(), &self.config),
+            self.still_wakeup(),
             self.delivery_wakeup(),
             self.own.app_ready_at,
             self.next_slot_edge(),
@@ -893,6 +911,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
         let emit: &mut dyn FnMut(Action) = &mut wake;
         // The floors fade by the clock, and this event reads them as of now.
         self.radio.age_noise(now);
+        self.count_still(now);
         if self.stage == Stage::Off {
             self.start(now, emit);
         }
@@ -973,6 +992,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             self.radio.back(now);
         }
         self.fire(now, emit);
+        self.count_still(now);
         self.schedule(now, emit);
         if away.get() {
             self.radio.went(now);

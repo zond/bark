@@ -37,13 +37,21 @@ pub struct Stored {
     /// The drains it learned on battery, a relay's and a sleepy node's,
     /// each as steps from its seed (`drain.rs`).
     pub drain: Option<[i8; 2]>,
+    /// The whole hours it has stood still as a relay, up to
+    /// [`STILL_KEPT_H`], after which its GPS does the same (`relay/gps.rs`).
+    pub still_hours: u8,
 }
+
+/// The most still hours kept: past two days a still relay's GPS changes
+/// no more (spec "Position", a relay's GPS).
+pub const STILL_KEPT_H: u8 = 48;
 
 /// Bytes in a [`Stored::record`].
 pub const RECORD_LEN: usize = 32;
 
 /// The layout's version: a record of another is not taken. A field added
-/// behind its own flag, in bytes older records leave zero, keeps it.
+/// in bytes older records leave zero, behind its own flag or with zero
+/// for none, keeps it.
 const VERSION: u8 = 1;
 
 const FLAG_CARRIED: u8 = 0x1;
@@ -62,8 +70,9 @@ const AT_ANCHOR_ID: usize = AT_PLACE + Position::WIRE_LEN;
 const AT_ANCHOR_POS: usize = AT_ANCHOR_ID + NodeId::LEN;
 const AT_SCALE: usize = AT_ANCHOR_POS + Position::WIRE_LEN;
 const AT_DRAIN: usize = AT_SCALE + 2;
+const AT_STILL: usize = AT_DRAIN + 2;
 const AT_CHECK: usize = RECORD_LEN - 4;
-const _: () = assert!(AT_DRAIN + 2 <= AT_CHECK);
+const _: () = assert!(AT_STILL < AT_CHECK);
 
 impl Stored {
     /// The fixed-size record, its last four bytes a checksum of the rest.
@@ -85,6 +94,8 @@ impl Stored {
         if let Some(drain) = self.drain {
             r[AT_DRAIN..AT_DRAIN + 2].copy_from_slice(&drain.map(|k| k as u8));
         }
+        // Zero, as an older record leaves it, is no still time.
+        r[AT_STILL] = self.still_hours.min(STILL_KEPT_H);
         r[AT_PLACE..AT_ANCHOR_ID].copy_from_slice(&self.place.encode());
         if let Some(a) = self.anchor {
             r[AT_ANCHOR_ID..AT_ANCHOR_POS].copy_from_slice(&a.id.0);
@@ -131,6 +142,7 @@ impl Stored {
             battery_scale: (flags & FLAG_SCALE != 0)
                 .then(|| u16::from_be_bytes([r[AT_SCALE], r[AT_SCALE + 1]])),
             drain: (flags & FLAG_DRAIN != 0).then(|| [r[AT_DRAIN] as i8, r[AT_DRAIN + 1] as i8]),
+            still_hours: r[AT_STILL].min(STILL_KEPT_H),
         })
     }
 }
@@ -152,6 +164,7 @@ mod tests {
             relay: false,
             battery_scale: None,
             drain: None,
+            still_hours: 0,
         }
     }
 
@@ -171,6 +184,7 @@ mod tests {
             relay: true,
             battery_scale: Some(32_100),
             drain: Some([-3, 127]),
+            still_hours: STILL_KEPT_H,
             ..s
         };
         assert_eq!(Stored::from_record(&bare.record()), Some(bare));

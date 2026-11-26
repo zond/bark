@@ -2161,6 +2161,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
                     relay: true,
                     battery_scale: None,
                     drain: None,
+                    still_hours: 0,
                 }),
                 ..Config::default()
             },
