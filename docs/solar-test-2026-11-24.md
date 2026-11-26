@@ -103,7 +103,30 @@ Write down: the weather of each day in a word, and the total. Yield per day = th
 |---|---|---|
 | 1. Output stays on | 2026-11-24 | Yes: `usb` in 13 of 15 asks over 68 minutes, 12:54 to 14:02, no meter. Two asks in a row (13:08, 13:13) got no answer; none showed battery. |
 | 2. Meter reads | 2026-11-25 | Yes, at 5.13 V. The node's place from GPS, so its GPS running: 136 mA at first, falling as the cell's charger finished, then steady at 66 mA. Its place set as a map point, so its GPS at rest: 28 mA. |
-| 3. Draw over 24 h | | |
+| 3. Draw over 24 h | 2026-11-26 | Not counted: the meter's counter reset itself overnight. The current was steady, so the table below stands in for it. |
 | 4. Warm: hours, total | | |
 | 5. Cold: hours, total | | |
 | 6. Yield per day | | |
+
+## What the node draws on USB
+
+Read on the inline meter at 5.1 V, 2026-11-25 and 26, each after the cell's charger had
+finished. The meter with nothing behind it reads 12 mA, taken off in the last columns.
+
+| Node | Meter | Node | Power | A day |
+|---|---|---|---|---|
+| Release 48, place from GPS, so its GPS running | 66 mA | 54 mA | 0.28 W | 6.6 Wh |
+| Release 48, place a map point, so its GPS at rest | 28 mA | 16 mA | 0.08 W | 2.0 Wh |
+| GPS at rest, and the processor asleep when idle | 22 mA | 10 mA | 0.05 W | 1.2 Wh |
+
+The last row is a test build. In release 48 the processor never sleeps: the tasks that
+wait for their turn to advertise to phones wake each other without end. The build gives
+them a queue, and the processor runs 0.8 % of the time instead of 99.9 %.
+
+A test build also stepped through three more changes, one at a time, with these results:
+the green LED dark, no change; the 32 MHz crystal released, no change; the chip's
+switching regulator on, 4 mA less while the processor never slept and no change once it
+did.
+
+At the rated 58 Wh, a full unit with no sun feeds the first row for about 9 days, the
+second for a month and the third for a month and a half.
