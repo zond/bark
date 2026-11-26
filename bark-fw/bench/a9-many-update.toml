@@ -1,0 +1,69 @@
+# A9, many at once and twice: four relays install the image a fifth holds,
+# and then, with no reset between, all five install a newer one that a
+# sixth brings.
+#
+# E is flashed holding its own image and serves it. F holds the run's
+# newest and is kept in its bootloader until the first round has had its
+# time; switched on, it serves an image to nodes that each installed one
+# over the mesh in this boot of their record. Every board's place is
+# built in, as a board new from its box has no fix indoors.
+
+about = "four relays install a fifth's image, then all five a sixth's, with no reset between"
+# Four relays had the first image after 3.6, 4.3, 6.8 and 7.7 h, and the
+# five the second after 4.1 to 10.6 h (2026-11-25): a node that missed a
+# block waited up to three hours for it. Ten hours for the first round,
+# twelve for the second.
+duration_s = 79200.0
+
+[[boards]]
+name = "A"
+place_m = 0.0
+
+[[boards]]
+name = "B"
+place_m = 0.0
+
+[[boards]]
+name = "C"
+place_m = 0.0
+
+[[boards]]
+name = "D"
+place_m = 0.0
+
+# After the four, so its version is higher.
+[[boards]]
+name = "E"
+place_m = 0.0
+serves = true
+
+# Last, so its version is the run's highest.
+[[boards]]
+name = "F"
+place_m = 0.0
+serves = true
+silent = true
+
+[[actions]]
+at_s = 36000.0
+board = "F"
+do = "on"
+name = "second"
+
+[[pass]]
+boards = ["A", "B", "C", "D"]
+line = '^update: version ${E.version} confirmed'
+within_s = 36000.0
+why = "the first image installed and confirmed before the second came"
+
+[[pass]]
+boards = ["A", "B", "C", "D", "E"]
+line = '^update: version ${F.version} confirmed'
+after = "second"
+why = "the second image installed and confirmed"
+
+[[pass]]
+boards = ["A", "B", "C", "D", "E"]
+line = '(image version |\bimage_version=)${F.version}\b'
+last_boot = true
+why = "running it at the end"

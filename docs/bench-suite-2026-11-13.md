@@ -94,6 +94,7 @@ Run before a release.
 | A6 | three sleepy nodes on one anchor | all three install, the last within an hour of the first | 10 h |
 | A7 | the phone | pairs, sends, receives, and updates the node it is paired with | 30 min |
 | A8 | forged update | two relays take the offer of a third whose image's header nobody signed, refuse it once blocks 0 and 1 are in, and never install it | 30 min |
+| A9 | many at once, and twice | four relays install a fifth's image at the same time; then a sixth is switched on with a newer one, and all five install it with no reset since their first. Six boards. Run 2026-11-25: every install done and confirmed, the first image in 3.6 to 7.7 h and the second in 4.1 to 10.6 h; a node that missed a block waited up to three hours for it | 22 h |
 
 ## Stress tests
 
