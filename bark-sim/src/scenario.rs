@@ -657,6 +657,11 @@ pub struct Gps {
     /// the open-sky level (Table 2 of its hardware design;
     /// `docs/gps-schedule-2026-10-25.md`).
     pub no_sky: f64,
+    /// Every relay boots as one restarted after standing still at its
+    /// place this many hours, from a stored record with a home drawn from
+    /// its core's seed (spec "Position", a relay's GPS; "Implementation
+    /// notes", stored state); none for a first boot.
+    pub relays_still_h: Option<u8>,
 }
 
 impl Default for Gps {
@@ -668,6 +673,7 @@ impl Default for Gps {
             error_m: 0.0,
             error_correlation_s: 0.0,
             no_sky: 1.0,
+            relays_still_h: None,
         }
     }
 }
