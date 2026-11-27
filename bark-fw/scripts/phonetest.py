@@ -243,6 +243,19 @@ def wait_kept(log: Path, offset: int, msg_id: str) -> bool:
     return False
 
 
+def locked(window: str) -> bool:
+    """Whether `dumpsys window` says the lock screen shows.
+
+    >>> locked("    isKeyguardShowing=true")
+    True
+    >>> locked("    isKeyguardShowing=false")
+    False
+    >>> locked("")
+    False
+    """
+    return "isKeyguardShowing=true" in window
+
+
 # ---- the run ---------------------------------------------------------------
 
 
@@ -282,6 +295,10 @@ def prepare(phone: Phone, a: argparse.Namespace) -> None:
         phone.shell(f"run-as {PACKAGE} rm -f {IMAGE}", check=False)
     phone.shell("input keyevent KEYCODE_WAKEUP", check=False)
     phone.shell("wm dismiss-keyguard", check=False)
+    if locked(phone.shell("dumpsys window", check=False)):
+        # Behind the lock screen the app draws no frame, and the test's
+        # first step would wait for one without end.
+        sys.exit("the phone is locked: unlock it, and set its screen lock to None")
 
 
 def main() -> None:
