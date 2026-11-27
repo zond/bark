@@ -362,7 +362,6 @@ fn on_trial_now(flash: &Flash) {
 #[cfg(not(feature = "console"))]
 pub async fn trial(internal: &'static crate::store::SharedFlash) {
     use bark_image::layout::STATE;
-    use embassy_embedded_hal::flash::partition::Partition;
     use embassy_futures::select::{select, Either};
     TRIAL.on_trial.wait().await;
     let deadline = embassy_time::Instant::from_micros(HEARD_WITHIN.as_micros());
@@ -375,7 +374,7 @@ pub async fn trial(internal: &'static crate::store::SharedFlash) {
         reboot().await;
     }
     loop {
-        let state = Partition::new(internal, STATE.start, STATE.len);
+        let state = internal.part(STATE);
         match bark_image::boot::confirm(state).await {
             Ok(_) => {
                 log::info!(

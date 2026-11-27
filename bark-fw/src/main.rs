@@ -63,6 +63,8 @@ mod tables;
 #[cfg(feature = "bench")]
 mod timing;
 mod touch;
+#[cfg(not(feature = "console"))]
+mod turn;
 mod update;
 mod usb_log;
 #[cfg(not(feature = "console"))]

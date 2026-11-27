@@ -637,22 +637,15 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
 
 /// The node's answer to the request: taken, or not.
 static ANSWER: Signal<CriticalSectionRawMutex, bool> = Signal::new();
-/// A turn that every link's slot may wait for at once. An embassy-sync
-/// `Mutex` keeps one waker, so two tasks waiting on it wake each other
-/// until it is free, and the processor does not sleep
-/// (`WakerRegistration::register`); this keeps a waker for each slot.
-type Queue = embassy_sync::semaphore::FairSemaphore<CriticalSectionRawMutex, LINKS>;
-
-/// Wait for `turn`; it is given back when the value is dropped.
-async fn turn(turn: &'static Queue) -> impl Drop {
-    use embassy_sync::semaphore::Semaphore as _;
-    turn.acquire(1).await.expect("a place for each slot")
-}
+/// A turn that every link's slot may wait for at once.
+type Queue = crate::turn::Queue<LINKS>;
 
 /// One request at a time goes to the node, from whichever link.
-static ASKING: Queue = Queue::new(1);
+static ASKING: Queue = Queue::new();
 /// One slot at a time waits for the advertising ([`Advertising`]).
-static ADVERTISING: Queue = Queue::new(1);
+static ADVERTISING: Queue = Queue::new();
+/// One link at a time waits for the update ([`Update`]).
+static UPDATING: Queue = Queue::new();
 /// Raised for each link when its phone is to be notified: the status or a
 /// message given back.
 static NOTIFY: [Signal<CriticalSectionRawMutex, Notify>; LINKS] = [const { Signal::new() }; LINKS];
@@ -918,7 +911,7 @@ const ANSWER_WAIT: embassy_time::Duration = embassy_time::Duration::from_secs(15
 /// Hand `request` from `from` to the node and wait for its answer, after
 /// any other link's.
 async fn ask(from: From, request: Request) -> bool {
-    let _one = turn(&ASKING).await;
+    let _one = ASKING.turn().await;
     ANSWER.reset();
     LINK.lock(|l| l.borrow_mut().request = Some((from, request)));
     crate::node::WAKE.link_asks();
@@ -1022,8 +1015,20 @@ fn inbox_now(slot: usize) -> heapless::Vec<u8, { bark_link::GuestItem::MAX_LEN }
 
 type Stack = trouble_host::Stack<'static, SoftdeviceController<'static>, DefaultPacketPool>;
 
-/// The update a paired phone stages, across its links.
+/// The update a paired phone stages, across its links. Only the link
+/// whose turn it is ([`UPDATING`]) waits here: see [`staging`].
 type Update = embassy_sync::mutex::Mutex<NoopRawMutex, Staging>;
+
+/// The update, after any other link's turn at it.
+async fn staging(
+    update: &'static Update,
+) -> (
+    embassy_sync::mutex::MutexGuard<'static, NoopRawMutex, Staging>,
+    impl Drop,
+) {
+    let turn = UPDATING.turn().await;
+    (update.lock().await, turn)
+}
 
 /// The update, and room for the header a begin carries, kept here rather
 /// than in every link's task, as one is staged at a time.
@@ -1177,7 +1182,7 @@ async fn serve(
 ) {
     loop {
         let conn = {
-            let _turn = turn(&ADVERTISING).await;
+            let _turn = ADVERTISING.turn().await;
             let mut p = advertising.lock().await;
             loop {
                 let public = public();
@@ -1680,7 +1685,7 @@ impl Serving<'_, '_, '_> {
                         self.slot
                     );
                     if record_of(self.conn).is_some() {
-                        self.update.lock().await.phone.link_closed();
+                        staging(self.update).await.0.phone.link_closed();
                     }
                     // A pairing cut short leaves no code on the screen.
                     if LINK.lock(|l| l.borrow().phones[self.slot].pairing) {
@@ -1937,7 +1942,7 @@ impl Serving<'_, '_, '_> {
         let h = w.handle();
         after.wrote_changes = h == self.changes.0;
         Some(if h == link.image.handle {
-            let taken = write_image(w, &mut update.lock().await.phone).await;
+            let taken = write_image(w, &mut staging(update).await.0.phone).await;
             // A write without response has no answer to refuse with; the
             // phone reads Update instead.
             match w.payload().incoming() {
@@ -1945,7 +1950,7 @@ impl Serving<'_, '_, '_> {
                 _ => taken,
             }
         } else if h == link.update.handle {
-            let mut u = update.lock().await;
+            let (mut u, _turn) = staging(update).await;
             let answer = write_update(w, &mut u).await;
             after.reboot = answer == Ok(true);
             let _ = self.conn.set(&link.update, &progress(&u.phone));

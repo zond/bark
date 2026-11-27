@@ -32,6 +32,7 @@ use embassy_embedded_hal::flash::partition::{self, Partition};
 use embassy_futures::select::{select3, Either3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
+use embedded_storage_async::nor_flash::{ErrorType, MultiwriteNorFlash, NorFlash, ReadNorFlash};
 
 /// What the store's task is to write next: the core's state and the
 /// offset, the latest of each, and that the phones changed.
@@ -109,20 +110,83 @@ async fn work(mut flash: Flash) {
     }
 }
 
-/// The MPSL's flash, shared by the store and the mailbox.
-pub type SharedFlash =
-    embassy_sync::mutex::Mutex<CriticalSectionRawMutex, nrf_mpsl::Flash<'static>>;
+/// The tasks that may wait for the flash at once: the store's, the mesh
+/// update's and its trial's, the phone link whose turn the update is
+/// (`ble::UPDATING`), and the bench's `forget`.
+const USERS: usize = 5;
 
-/// The shared flash, once.
-pub fn shared(flash: nrf_mpsl::Flash<'static>) -> &'static SharedFlash {
-    static FLASH: static_cell::StaticCell<SharedFlash> = static_cell::StaticCell::new();
-    FLASH.init(embassy_sync::mutex::Mutex::new(flash))
+type Mpsl = nrf_mpsl::Flash<'static>;
+
+/// The MPSL's flash, shared by the store and the updates, a region each
+/// ([`SharedFlash::part`]).
+pub struct SharedFlash {
+    flash: embassy_sync::mutex::Mutex<CriticalSectionRawMutex, Mpsl>,
+    /// Only the task whose turn it is waits for `flash`.
+    turn: crate::turn::Queue<USERS>,
 }
 
-type Pages = Partition<'static, CriticalSectionRawMutex, nrf_mpsl::Flash<'static>>;
+/// The shared flash, once.
+pub fn shared(flash: Mpsl) -> &'static SharedFlash {
+    static FLASH: static_cell::StaticCell<SharedFlash> = static_cell::StaticCell::new();
+    FLASH.init(SharedFlash {
+        flash: embassy_sync::mutex::Mutex::new(flash),
+        turn: crate::turn::Queue::new(),
+    })
+}
+
+impl SharedFlash {
+    /// The region `r` of the flash.
+    pub fn part(&'static self, r: bark_image::layout::Region) -> Part {
+        Part {
+            pages: Partition::new(&self.flash, r.start, r.len),
+            turn: &self.turn,
+        }
+    }
+}
+
+/// A region of the shared flash. Each read, write and erase waits its
+/// turn at the flash.
+pub struct Part {
+    pages: Partition<'static, CriticalSectionRawMutex, Mpsl>,
+    turn: &'static crate::turn::Queue<USERS>,
+}
+
+impl ErrorType for Part {
+    type Error = partition::Error<<Mpsl as ErrorType>::Error>;
+}
+
+impl ReadNorFlash for Part {
+    const READ_SIZE: usize = <Mpsl as ReadNorFlash>::READ_SIZE;
+
+    async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+        let _turn = self.turn.turn().await;
+        self.pages.read(offset, bytes).await
+    }
+
+    fn capacity(&self) -> usize {
+        self.pages.capacity()
+    }
+}
+
+impl NorFlash for Part {
+    const WRITE_SIZE: usize = <Mpsl as NorFlash>::WRITE_SIZE;
+    const ERASE_SIZE: usize = <Mpsl as NorFlash>::ERASE_SIZE;
+
+    async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+        let _turn = self.turn.turn().await;
+        self.pages.write(offset, bytes).await
+    }
+
+    async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+        let _turn = self.turn.turn().await;
+        self.pages.erase(from, to).await
+    }
+}
+
+impl MultiwriteNorFlash for Part {}
 
 /// The store's pages.
-pub struct Flash(Store<Pages>);
+pub struct Flash(Store<Part>);
 
 /// The phones as `phones.rs` holds them, which a turn writes again.
 struct Held;
@@ -141,6 +205,7 @@ impl Flash {
     /// The pages, and the last whole entry of each kind they hold.
     pub fn open(flash: &'static SharedFlash) -> (Flash, Kept) {
         let mut f = flash
+            .flash
             .try_lock()
             .expect("nothing writes before the store opens");
         let (log, kept) = bark_fw_logic::store::scan(|at, r| f.read(STORE.start + at, r).is_ok());
@@ -151,7 +216,7 @@ impl Flash {
         if kept.discarded {
             log::warn!("store: no page of this layout; what the pages held is discarded");
         }
-        let pages = Partition::new(flash, STORE.start, STORE.len);
+        let pages = flash.part(STORE);
         (Flash(Store::new(pages, log, &kept)), kept)
     }
 

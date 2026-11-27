@@ -30,7 +30,6 @@ use bark_image::{sign, Header, HEADER_LEN};
 use bark_proto::update::{Image, Piece, PROOF_BLOCKS};
 use bark_proto::wire::{Packet, Update, PIECE_BYTES, PIECE_HEADER_LEN};
 use bark_proto::Frame;
-use embassy_embedded_hal::flash::partition::Partition;
 use embassy_futures::select::{select, select4, Either, Either4};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::blocking_mutex::Mutex;
@@ -356,7 +355,7 @@ pub async fn forget() -> Result<(), &'static str> {
         return Err("the staged slot is taken");
     }
     let_go().await;
-    let page = Partition::new(internal, GIVEN_UP.start, GIVEN_UP.len);
+    let page = internal.part(GIVEN_UP);
     bark_image::given_up::clear(page)
         .await
         .map_err(|_| "the page of versions given up was not erased")
@@ -1017,7 +1016,7 @@ async fn install(internal: &'static SharedFlash, i: &Image) -> Result<(), ()> {
         }
         Timer::after_secs(60).await;
     };
-    let part = |r: bark_image::layout::Region| Partition::new(internal, r.start, r.len);
+    let part = |r| internal.part(r);
     crate::at("stage");
     let written = bark_image::boot::Stager::written(
         part(RECORD),

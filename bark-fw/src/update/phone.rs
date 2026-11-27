@@ -14,7 +14,6 @@ use bark_image::boot::{swap_requested, StageError, Stager};
 use bark_image::layout::{RECORD, STATE};
 use bark_image::{Header, HEADER_LEN};
 use bark_link::update::{Progress, Refusal, State};
-use embassy_embedded_hal::flash::partition::Partition;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 
@@ -25,7 +24,7 @@ use crate::store::SharedFlash;
 const _: () = assert!(bark_link::update::HEADER_LEN == HEADER_LEN);
 const _: () = assert!(bark_link::update::HASH_LEN == bark_image::HASH_LEN);
 
-type Internal = Partition<'static, CriticalSectionRawMutex, nrf_mpsl::Flash<'static>>;
+type Internal = crate::store::Part;
 
 /// The stager of the node build.
 type NodeStager = Stager<Internal, Internal, Dfu>;
@@ -120,7 +119,7 @@ impl Phone {
             return Err(self.refuse(Refusal::Busy));
         }
         let internal = self.internal;
-        let part = |r: bark_image::layout::Region| Partition::new(internal, r.start, r.len);
+        let part = |r| internal.part(r);
         crate::at("stage");
         let begun = super::stage(part(RECORD), part(STATE), Dfu, header).await;
         match begun {
