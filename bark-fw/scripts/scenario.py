@@ -263,7 +263,7 @@ def load(path: str | Path) -> Scenario:
     c = d.get("checks", {})
     take(c, {"skip"}, "checks")
     skip = c.get("skip", {})
-    unknown = set(skip) - {"reset", "radio", "stack", "gap", "heartbeat", "anchor", "clock"}
+    unknown = set(skip) - {"reset", "radio", "stack", "gap", "heartbeat", "anchor", "clock", "polls"}
     if unknown:
         raise Bad(f"checks: no standing check {', '.join(sorted(unknown))}")
     return Scenario(

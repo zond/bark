@@ -30,4 +30,4 @@ line = '^boot relays=1 '
 why = "each holds the other"
 
 [checks]
-skip = { reset = "the phone's update reboots A, and the phone's link is no part of the checks' rules", gap = "A is silent while it swaps images" }
+skip = { reset = "the phone's update reboots A, and the phone's link is no part of the checks' rules", gap = "A is silent while it swaps images", polls = "A waits out each write of the image to the external flash by polling the chip" }
