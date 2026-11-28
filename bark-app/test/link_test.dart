@@ -73,10 +73,11 @@ void main() {
       installing: 0x0118,
       phones: 7,
       gpsCn0: 31,
+      gpsAge: 37,
     );
     final bytes = [
       0x63, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 3, 5, 0, 100, //
-      0x01, 0x18, 2, 7, 31,
+      0x01, 0x18, 2, 7, 31, 37,
     ];
     expect(s.encode(), bytes);
     final d = Status.decode(bytes);
@@ -92,8 +93,9 @@ void main() {
         d.installing,
         d.phones,
         d.gpsCn0,
+        d.gpsAge,
       ],
-      [3, 100, 0, 2, 5, 0x0118, 7, 31],
+      [3, 100, 0, 2, 5, 0x0118, 7, 31, 37],
     );
     expect(d.address, kyiv);
     // Each flag is its own bit.
@@ -101,6 +103,17 @@ void main() {
       final one = Status.decode([1 << bit, ...List.filled(Status.len - 1, 0)]);
       expect(one.encode()[0], 1 << bit);
     }
+  });
+
+  test('a GPS reading age code', () {
+    // The core's codes (`bark-proto` `status::ReadingAge`).
+    expect(gpsAgeMinutes(0), 0);
+    expect(gpsAgeMinutes(15), 15);
+    expect(gpsAgeMinutes(16), 16);
+    expect(gpsAgeMinutes(20), 24);
+    expect(gpsAgeMinutes(37), 68);
+    expect(gpsAgeMinutes(254), 983024);
+    expect(gpsAgeMinutes(gpsAgeNone), isNull);
   });
 
   test('status ignores what a later version appends', () {
@@ -370,6 +383,7 @@ void main() {
       strong: 3,
       proven: 2,
       gpsCn0: 23,
+      gpsAge: 20,
       version: 0x01020304,
       gathers: 14,
       blocks: 31,
@@ -378,10 +392,10 @@ void main() {
     );
     final b = Answer(to, s).encode();
     expect(b, [
-      1, 2, 3, 4, 5, 6, 0x03, 57, 5, 3, 2, 23, 1, 2, 3, 4, //
+      1, 2, 3, 4, 5, 6, 0x03, 57, 5, 3, 2, 23, 20, 1, 2, 3, 4, //
       0, 0, 0, 14, 31, 14, 40,
     ]);
-    expect(Answer.len, 23);
+    expect(Answer.len, 24);
     final d = Answer.decode(b)!;
     expect(d.id, to);
     expect(d.status.encode(), s.encode());
@@ -394,9 +408,10 @@ void main() {
       'GET V14 14/31',
     ]);
     // A notification's 20 bytes at the default MTU, and the least it may
-    // carry: gathering none, the GPS's signal still there.
-    for (final cut in [16, 20]) {
+    // carry: gathering none, the GPS's signal and its age still there.
+    for (final cut in [17, 20]) {
       expect(Answer.decode(b.sublist(0, cut))!.status.gpsCn0, 23);
+      expect(Answer.decode(b.sublist(0, cut))!.status.gpsAge, 20);
       expect(Answer.decode(b.sublist(0, cut))!.status.lines, [
         'SLEEPY NO ANCHOR',
         'BATTERY 57%',
@@ -407,12 +422,15 @@ void main() {
     // Empty before the first answer; short is malformed; the flags'
     // spare bits and what a later version appends are ignored.
     expect(Answer.decode([]), isNull);
-    expect(() => Answer.decode(b.sublist(0, 15)), throwsA(isA<Malformed>()));
+    expect(() => Answer.decode(b.sublist(0, 16)), throwsA(isA<Malformed>()));
     final later = [...b.sublist(0, 6), 0xe3, ...b.sublist(7), 0xaa];
     expect(Answer.decode(later)!.status.encode(), s.encode());
     // Each flag is its own bit.
     for (var bit = 0; bit < 5; bit++) {
-      final one = NeighbourStatus.decode([1 << bit, ...List.filled(9, 0)]);
+      final one = NeighbourStatus.decode([
+        1 << bit,
+        ...List.filled(NeighbourStatus.ungatheredLen - 1, 0),
+      ]);
       expect(one.encode()[0], 1 << bit);
     }
   });

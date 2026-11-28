@@ -8,6 +8,7 @@
 
 mod common;
 
+use bark_proto::status::ReadingAge;
 use bark_proto::{
     AppCommand, BatteryLevels, Config, Duration, Instant, MsgId, Position, Relay, Stored,
 };
@@ -215,41 +216,44 @@ fn a_low_battery_s_flush_keeps_the_gps_at_rest() {
     }
 }
 
-/// The status tells the GPS's latest reading while the GPS runs, a
-/// reading under the floor as any other, and 0 once the GPS rests, as
-/// the reading is then of a sky it no longer watches
-/// (spec "Neighbour status").
+/// The status tells the GPS's latest reading and how long ago it came,
+/// a reading under the floor as any other, the GPS running or at rest
+/// since; a restart forgets it (spec "Neighbour status").
 #[test]
-fn the_status_tells_the_signal_while_the_gps_runs() {
-    let mut h = resting();
-    h.run_until(at(1000), |_| false);
-    let cn0 = |h: &Harness<Relay>| h.nodes[0].core.status(h.now).gps_cn0;
-    // At rest: a reading, as one left over from before, tells nothing.
-    h.command(0, AppCommand::Signal { cn0: 30 });
-    assert_eq!(cn0(&h), 0);
-    // A far fix keeps it on; a reading under the floor of 22 dB-Hz,
-    // whose fix the firmware drops, is told all the same.
-    h.command(
-        0,
-        AppCommand::Fix {
-            position: pos(300.0),
-        },
-    );
+fn the_status_tells_the_latest_signal_and_its_age() {
+    let mut h = row();
+    let told = |h: &Harness<Relay>| {
+        let s = h.nodes[0].core.status(h.now);
+        (s.gps_cn0, s.gps_age)
+    };
+    assert_eq!(told(&h), (0, ReadingAge::NONE), "none yet");
+    h.run_for(secs(10));
+    assert!(h.nodes[0].core.gps_tracks());
+    // A reading under the floor of 22 dB-Hz, whose fix the firmware
+    // drops, is told all the same.
     h.command(0, AppCommand::Signal { cn0: 17 });
-    assert_eq!(cn0(&h), 17);
+    assert_eq!(told(&h), (17, ReadingAge(0)));
     h.command(0, AppCommand::Signal { cn0: 0 });
-    assert_eq!(cn0(&h), 0, "no satellite used");
+    assert_eq!(told(&h), (0, ReadingAge(0)), "no satellite used");
     h.command(0, AppCommand::Signal { cn0: 35 });
-    assert_eq!(cn0(&h), 35);
-    // A near fix sends the GPS back to rest: stale, 0.
-    h.command(
-        0,
-        AppCommand::Fix {
-            position: pos(10.0),
-        },
-    );
+    h.run_for(secs(59));
+    assert_eq!(told(&h), (35, ReadingAge(0)));
+    h.run_for(secs(1));
+    assert_eq!(told(&h), (35, ReadingAge(1)));
+    // On battery past its grace the GPS rests, and the reading stands.
+    h.command(0, AppCommand::Power { external: false });
+    h.run_for(GRACE + secs(60));
     assert!(!h.nodes[0].core.gps_tracks());
-    assert_eq!(cn0(&h), 0);
+    let minutes = (GRACE.as_micros() / 60_000_000 + 2) as u32;
+    assert_eq!(told(&h), (35, ReadingAge::from_minutes(minutes)));
+    h.run_for(secs(40 * 60));
+    assert_eq!(told(&h), (35, ReadingAge::from_minutes(minutes + 40)));
+    let config = Config {
+        position: pos(0.0),
+        ..Config::default()
+    };
+    h.reboot(0, Relay::new(config, 9));
+    assert_eq!(told(&h), (0, ReadingAge::NONE), "forgotten");
 }
 
 const HOUR: u64 = 3600;

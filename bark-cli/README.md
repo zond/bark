@@ -50,9 +50,11 @@ first, and a paired one their name too, so the node hands them their mail.
   its first rotation, the image it installs, the messages waiting for
   this phone, and `phones_mark`, which is no count: a number that moves,
   wrapping, whenever the node's list of phones changes, so that a phone
-  knows to read it again (protocol.md, "The service"), and `gps_cn0`,
+  knows to read it again (protocol.md, "The service"), `gps_cn0`,
   the mean C/N0 in dB-Hz of the satellites its GPS used last, 0 for
-  none.
+  none, and `gps_age_min`, how many minutes ago that reading was, its
+  lower bound as the node's coarse code tells it, or `gps_age none` when
+  there has been no reading since the node started.
 
 ## A paired phone's commands
 
@@ -68,7 +70,7 @@ first, and a paired one their name too, so the node hands them their mail.
   and its flags.
 - `ask <id> <neighbour>`: asks the neighbour for its status through the
   node, three times at most, as the app does, and prints its answer,
-  `gps_cn0` among it.
+  `gps_cn0` and its age among it, as `status` prints them.
 - `clock <id>`: the node's time, its UTC offset and where its time came
   from. Every command here gives the node this computer's time first,
   as the app does at every connection.

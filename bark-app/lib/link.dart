@@ -309,9 +309,19 @@ class NodeInfo {
 /// "Position", roadmap D234); the firmware's `CN0_FLOOR`.
 const int gpsFixFloorDbHz = 22;
 
+/// A GPS reading's age byte for no reading since the node started (spec
+/// "Neighbour status").
+const int gpsAgeNone = 255;
+
+/// The minutes a GPS reading's age byte `code` tells, the least of the ages
+/// it stands for; null for [gpsAgeNone] (spec "Neighbour status"; the
+/// core's `status::ReadingAge`).
+int? gpsAgeMinutes(int code) =>
+    code == gpsAgeNone ? null : ((16 + (code & 15)) << (code >> 4)) - 16;
+
 /// Status, read and notify.
 class Status {
-  static const len = 1 + Position.wireLen + 2 + 1 + 1 + 2 + 2 + 1 + 1 + 1;
+  static const len = 1 + Position.wireLen + 2 + 1 + 1 + 2 + 2 + 1 + 1 + 1 + 1;
   final bool ready;
   final bool externalPower;
   final bool sleepy;
@@ -340,8 +350,12 @@ class Status {
   final int phones;
 
   /// The GPS's signal: the mean C/N0, dB-Hz, of the satellites its latest
-  /// reading used; 0 for no reading (spec "Neighbour status").
+  /// reading used; 0 when it used none, or there was none (spec "Neighbour
+  /// status").
   final int gpsCn0;
+
+  /// How long ago that reading was, as a code ([gpsAgeMinutes]).
+  final int gpsAge;
 
   const Status({
     this.ready = false,
@@ -361,6 +375,7 @@ class Status {
     this.installing = 0,
     this.phones = 0,
     this.gpsCn0 = 0,
+    this.gpsAge = gpsAgeNone,
   });
 
   Status copyWith({
@@ -381,6 +396,7 @@ class Status {
     int? installing,
     int? phones,
     int? gpsCn0,
+    int? gpsAge,
   }) => Status(
     ready: ready ?? this.ready,
     externalPower: externalPower ?? this.externalPower,
@@ -399,6 +415,7 @@ class Status {
     installing: installing ?? this.installing,
     phones: phones ?? this.phones,
     gpsCn0: gpsCn0 ?? this.gpsCn0,
+    gpsAge: gpsAge ?? this.gpsAge,
   );
 
   int get _flags => [
@@ -423,6 +440,7 @@ class Status {
     inbox,
     phones,
     gpsCn0,
+    gpsAge,
   ]);
 
   static Status decode(List<int> b) {
@@ -447,6 +465,7 @@ class Status {
       inbox: b[at + 8],
       phones: b[at + 9],
       gpsCn0: b[at + 10],
+      gpsAge: b[at + 11],
     );
   }
 }
@@ -1036,11 +1055,11 @@ Uint8List encodeAsk(List<int> id) {
 /// What a neighbour's own screen shows, as it answers an ask (spec
 /// "Phone link", Ask).
 class NeighbourStatus {
-  static const len = 1 + 1 + 1 + 1 + 1 + 1 + 4 + 4 + 1 + 1 + 1;
+  static const len = 1 + 1 + 1 + 1 + 1 + 1 + 1 + 4 + 4 + 1 + 1 + 1;
 
   /// Its bytes before the image gathered, which a notification at the
   /// default MTU carries whole.
-  static const ungatheredLen = 1 + 1 + 1 + 1 + 1 + 1 + 4;
+  static const ungatheredLen = 1 + 1 + 1 + 1 + 1 + 1 + 1 + 4;
 
   /// The battery byte at or below the level at which a fixed relay turns
   /// sleepy.
@@ -1073,8 +1092,10 @@ class NeighbourStatus {
   /// Of them, those that have taken a message from it.
   final int proven;
 
-  /// Its GPS's signal, as [Status.gpsCn0].
+  /// Its GPS's signal, as [Status.gpsCn0], and that reading's age, as
+  /// [Status.gpsAge].
   final int gpsCn0;
+  final int gpsAge;
 
   /// The firmware image's version it runs; 0 when unknown.
   final int version;
@@ -1098,6 +1119,7 @@ class NeighbourStatus {
     this.strong = 0,
     this.proven = 0,
     this.gpsCn0 = 0,
+    this.gpsAge = gpsAgeNone,
     this.version = 0,
     this.gathers = 0,
     this.blocks = 0,
@@ -1125,6 +1147,7 @@ class NeighbourStatus {
     strong,
     proven,
     gpsCn0,
+    gpsAge,
     ..._be32(version),
     ..._be32(gathers),
     blocks,
@@ -1149,11 +1172,12 @@ class NeighbourStatus {
       strong: b[3],
       proven: b[4],
       gpsCn0: b[5],
-      version: _u32(b, 6),
-      gathers: whole ? _u32(b, 10) : 0,
-      blocks: whole ? b[14] : 0,
-      complete: whole ? b[15] : 0,
-      have: whole ? b[16] : 0,
+      gpsAge: b[6],
+      version: _u32(b, 7),
+      gathers: whole ? _u32(b, 11) : 0,
+      blocks: whole ? b[15] : 0,
+      complete: whole ? b[16] : 0,
+      have: whole ? b[17] : 0,
     );
   }
 

@@ -3,7 +3,7 @@
 
 use bark_link::neighbours::{self, Header, Neighbour, Quality};
 use bark_link::{Answer, Node, NodeTime, Status, TimeSource};
-use bark_proto::status::Battery;
+use bark_proto::status::{Battery, ReadingAge};
 use bark_proto::Position;
 
 use crate::link::{id_text, Found};
@@ -107,6 +107,7 @@ pub fn answer(a: &Answer) -> Vec<String> {
         format!("strong {}", s.neighbours.strong),
         format!("both_ways {}", s.neighbours.both_ways),
         format!("gps_cn0 {}", s.gps_cn0),
+        gps_age(s.gps_age),
         format!("image {}", s.version),
     ];
     let g = &s.gathering;
@@ -236,7 +237,17 @@ pub fn status(s: &Status) -> Vec<String> {
         format!("inbox {}", s.inbox),
         format!("phones_mark {}", s.phones),
         format!("gps_cn0 {}", s.gps_cn0),
+        gps_age(s.gps_age),
     ]
+}
+
+/// How long ago the GPS's reading was, as its code tells it: its lower
+/// bound, in minutes (spec "Neighbour status").
+fn gps_age(age: ReadingAge) -> String {
+    match age.minutes() {
+        Some(m) => format!("gps_age_min {m}"),
+        None => "gps_age none".into(),
+    }
 }
 
 #[cfg(test)]
@@ -253,16 +264,18 @@ mod tests {
             address: Position::from_degrees(50.45, 30.52),
             battery_mv: 3900,
             gps_cn0: 27,
+            gps_age: ReadingAge(37),
             ..Status::EMPTY
         };
         let lines = status(&s);
         assert_eq!(lines[0], "flags ready placed first_rotation");
         assert_eq!(lines[1], format!("address {}", s.address));
         assert_eq!(lines[2], "battery_mv 3900");
-        assert_eq!(lines.last().unwrap(), "gps_cn0 27");
+        assert_eq!(lines[lines.len() - 2..], ["gps_cn0 27", "gps_age_min 68"]);
         let lines = status(&Status::EMPTY);
         assert_eq!(lines[0], "flags none");
         assert_eq!(lines[1], "address none");
+        assert_eq!(lines.last().unwrap(), "gps_age none");
     }
 
     #[test]

@@ -587,12 +587,19 @@ asked and the node asking. The **answer** ([packet formats](#packet-formats)):
 | heard | 1 | its live neighbours, at most 64 ([neighbour table](#neighbour-table)) |
 | strong | 1 | of them, those with margin |
 | proven | 1 | of them, those that have taken a message from it |
-| gps | 1 | the mean C/N0, dB-Hz, of the satellites its GPS used in its latest reading, the fix kept or not ([position](#position)); 0 while its GPS rests and when it used none (roadmap D237) |
+| gps | 1 | the mean C/N0, dB-Hz, of the satellites its GPS used in its latest reading, the fix kept or not ([position](#position)), its GPS running or at rest since; 0 when that reading used none, or there was none (roadmap D237, D251) |
+| gps age | 1 | how long ago that reading was, by the node's own clock from when its GPS gave it: 255 for no reading since the node started; below it, a code `c` of `e = c >> 4` and `m = c & 15` for `(16 + m) · 2^e − 16` minutes, the longest code not older than the age, 254 for any age from 983 024 minutes, 682.7 days (below) |
 | version | 4 | the firmware image version it runs, 0 if not known ([updates over the mesh](#updates-over-the-mesh)) |
 | gathers | 4 | the version of the image it gathers over the mesh, 0 if none |
 | blocks | 1 | that image's blocks, the table's among them; 0 if none |
 | complete | 1 | the blocks of it it holds from the first |
 | have | 1 | the pieces it holds of the block after them |
+
+The age's code tells 0 to 15 minutes exactly, then in steps that double
+every 16 codes; a step is under a sixteenth of the age plus 16 minutes,
+and code 254 is `30 · 2^15 − 16` minutes. The age is counted on the
+node's clock, which starts again at a restart, so a restart forgets the
+reading.
 
 Each is one frame, one hop, neither answered nor sent again. A node:
 
@@ -606,7 +613,8 @@ Each is one frame, one hop, neither answered nor sent again. A node:
   before an ask;
 - hands every answer addressed to it to its app.
 
-Ask: 14 bytes, 15.68 ms. Answer: 31 bytes, 24.64 ms. With the long
+Ask: 14 bytes, 15.68 ms. Answer: 32 bytes, 24.64 ms: the age
+fills room left in the last block of symbols. With the long
 preamble: 249.92 and 258.88 ms.
 
 ## Forwarding
@@ -1832,7 +1840,7 @@ for 247 by an MTU exchange (Vol 3 Part F §3.4.2) as soon as it connects.
 The node also takes long writes and serves long reads (Vol 3 Part F
 §3.4.6, §3.4.4.5). A notified value fits the 20 bytes a notification
 carries at the default MTU of 23 (Vol 3 Part F §3.4.7.1; roadmap D119),
-except Ask's, 23: at that MTU its notification lacks what the neighbour
+except Ask's, 24: at that MTU its notification lacks what the neighbour
 gathers, which the app shows as nothing gathered (roadmap D158).
 
 The service has one random UUID, its second 16 bits counting the service
@@ -1842,7 +1850,7 @@ and its characteristics in the order of this table:
 |---|---|---|---|---|
 | service | `28bc0001-a1b8-4893-9537-2ee3559d7644` | | | |
 | Node | `28bc0002-…` | read | version(1) oldest(1) id(6) image(4) room(1) | 13 |
-| Status | `28bc0003-…` | read, notify | flags(1) address(7) battery(2) relays(1) heard(1) boot_left(2) installing(2) inbox(1) phones(1) gps(1) | 19 |
+| Status | `28bc0003-…` | read, notify | flags(1) address(7) battery(2) relays(1) heard(1) boot_left(2) installing(2) inbox(1) phones(1) gps(1) gps_age(1) | 20 |
 | Send | `28bc0004-…` | write | dst_pos(7) dst_id(6) payload(0–224) | 13–237 |
 | Inbox | `28bc0005-…` | read | msg_id(4) payload(0–224), empty when none; a guest's: number(3) msg_id(4) payload(0–224) | 0, 4–228, 7–231 |
 | | | write | msg_id(4) | 4 |
@@ -1862,7 +1870,7 @@ and its characteristics in the order of this table:
 | | | write | 0 private, 1 public, 2 unpair | 1 |
 | Guest | `28bc000f-…` | write | number(3) | 3 |
 | Ask | `28bc0010-…` | write | id(6) | 6 |
-| | | read, notify | id(6) status(17), empty when none | 0, 23 |
+| | | read, notify | id(6) status(18), empty when none | 0, 24 |
 | Phones | `28bc0011-…` | write | 0 then slot(1) to read from; 1 for a code; 2 then number(2) what(1) code(3) to remove | 2, 1, 7 |
 | | | read | next(1), then per record number(2) flags(1) day(2) tag(1) name_len(1) name(0–32) | 1–244 |
 
@@ -1890,7 +1898,7 @@ node keeps a guest's tag only for its link
 ([public nodes](#public-nodes)).
 
 **Status.** Notified at every change except the countdown of `boot_left`
-and `gps`'s moves; one value is one notification and one read at a
+and the moves of `gps` and `gps_age`; one value is one notification and one read at a
 connection:
 
 | | |
@@ -1910,6 +1918,7 @@ connection:
 | inbox | the phone's messages not yet confirmed ([receiving](#receiving)) |
 | phones | a count, wrapping, that moves at each change to what Phones lists for this phone ([phones](#phones)): a phone paired, removed or unpaired, a home set or cleared, a person added or gone, the owner's mark moved, a name or tag written, a phone's link up or down, a day; 0 on a guest's link. The node tells its linked paired phones once the records are written; at a change, the app reads Phones again |
 | gps | the GPS's signal, as a status asked tells it ([neighbour status](#neighbour-status)); not notified, the app reads it |
+| gps_age | that reading's age, as a status asked tells it; not notified |
 
 ### Sending
 
@@ -2922,8 +2931,8 @@ PIECE     first(1) format(1) version(4) block(1) index(1) piece(247)        = 25
 ASK       first(1) format(1) to(6) from(6)                                  = 14
           aux = 16; to, from = the IDs of the node asked and the node asking
 STATUS    first(1) format(1) to(6) from(6) flags(1) battery(1) heard(1)
-          strong(1) proven(1) gps(1) version(4) gathers(4) blocks(1)
-          complete(1) have(1)                                               = 31
+          strong(1) proven(1) gps(1) gps_age(1) version(4) gathers(4)
+          blocks(1) complete(1) have(1)                                     = 32
           aux = 17; to, from = the IDs of the node that asked and the node
           answering; the rest as [neighbour status](#neighbour-status) says
 ```

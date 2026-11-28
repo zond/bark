@@ -377,7 +377,7 @@ void main() {
     expect(line('57%'), findsOneWidget);
     expect(line('4 heard \u00b7 2 strong \u00b7 1 exchanged'), findsOneWidget);
     expect(line('V9'), findsOneWidget);
-    // An anchored sleepy node's GPS rests.
+    // An anchored sleepy node's GPS rests: none since it started.
     expect(line('no reading'), findsOneWidget);
     expect(line('40 s ago'), findsOneWidget);
     expect(named('exchanged'), findsNothing);
@@ -391,8 +391,8 @@ void main() {
     await t.tap(icon(nodeLabel(carried.id)));
     await t.pumpAndSettle();
     expect(line('carried'), findsOneWidget);
-    // Under the floor at which a fix is dropped.
-    expect(line('18 dB-Hz · too weak for a fix'), findsOneWidget);
+    // Under the floor at which a fix is dropped, and a while ago.
+    expect(line('18 dB-Hz · too weak for a fix, 24 min ago'), findsOneWidget);
     expect(
       (named('moving').evaluate().single.widget as Icon).icon,
       Icons.directions_walk,

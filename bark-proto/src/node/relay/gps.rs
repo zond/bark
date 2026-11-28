@@ -13,6 +13,7 @@ use crate::gps::{
 use crate::node::Config;
 use crate::position::Position;
 use crate::radio::FADE_DEPTH_DB;
+use crate::status::ReadingAge;
 use crate::time::{Duration, Instant};
 
 /// How far beyond its mean, in its standard deviations, a rotation's sum of
@@ -237,6 +238,18 @@ pub(super) fn mark(t: Instant) -> u32 {
 
 fn at(m: u32) -> Option<Instant> {
     (m > 0).then(|| Instant::ZERO + Duration::from_secs(m as u64))
+}
+
+/// The GPS receiver's latest reading: its mean C/N0, and when it came, a
+/// mark; 0 before the first since the node started.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Reading {
+    cn0: u8,
+    at: u32,
+}
+
+impl Reading {
+    pub(super) const NONE: Reading = Reading { cn0: 0, at: 0 };
 }
 
 /// What the GPS's rules read of the rest of the node.
@@ -541,20 +554,22 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.gps.tracks(&self.gps_situation())
     }
 
-    /// The receiver's reading: the mean C/N0 of the satellites it used,
-    /// kept or dropped, 0 for none (spec "Neighbour status").
-    pub(super) fn signal(&mut self, cn0: u8) {
-        self.gps_signal = cn0;
+    /// The receiver's reading at `now`: the mean C/N0 of the satellites
+    /// it used, kept or dropped, 0 for none (spec "Neighbour status").
+    pub(super) fn signal(&mut self, cn0: u8, now: Instant) {
+        self.gps_reading = Reading { cn0, at: mark(now) };
     }
 
-    /// The latest reading's mean C/N0 at `now` while the node runs its
-    /// GPS, tracking or in a search not yet at its end; 0 while it rests,
-    /// as the reading is then of a sky the receiver no longer watches.
-    pub(super) fn gps_cn0(&self, now: Instant) -> u8 {
-        let searching = at(self.gps.until).is_some_and(|end| now < end);
-        match self.gps_tracks() || searching {
-            true => self.gps_signal,
-            false => 0,
+    /// The latest reading's mean C/N0, and how long ago it was at `now`,
+    /// the GPS running or at rest since (spec "Neighbour status").
+    pub(super) fn gps_reading(&self, now: Instant) -> (u8, ReadingAge) {
+        let Reading { cn0, at } = self.gps_reading;
+        match at {
+            0 => (0, ReadingAge::NONE),
+            at => (
+                cn0,
+                ReadingAge::from_minutes(mark(now).saturating_sub(at) / 60),
+            ),
         }
     }
 

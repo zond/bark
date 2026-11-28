@@ -145,16 +145,19 @@ Fact _power({required bool usb, bool low = false, String? reading}) => usb
       );
 
 /// The GPS's signal: its number and, by [gpsFixFloorDbHz], whether a fix
-/// is taken at it; 0 is no reading (spec "Neighbour status").
-Fact gpsFact(int cn0) => Fact(
+/// is taken at it, and how long ago it was read (spec "Neighbour status").
+Fact gpsFact(int cn0, int age) => Fact(
   Icons.signal_cellular_alt,
   FactKind.gpsSignal,
   tr.gpsSignal,
-  cn0 == 0
-      ? tr.noReading
-      : cn0 < gpsFixFloorDbHz
-      ? tr.factGpsTooWeak(cn0)
-      : tr.factGpsEnough(cn0),
+  gpsReading(
+    cn0 == 0
+        ? tr.factGpsNoSatellites
+        : cn0 < gpsFixFloorDbHz
+        ? tr.factGpsTooWeak(cn0)
+        : tr.factGpsEnough(cn0),
+    age,
+  ),
 );
 
 /// What a node does for others: a relay passes texts on; a sleepy node
@@ -901,7 +904,7 @@ class _NodeMarker {
         reading: st.batteryMv == 0 ? null : tr.millivolts(st.batteryMv),
       ),
       Fact(Icons.hub, FactKind.known, tr.factKnownName, knownOf(t)),
-      gpsFact(st.gpsCn0),
+      gpsFact(st.gpsCn0, st.gpsAge),
       // The node's screen's own form of a version.
       Fact(
         Icons.sell,
@@ -1015,7 +1018,7 @@ class _NeighbourMarker {
           tr.factKnownName,
           known(s.heard, s.strong, s.proven),
         ),
-        gpsFact(s.gpsCn0),
+        gpsFact(s.gpsCn0, s.gpsAge),
         // The versions in the node's screen's own form.
         if (s.version != 0)
           Fact(

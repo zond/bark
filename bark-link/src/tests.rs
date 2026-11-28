@@ -25,7 +25,7 @@ proptest! {
     }
 
     #[test]
-    fn status_round_trips(flags: u8, address in pos(), battery_mv: u16, relays: u8, heard: u8, boot_left_s: u16, installing: u16, inbox: u8, phones: u8, gps_cn0: u8) {
+    fn status_round_trips(flags: u8, address in pos(), battery_mv: u16, relays: u8, heard: u8, boot_left_s: u16, installing: u16, inbox: u8, phones: u8, gps_cn0: u8, gps_age: u8) {
         let bit = |b: u8| flags & (1 << b) != 0;
         let placed = bit(5);
         let s = Status {
@@ -33,6 +33,7 @@ proptest! {
             map_point: bit(4), placed, booting: bit(6), anchorless: bit(7),
             address: if placed { address } else { Position::default() },
             battery_mv, relays, heard, boot_left_s, installing, inbox, phones, gps_cn0,
+            gps_age: bark_proto::status::ReadingAge(gps_age),
         };
         let b = s.encode();
         prop_assert_eq!(b[0], flags);
@@ -146,13 +147,14 @@ fn vectors() {
         installing: 0x0118,
         phones: 7,
         gps_cn0: 31,
+        gps_age: bark_proto::status::ReadingAge(37),
         ..Status::default()
     };
     assert_eq!(
         status.encode(),
         [
             0x63, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 3, 5, 0, 100, 0x01, 0x18, 2, 7,
-            31
+            31, 37
         ]
     );
 
@@ -205,8 +207,8 @@ fn vectors() {
     assert_eq!(&name(to), b"bark-010203040506");
 
     // The app's vector: a sleepy node without an anchor, placed, at 57 %,
-    // hearing 5, 3 strong, 2 proven, its GPS's satellites at 23 dB-Hz,
-    // running version 0x01020304, gathering version 14 of 31 blocks,
+    // hearing 5, 3 strong, 2 proven, its GPS's satellites at 23 dB-Hz
+    // 24 minutes ago, running version 0x01020304, gathering version 14 of 31 blocks,
     // holding 14 and 40 pieces of the next.
     assert_eq!(Ask(to).encode(), [1, 2, 3, 4, 5, 6]);
     let answer = Answer {
@@ -223,6 +225,7 @@ fn vectors() {
                 both_ways: 2,
             },
             gps_cn0: 23,
+            gps_age: bark_proto::status::ReadingAge(20),
             version: 0x0102_0304,
             gathering: bark_proto::status::Gathering {
                 version: 14,
@@ -234,7 +237,7 @@ fn vectors() {
     };
     assert_eq!(
         answer.encode(),
-        [1, 2, 3, 4, 5, 6, 0x03, 57, 5, 3, 2, 23, 1, 2, 3, 4, 0, 0, 0, 14, 31, 14, 40]
+        [1, 2, 3, 4, 5, 6, 0x03, 57, 5, 3, 2, 23, 20, 1, 2, 3, 4, 0, 0, 0, 14, 31, 14, 40]
     );
     assert_eq!(Answer::decode(&answer.encode()), Ok(Some(answer)));
     // A notification's 20 bytes at the default MTU, and the least it may
@@ -246,7 +249,7 @@ fn vectors() {
         },
         ..answer
     };
-    for cut in [16, 20] {
+    for cut in [17, 20] {
         assert_eq!(
             Answer::decode(&answer.encode()[..cut]),
             Ok(Some(gathers_none))
@@ -424,8 +427,8 @@ fn versions_serve_each_other_when_each_meets_the_other_s_oldest() {
 fn every_value_fits_its_pdu() {
     assert_eq!(value_room(ATT_MTU), 244);
     assert_eq!(value_room(DEFAULT_ATT_MTU), 20);
-    assert_eq!(Status::LEN, 19);
-    assert_eq!(Answer::LEN, 23);
+    assert_eq!(Status::LEN, 20);
+    assert_eq!(Answer::LEN, 24);
     assert_eq!(Node::LEN, 13);
     assert_eq!(home::Home::LEN, 8);
 }

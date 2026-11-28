@@ -43,6 +43,7 @@ impl Asking {
 impl<const H: usize, const Q: usize> Node<H, Q> {
     /// What this node's screen shows of it now, and its status tells.
     pub fn status(&self, now: Instant) -> Status {
+        let (gps_cn0, gps_age) = self.gps_reading(now);
         Status {
             placed: self.placed(),
             sleepy: self.sleepy(),
@@ -50,7 +51,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             carried: self.carried(),
             battery: self.battery.status(),
             neighbours: self.neighbour_counts(now),
-            gps_cn0: self.gps_cn0(now),
+            gps_cn0,
+            gps_age,
             version: self.config.version,
             gathering: self.spread.gathering_status(),
         }

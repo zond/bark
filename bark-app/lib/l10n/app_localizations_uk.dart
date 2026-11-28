@@ -1197,7 +1197,7 @@ class AppLocalizationsUk extends AppLocalizations {
 
   @override
   String factGpsSignal(int floor) {
-    return 'Наскільки сильно GPS вузла чує супутники, у дБ·Гц, за останнім вимірюванням. Нижче $floor вузол не бере з нього позицію; відкрите небо дає близько 40. Перенесіть вузол туди, де значення вище, або задайте його місце вручну.';
+    return 'Наскільки сильно GPS вузла чує супутники, у дБ·Гц, за останнім вимірюванням, і як давно воно було: вузол, що стоїть на місці, дає GPS відпочити, тож вимірювання може бути давнім. Нижче $floor вузол не бере з нього позицію; відкрите небо дає близько 40. Перенесіть вузол туди, де значення вище, або задайте його місце вручну.';
   }
 
   @override
@@ -1400,6 +1400,14 @@ class AppLocalizationsUk extends AppLocalizations {
   @override
   String factGpsEnough(int signal) {
     return '$signal дБ·Гц · досить для позиції';
+  }
+
+  @override
+  String get factGpsNoSatellites => 'немає супутників';
+
+  @override
+  String factGpsAgo(String reading, String ago) {
+    return '$reading, $ago';
   }
 
   @override

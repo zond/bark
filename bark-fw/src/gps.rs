@@ -260,8 +260,6 @@ async fn work(mut p: Parts) {
         drop((tx, rx));
         wake.set_low();
         AWAKE.store(false, Ordering::Relaxed);
-        // At rest it reads no sky.
-        signal(0);
         // The line in a poll of its own, as every line of the task.
         embassy_futures::yield_now().await;
         let found = if state == State::Fixed {

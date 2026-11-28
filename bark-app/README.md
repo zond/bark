@@ -443,7 +443,9 @@ in the instrumental in Ukrainian ("вузол відхилив", not "відхи
   exchanged`), GPS signal (signal bars, its GPS's mean C/N0 as its last
   reading had it, `31 dB-Hz · enough for a fix`, or `· too weak for a fix` under the
   22 dB-Hz below which a node drops a fix (`gpsFixFloorDbHz`, which a test holds to the firmware's `CN0_FLOOR`), spec "Position", roadmap
-  D234, or `no reading` for 0, as while its GPS rests; read from Status
+  D234, `no satellites` for 0, and after it how long ago that reading
+  was, such as `, 40 min ago`, unless it was this minute, or `no reading`
+  when the node has had none since it started, roadmap D251; read from Status
   again as the map opens and is refreshed, as the node does not notify
   it, and from a neighbour's answer), Version (a price tag, the Material set having no version
   icon, such as `V18 · getting V19 14/32` while it gathers an image)
@@ -1895,9 +1897,11 @@ a phone (Trying it).
     answered as usual.
 29. GPS signal. **Nearby nodes**, a tap on this node: the GPS signal row
     says the node's number, such as `38 dB-Hz · enough for a fix` outdoors; indoors,
-    away from a window, it falls under 22 to `too weak for a fix`, and a
-    sleepy node with an anchor says `no reading`. The refresh button
-    reads it again. A neighbour's row comes with its answer. Debug's
+    away from a window, it falls under 22 to `too weak for a fix`. A
+    relay that has stood still a day rests its GPS, and the row then adds
+    how long ago its last reading was, such as `, 40 min ago`; a sleepy
+    node with an anchor that has had no reading since it started says
+    `no reading`. The refresh button reads it again. A neighbour's row comes with its answer. Debug's
     Status shows the same number.
 30. Show where I am. **Nearby nodes**: no permission is asked as it
     opens. **Show where I am**: Android asks for location while the app
