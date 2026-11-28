@@ -828,7 +828,7 @@
   "factLastHeard": "Every node sends a short heartbeat now and then, saying who and where it is. A relay sends one every 5 to 15 seconds, each on the next of 13 channels, so this node hears it about once every one to three minutes; a sleepy node wakes to send one every two and a half to five minutes. A relay not heard for six and a half minutes, or a sleepy node for ten, leaves the list.",
   "factDistance": "The straight line from this node's place to the other's, worked out by the app from the two positions, so it is shown only when both have a place. How far radio reaches depends on height and on what stands between: relays on rooftops hear each other at about 3 km.",
   "factKnown": "What the node says of its own neighbours, in three counts. Heard: the nodes whose heartbeats it hears. Strong: of those, the ones heard well enough that a full text gets through a fade, so they likely hear it too. Exchanged: of those, the ones that have taken a text from it, which proves they hear it.",
-  "factGpsSignal": "How strongly the node's GPS hears the satellites, in dB-Hz, as its last reading had it. Under {floor} the node takes no position from it; an open sky gives about 40. Move a node to where it reads higher, or set its place by hand.",
+  "factGpsSignal": "How strongly the node's GPS hears the satellites, in dB-Hz, at its last reading, and how long ago that was: a node that stands still rests its GPS, so the reading can be old. Under {floor} the node takes no position from it; an open sky gives about 40. Move a node to where it reads higher, or set its place by hand.",
   "@factGpsSignal": {
     "placeholders": {"floor": {"type": "int", "description": "The weakest signal, in dB-Hz, the node takes a position from."}}
   },
@@ -996,6 +996,15 @@
   "factGpsEnough": "{signal} dB-Hz · enough for a fix",
   "@factGpsEnough": {
     "placeholders": {"signal": {"type": "int"}}
+  },
+  "factGpsNoSatellites": "no satellites",
+  "@factGpsNoSatellites": {
+    "description": "The GPS's last reading used no satellite; the value of the row gpsSignal, before how long ago (factGpsAgo)."
+  },
+  "factGpsAgo": "{reading}, {ago}",
+  "@factGpsAgo": {
+    "description": "The GPS's last reading and how long ago it was, such as \"23 dB-Hz · enough for a fix, 40 min ago\". {reading} is such as factGpsEnough, {ago} such as timeMinutesAgo.",
+    "placeholders": {"reading": {"type": "String"}, "ago": {"type": "String"}}
   },
   "factLinkGood": "good",
   "@factLinkGood": {

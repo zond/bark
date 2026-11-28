@@ -137,6 +137,15 @@ String ago(Duration d) {
   return tr.timeDaysAgo(d.inDays);
 }
 
+/// A GPS reading, as `reading` says it, and how long ago it was by its age
+/// code `age`; a reading this minute stands alone (spec "Neighbour
+/// status").
+String gpsReading(String reading, int age) => switch (gpsAgeMinutes(age)) {
+  null => tr.noReading,
+  0 => reading,
+  final m => tr.factGpsAgo(reading, ago(Duration(minutes: m))),
+};
+
 /// What a sent text's state means to the person, in words that claim no
 /// more than the app knows: once the node has taken a message the network
 /// says nothing more unless it gives it back (spec "Addresses").

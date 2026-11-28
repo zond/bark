@@ -1185,13 +1185,13 @@ class Session extends ChangeNotifier {
   Future<NeighbourTable> readNeighbours() => _readingNeighbours ??=
       _readNeighbours().whenComplete(() => _readingNeighbours = null);
 
-  /// Reads Status again for its GPS's signal, whose moves the node does
-  /// not notify (spec "Phone link", Status); the rest is as notified.
+  /// Reads Status again for its GPS's signal and its age, whose moves the
+  /// node does not notify (spec "Phone link", Status); the rest is as notified.
   Future<void> readGps() async {
     final link = _owned('Status');
     final s = await link.readStatus();
     if (_link != link) return;
-    status = status?.copyWith(gpsCn0: s.gpsCn0) ?? s;
+    status = status?.copyWith(gpsCn0: s.gpsCn0, gpsAge: s.gpsAge) ?? s;
     notifyListeners();
   }
 

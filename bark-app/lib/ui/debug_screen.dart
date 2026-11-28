@@ -269,7 +269,7 @@ class DebugScreen extends StatelessWidget {
         st.batteryMv == 0 ? tr.debugBatteryNone : tr.millivolts(st.batteryMv),
       ),
       _row(tr.debugInbox, '${st.inbox}'),
-      _row(tr.gpsSignal, st.gpsCn0 == 0 ? tr.noReading : tr.dbHz(st.gpsCn0)),
+      _row(tr.gpsSignal, gpsReading(tr.dbHz(st.gpsCn0), st.gpsAge)),
     ];
   }
 }

@@ -1172,7 +1172,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String factGpsSignal(int floor) {
-    return 'How strongly the node\'s GPS hears the satellites, in dB-Hz, as its last reading had it. Under $floor the node takes no position from it; an open sky gives about 40. Move a node to where it reads higher, or set its place by hand.';
+    return 'How strongly the node\'s GPS hears the satellites, in dB-Hz, at its last reading, and how long ago that was: a node that stands still rests its GPS, so the reading can be old. Under $floor the node takes no position from it; an open sky gives about 40. Move a node to where it reads higher, or set its place by hand.';
   }
 
   @override
@@ -1375,6 +1375,14 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String factGpsEnough(int signal) {
     return '$signal dB-Hz · enough for a fix';
+  }
+
+  @override
+  String get factGpsNoSatellites => 'no satellites';
+
+  @override
+  String factGpsAgo(String reading, String ago) {
+    return '$reading, $ago';
   }
 
   @override

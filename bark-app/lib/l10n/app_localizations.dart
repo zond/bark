@@ -1879,7 +1879,7 @@ abstract class AppLocalizations {
   /// No description provided for @factGpsSignal.
   ///
   /// In en, this message translates to:
-  /// **'How strongly the node\'s GPS hears the satellites, in dB-Hz, as its last reading had it. Under {floor} the node takes no position from it; an open sky gives about 40. Move a node to where it reads higher, or set its place by hand.'**
+  /// **'How strongly the node\'s GPS hears the satellites, in dB-Hz, at its last reading, and how long ago that was: a node that stands still rests its GPS, so the reading can be old. Under {floor} the node takes no position from it; an open sky gives about 40. Move a node to where it reads higher, or set its place by hand.'**
   String factGpsSignal(int floor);
 
   /// No description provided for @factVersion.
@@ -2241,6 +2241,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{signal} dB-Hz · enough for a fix'**
   String factGpsEnough(int signal);
+
+  /// The GPS's last reading used no satellite; the value of the row gpsSignal, before how long ago (factGpsAgo).
+  ///
+  /// In en, this message translates to:
+  /// **'no satellites'**
+  String get factGpsNoSatellites;
+
+  /// The GPS's last reading and how long ago it was, such as "23 dB-Hz · enough for a fix, 40 min ago". {reading} is such as factGpsEnough, {ago} such as timeMinutesAgo.
+  ///
+  /// In en, this message translates to:
+  /// **'{reading}, {ago}'**
+  String factGpsAgo(String reading, String ago);
 
   /// A link's quality; the link (factLinkLabel) is the other node's signal at this one. Also in the map's legend.
   ///

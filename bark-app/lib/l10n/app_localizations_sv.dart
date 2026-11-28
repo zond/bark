@@ -1191,7 +1191,7 @@ class AppLocalizationsSv extends AppLocalizations {
 
   @override
   String factGpsSignal(int floor) {
-    return 'Hur starkt nodens GPS hör satelliterna, i dB-Hz, enligt den senaste avläsningen. Under $floor tar noden ingen position från den; fri himmel ger ungefär 40. Flytta noden till en plats där värdet är högre, eller ange platsen för hand.';
+    return 'Hur starkt nodens GPS hör satelliterna, i dB-Hz, vid den senaste avläsningen, och hur länge sedan den var: en nod som står still låter sin GPS vila, så avläsningen kan vara gammal. Under $floor tar noden ingen position från den; fri himmel ger ungefär 40. Flytta noden till en plats där värdet är högre, eller ange platsen för hand.';
   }
 
   @override
@@ -1394,6 +1394,14 @@ class AppLocalizationsSv extends AppLocalizations {
   @override
   String factGpsEnough(int signal) {
     return '$signal dB-Hz · räcker för en position';
+  }
+
+  @override
+  String get factGpsNoSatellites => 'inga satelliter';
+
+  @override
+  String factGpsAgo(String reading, String ago) {
+    return '$reading, $ago';
   }
 
   @override
