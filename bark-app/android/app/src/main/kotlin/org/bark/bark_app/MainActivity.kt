@@ -92,7 +92,8 @@ class MainActivity : FlutterActivity() {
         }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, WEB).setMethodCallHandler { call, result ->
             when (call.method) {
-                // A page in the phone's browser: the manual.
+                // A page in the phone's browser, or in the app that takes its
+                // links: the manual, the users' channel.
                 "open" -> try {
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(call.arguments as String)))
                     result.success(null)

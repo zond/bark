@@ -28,10 +28,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get manual => 'Manual';
 
   @override
+  String get usersChannel => 'Telegram channel';
+
+  @override
   String get undo => 'Undo';
 
   @override
-  String get conversationsNoBrowser => 'No browser to open the manual';
+  String get conversationsNoBrowser => 'No browser to open the page';
 
   @override
   String get conversationsBackupTitle => 'Write down your 12 backup words';

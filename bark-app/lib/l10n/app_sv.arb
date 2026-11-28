@@ -7,9 +7,10 @@
   "nearbyNodes": "Noder i närheten",
   "settings": "Inställningar",
   "manual": "Handbok",
+  "usersChannel": "Telegramkanal",
   "undo": "Ångra",
 
-  "conversationsNoBrowser": "Ingen webbläsare att öppna handboken i",
+  "conversationsNoBrowser": "Ingen webbläsare att öppna sidan i",
   "conversationsBackupTitle": "Skriv ner dina 12 reservord",
   "conversationsBackupWhy": "Om du tappar bort telefonen är de enda sättet att få tillbaka dina kontakter.",
   "conversationsNone": "Inga samtal än. Lägg till en kontakt, eller visa ditt kort.",

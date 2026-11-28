@@ -7,9 +7,10 @@
   "nearbyNodes": "Вузли поблизу",
   "settings": "Налаштування",
   "manual": "Посібник",
+  "usersChannel": "Канал у Telegram",
   "undo": "Скасувати",
 
-  "conversationsNoBrowser": "Немає браузера, щоб відкрити посібник",
+  "conversationsNoBrowser": "Немає браузера, щоб відкрити сторінку",
   "conversationsBackupTitle": "Запишіть свої 12 резервних слів",
   "conversationsBackupWhy": "Якщо ви втратите цей телефон, лише вони допоможуть повернути ваші контакти.",
   "conversationsNone": "Розмов ще немає. Додайте контакт або покажіть свою картку.",

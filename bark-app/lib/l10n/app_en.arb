@@ -7,9 +7,10 @@
   "nearbyNodes": "Nearby nodes",
   "settings": "Settings",
   "manual": "Manual",
+  "usersChannel": "Telegram channel",
   "undo": "Undo",
 
-  "conversationsNoBrowser": "No browser to open the manual",
+  "conversationsNoBrowser": "No browser to open the page",
   "conversationsBackupTitle": "Write down your 12 backup words",
   "conversationsBackupWhy": "If you lose this phone, they are the only way back to your contacts.",
   "conversationsNone": "No conversations yet. Add a contact, or show your card.",

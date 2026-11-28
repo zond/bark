@@ -27,6 +27,11 @@ String get manualPage => switch (tr.localeName) {
   _ => 'https://zond.github.io/bark/manual.html',
 };
 
+/// The channel for the people who use bark. A web link and not the
+/// messenger's own scheme: the phone opens it in the messenger when that
+/// is installed, and else in the browser, on a page that says how to join.
+const usersChannel = 'https://t.me/+aTOhDcUjVHRkMzY0';
+
 class ConversationsScreen extends StatefulWidget {
   final AppModel app;
   const ConversationsScreen(this.app, {super.key});
@@ -47,9 +52,9 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     });
   }
 
-  Future<void> _manual(BuildContext context) async {
+  Future<void> _page(BuildContext context, String page) async {
     try {
-      await app.notifier.openPage(manualPage);
+      await app.notifier.openPage(page);
     } catch (e) {
       if (context.mounted) say(context, tr.conversationsNoBrowser);
     }
@@ -99,10 +104,14 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
                 value: () => SettingsScreen(app),
                 child: Text(tr.settings),
               ),
-              // No screen of the app's: it opens in the browser.
+              // No screens of the app's: they open outside it.
               PopupMenuItem(
-                onTap: () => _manual(context),
+                onTap: () => _page(context, manualPage),
                 child: Text(tr.manual),
+              ),
+              PopupMenuItem(
+                onTap: () => _page(context, usersChannel),
+                child: Text(tr.usersChannel),
               ),
             ],
           ),

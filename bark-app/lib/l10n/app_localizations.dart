@@ -136,6 +136,12 @@ abstract class AppLocalizations {
   /// **'Manual'**
   String get manual;
 
+  /// No description provided for @usersChannel.
+  ///
+  /// In en, this message translates to:
+  /// **'Telegram channel'**
+  String get usersChannel;
+
   /// No description provided for @undo.
   ///
   /// In en, this message translates to:
@@ -145,7 +151,7 @@ abstract class AppLocalizations {
   /// No description provided for @conversationsNoBrowser.
   ///
   /// In en, this message translates to:
-  /// **'No browser to open the manual'**
+  /// **'No browser to open the page'**
   String get conversationsNoBrowser;
 
   /// No description provided for @conversationsBackupTitle.

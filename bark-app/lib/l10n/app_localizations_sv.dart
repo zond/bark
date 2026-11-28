@@ -28,10 +28,13 @@ class AppLocalizationsSv extends AppLocalizations {
   String get manual => 'Handbok';
 
   @override
+  String get usersChannel => 'Telegramkanal';
+
+  @override
   String get undo => 'Ångra';
 
   @override
-  String get conversationsNoBrowser => 'Ingen webbläsare att öppna handboken i';
+  String get conversationsNoBrowser => 'Ingen webbläsare att öppna sidan i';
 
   @override
   String get conversationsBackupTitle => 'Skriv ner dina 12 reservord';

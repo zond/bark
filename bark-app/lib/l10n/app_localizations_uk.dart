@@ -28,10 +28,13 @@ class AppLocalizationsUk extends AppLocalizations {
   String get manual => 'Посібник';
 
   @override
+  String get usersChannel => 'Канал у Telegram';
+
+  @override
   String get undo => 'Скасувати';
 
   @override
-  String get conversationsNoBrowser => 'Немає браузера, щоб відкрити посібник';
+  String get conversationsNoBrowser => 'Немає браузера, щоб відкрити сторінку';
 
   @override
   String get conversationsBackupTitle => 'Запишіть свої 12 резервних слів';
