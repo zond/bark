@@ -229,9 +229,9 @@ does not count towards a run of far fixes (spec "Position", roadmap D136).
 
 `AppCommand::Signal { cn0 }` is the receiver's latest reading, sent about once a second
 while it runs: the mean C/N0 of the satellites it used, whether or not the fix is
-handed, 0 when it used none, and 0 again as it comes to rest. `Node::status` tells it
-while the core runs its GPS, tracking or in a search not past its end, and 0 otherwise
-(spec "Neighbour status", roadmap D237).
+handed, 0 when it used none. `Node::status` tells the latest, and how long ago the core
+was handed it, whether the GPS runs or rests since; before the first since the node
+started it tells none (spec "Neighbour status", roadmap D237, D251).
 
 `Config::placed` says whether `Config::position` is the node's place: a board built
 with one, or the simulator's nodes. Without it and without a stored place the node has
@@ -466,17 +466,18 @@ hold the 546 messages a relay can handle in the 162.9 s a full send queue takes 
 ban per place, plus the 103 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-102 200 B (99.8 KiB): the tables and, in under 1 KiB around them, the
+102 208 B (99.8 KiB): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 a neighbour's status asked or told, 16 B, with two marks in each neighbour's entry that fit
 its padding (roadmap D157),
 and its stored state as handed back and as last kept, 80 B, what it learns of its
-battery's drain, 16 B (spec "Sleepy nodes"), and beside them what it keeps
+battery's drain, 16 B (spec "Sleepy nodes"), its GPS's latest reading and when it came,
+8 B (spec "Neighbour status"), and beside them what it keeps
 of the update, 1 960 B, with 18 B of each neighbour's entry for its heartbeats' section,
 when it was heard and how long it had told the same, 2 B that fit the entry's padding
 (roadmap D247), and the four images the sections name kept once in the table, 48 B (spec
 "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 82 856 B (80.9 KiB), without the heard table and the delivery
+`SleepyNode` is 82 864 B (80.9 KiB), without the heard table and the delivery
 queue, 18.9 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM

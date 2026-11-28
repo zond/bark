@@ -35,12 +35,18 @@ fn sizes() {
     // an image can have.
     let spread = core::mem::size_of::<update::Spread>();
     let drain = core::mem::size_of::<crate::drain::Drain>();
+    let reading = core::mem::size_of::<gps::Reading>();
     std::println!(
-        "Relay {relay} B, tables {tables} B, kept {kept} B, spread {spread} B, drain {drain} B"
+        "Relay {relay} B, tables {tables} B, kept {kept} B, spread {spread} B, drain {drain} B, \
+         GPS reading {reading} B"
     );
     assert!(spread <= 2048, "{spread}");
     assert!(drain <= 16, "{drain}");
-    assert!(relay <= tables + 1024 + kept + spread + drain, "{relay}");
+    assert!(reading <= 8, "{reading}");
+    assert!(
+        relay <= tables + 1024 + kept + spread + drain + reading,
+        "{relay}"
+    );
     // It fits the board's RAM: 255 KiB for the application
     // (bark-image/src/layout.rs), less the firmware's other static memory,
     // 29 896 B as measured (docs/phone-link-2026-11-05.md, "Does it fit"),
@@ -4409,6 +4415,7 @@ fn a_status_asked_is_told_on_the_asker_s_channel() {
             both_ways: 0,
         },
         gps_cn0: 0,
+        gps_age: crate::status::ReadingAge::NONE,
         version: 9,
         gathering: Default::default(),
     };

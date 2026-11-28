@@ -243,11 +243,8 @@ pub struct Node<const H: usize, const Q: usize> {
     stored: Option<Stored>,
     id: NodeId,
     home: Channel,
-    /// The GPS receiver's latest reading, the mean C/N0 in dB-Hz of the
-    /// satellites it used, its fix kept or dropped; 0 for none
-    /// (spec "Neighbour status"). Here, in the byte the two before it
-    /// leave.
-    gps_signal: u8,
+    /// The GPS receiver's latest reading (spec "Neighbour status").
+    gps_reading: gps::Reading,
     plane: LocalPlane,
     rng: Rng,
     delivered: Delivered,
@@ -298,7 +295,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             queue: SendQueue::new(),
             forwarding: Forwarding::IDLE,
             heard: Heard::from_config(&config),
-            gps_signal: 0,
+            gps_reading: gps::Reading::NONE,
             motion: Motion::at_boot(&config),
             gps: gps::Gps::DEFAULT,
             delivery: DeliveryQueue::from_config(&config),
@@ -357,7 +354,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             still_counted,
             mode,
             battery,
-            gps_signal,
+            gps_reading,
             radio,
             neighbours,
             records,
@@ -386,7 +383,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *still_counted = 0;
         *mode = Self::mode_at_boot();
         *battery = Battery::at_boot(config.stored);
-        *gps_signal = 0;
+        *gps_reading = gps::Reading::NONE;
         *radio = Radio::new(
             &config,
             Channel::all().next().expect("the plan has channels"),
@@ -875,7 +872,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.gps.after_fix(self.sleepy(), self.far());
             }
             AppCommand::NoFix => self.motion.no_fix(),
-            AppCommand::Signal { cn0 } => self.signal(cn0),
+            AppCommand::Signal { cn0 } => self.signal(cn0, now),
             AppCommand::Holds(image) => self.holds_image(image, now),
             AppCommand::Gather { image, from } => self.gather(image, from, now),
             AppCommand::Block { index, ok } => self.spread.block_done(index, ok, now),

@@ -198,7 +198,8 @@ const STATUS_HEARD: usize = STATUS_BATTERY + 1;
 const STATUS_STRONG: usize = STATUS_HEARD + 1;
 const STATUS_PROVEN: usize = STATUS_STRONG + 1;
 const STATUS_CN0: usize = STATUS_PROVEN + 1;
-const STATUS_VERSION: usize = STATUS_CN0 + 1;
+const STATUS_AGE: usize = STATUS_CN0 + 1;
+const STATUS_VERSION: usize = STATUS_AGE + 1;
 const STATUS_GATHERS: usize = STATUS_VERSION + VERSION_LEN;
 const STATUS_BLOCKS: usize = STATUS_GATHERS + VERSION_LEN;
 const STATUS_COMPLETE: usize = STATUS_BLOCKS + 1;
@@ -224,10 +225,13 @@ const _: () = assert!(
     crate::tables::neighbours::NEIGHBOURS <= u8::MAX as usize,
     "a neighbour count fits a byte"
 );
-const _: () = assert!(ASK_LEN == 14 && STATUS_LEN == 17 && STATUS_FRAME_LEN == 31);
+const _: () = assert!(ASK_LEN == 14 && STATUS_LEN == 18 && STATUS_FRAME_LEN == 32);
 const _: () = assert!(
-    !free(STATUS_FRAME_LEN, 1) && free(STATUS_FRAME_LEN + 1, 1),
-    "spec \"Neighbour status\": the GPS byte costs a block, and leaves a byte's room in it"
+    !free(STATUS_FRAME_LEN - 1, 1)
+        && free(STATUS_FRAME_LEN, 1)
+        && free(STATUS_FRAME_LEN + 1, 1)
+        && !free(STATUS_FRAME_LEN + 2, 1),
+    "spec \"Neighbour status\": the GPS's signal costs a block, its age none, and a byte's room is left"
 );
 
 const _: () = assert!(HEARTBEAT_LEN == 13 && ACK_LEN == 18);
@@ -395,6 +399,7 @@ pub fn encode_status(s: &Status, b: &mut [u8; STATUS_LEN]) {
     b[at(STATUS_STRONG)] = s.neighbours.strong;
     b[at(STATUS_PROVEN)] = s.neighbours.both_ways;
     b[at(STATUS_CN0)] = s.gps_cn0;
+    b[at(STATUS_AGE)] = s.gps_age.0;
     b[at(STATUS_VERSION)..at(STATUS_GATHERS)].copy_from_slice(&s.version.to_be_bytes());
     let g = &s.gathering;
     b[at(STATUS_GATHERS)..at(STATUS_BLOCKS)].copy_from_slice(&g.version.to_be_bytes());
@@ -430,6 +435,7 @@ pub fn decode_status(b: &[u8; STATUS_LEN]) -> Status {
             both_ways: b[at(STATUS_PROVEN)],
         },
         gps_cn0: b[at(STATUS_CN0)],
+        gps_age: crate::status::ReadingAge(b[at(STATUS_AGE)]),
         version: word(STATUS_VERSION),
         gathering: crate::status::Gathering {
             version: word(STATUS_GATHERS),
@@ -851,7 +857,7 @@ mod tests {
             }
             Packet::Update(Update::Piece { .. }) => 255,
             Packet::Status(StatusFrame::Ask { .. }) => 14,
-            Packet::Status(StatusFrame::Tell { .. }) => 31,
+            Packet::Status(StatusFrame::Tell { .. }) => 32,
         };
         assert_eq!(len, expected);
         assert_eq!(Packet::decode(&buf[..len]).as_ref(), Ok(p));
@@ -910,6 +916,7 @@ mod tests {
             strong: u8,
             both_ways: u8,
             gps_cn0: u8,
+            gps_age: u8,
             version: u32,
             gathering in (any::<u32>(), any::<u8>(), any::<u8>(), any::<u8>()),
         ) {
@@ -925,6 +932,7 @@ mod tests {
                 battery: if usb { Battery::Usb } else { battery },
                 neighbours: NeighbourCounts { heard, strong, both_ways },
                 gps_cn0,
+                gps_age: crate::status::ReadingAge(gps_age),
                 version,
                 gathering: crate::status::Gathering {
                     version: gathering.0,
@@ -940,6 +948,7 @@ mod tests {
             tell.encode(&mut buf).unwrap();
             prop_assert_eq!(buf[ASK_LEN], flags, "the flags in their bits");
             prop_assert_eq!(buf[STATUS_CN0], gps_cn0, "the signal after the counts");
+            prop_assert_eq!(buf[STATUS_AGE], gps_age, "its age after it");
             prop_assert_eq!(&buf[STATUS_GATHERS..STATUS_BLOCKS], &gathering.0.to_be_bytes()[..]);
             prop_assert_eq!(&buf[STATUS_BLOCKS..STATUS_FRAME_LEN], &[gathering.1, gathering.2, gathering.3][..]);
         }

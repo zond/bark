@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+use bark_proto::status::ReadingAge;
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{Instant, MsgId, NodeId, Position, Why};
 
@@ -287,14 +288,16 @@ pub struct Status {
     /// guest's link (spec "Phone link", Status).
     pub phones: u8,
     /// The mean C/N0, dB-Hz, of the satellites its GPS used in its latest
-    /// reading, the fix kept or not; 0 when it has none
-    /// (spec "Neighbour status").
+    /// reading, the fix kept or not; 0 when that used none, or there was
+    /// none (spec "Neighbour status").
     pub gps_cn0: u8,
+    /// How long ago that reading was.
+    pub gps_age: ReadingAge,
 }
 
 impl Status {
     /// Bytes in the value.
-    pub const LEN: usize = 1 + POS + 2 + 1 + 1 + 2 + 2 + 1 + 1 + 1;
+    pub const LEN: usize = 1 + POS + 2 + 1 + 1 + 2 + 2 + 1 + 1 + 1 + 1;
     const AT_ADDRESS: usize = 1;
     const AT_BATTERY: usize = Self::AT_ADDRESS + POS;
     const AT_RELAYS: usize = Self::AT_BATTERY + 2;
@@ -304,6 +307,7 @@ impl Status {
     const AT_INBOX: usize = Self::AT_INSTALLING + 2;
     const AT_PHONES: usize = Self::AT_INBOX + 1;
     const AT_GPS: usize = Self::AT_PHONES + 1;
+    const AT_GPS_AGE: usize = Self::AT_GPS + 1;
 
     /// Every flag clear and every count zero.
     pub const EMPTY: Status = Status {
@@ -324,6 +328,7 @@ impl Status {
         inbox: 0,
         phones: 0,
         gps_cn0: 0,
+        gps_age: ReadingAge::NONE,
     };
 
     fn flags(&self) -> u8 {
@@ -357,6 +362,7 @@ impl Status {
         b[Self::AT_INBOX] = self.inbox;
         b[Self::AT_PHONES] = self.phones;
         b[Self::AT_GPS] = self.gps_cn0;
+        b[Self::AT_GPS_AGE] = self.gps_age.0;
         b
     }
 
@@ -384,6 +390,7 @@ impl Status {
             inbox: b[Self::AT_INBOX],
             phones: b[Self::AT_PHONES],
             gps_cn0: b[Self::AT_GPS],
+            gps_age: ReadingAge(b[Self::AT_GPS_AGE]),
         })
     }
 }
@@ -940,8 +947,8 @@ const STATUS: usize = bark_proto::wire::STATUS_LEN;
 
 /// Bytes of a status before the image it gathers, which a notification at
 /// the default MTU carries whole: the flags, battery, the three counts,
-/// the GPS's signal and the version.
-const STATUS_UNGATHERED: usize = 10;
+/// the GPS's signal and its age, and the version.
+const STATUS_UNGATHERED: usize = 11;
 
 // Every value fits one ATT PDU at the MTU the node offers; Status and
 // Given back fit one at the default MTU, and Ask's answer all but the

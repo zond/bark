@@ -36,8 +36,11 @@ pub struct Status {
     /// Its live neighbours: heard, heard with margin, proven.
     pub neighbours: NeighbourCounts,
     /// The mean C/N0, dB-Hz, of the satellites its GPS used in its latest
-    /// reading, whether or not the fix was kept; 0 when it has none.
+    /// reading, whether or not the fix was kept, the GPS running or at
+    /// rest since; 0 when that reading used none, or there was none.
     pub gps_cn0: u8,
+    /// How long ago that reading was.
+    pub gps_age: ReadingAge,
     /// The version of the firmware image it runs, 0 if not known
     /// ([`crate::Config::version`]).
     pub version: u32,

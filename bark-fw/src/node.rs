@@ -489,6 +489,7 @@ impl LinkApp<'_> {
 /// to install (spec "Phone link", Status).
 fn status(core: &Role, now: Instant, battery_mv: u16, installing: Option<u32>) -> Status {
     let external_power = crate::power::reported();
+    let told = core.status(now);
     Status {
         ready: core.accepts_send(now),
         external_power,
@@ -508,7 +509,8 @@ fn status(core: &Role, now: Instant, battery_mv: u16, installing: Option<u32>) -
         installing: installing.map_or(0, |v| v as u16),
         // Each link's own, as its phone reads it (`ble.rs`).
         phones: 0,
-        gps_cn0: core.status(now).gps_cn0,
+        gps_cn0: told.gps_cn0,
+        gps_age: told.gps_age,
     }
 }
 

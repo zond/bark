@@ -90,6 +90,7 @@ impl FakeNode {
                 relays: 3,
                 heard: 4,
                 gps_cn0: 38,
+                gps_age: bark_proto::status::ReadingAge(0),
                 ..Status::EMPTY
             },
             code: 123_456,
@@ -163,6 +164,7 @@ impl FakeNode {
                     bark_proto::status::Status {
                         placed: true,
                         gps_cn0: 21,
+                        gps_age: bark_proto::status::ReadingAge(20),
                         version: 46,
                         ..Default::default()
                     },
