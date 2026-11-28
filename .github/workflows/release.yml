@@ -375,9 +375,19 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      # Each built side's files by name, into a folder of its own: asked
+      # for all at once, a lone artifact lands in `artifacts` itself, with
+      # no folder, and a release of one side then finds no file.
       - uses: actions/download-artifact@v8
+        if: env.BUILD_FIRMWARE == 'true'
         with:
-          path: artifacts
+          name: firmware
+          path: artifacts/firmware
+      - uses: actions/download-artifact@v8
+        if: env.BUILD_APP == 'true'
+        with:
+          name: android
+          path: artifacts/android
 
       # The previous release's files of a side that did not change, the
       # very bytes: the image is the one nodes already hold, signed then.
