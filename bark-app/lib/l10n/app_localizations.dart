@@ -1330,6 +1330,18 @@ abstract class AppLocalizations {
   /// **'To their home'**
   String get threadToHome;
 
+  /// In the sheet a tap on a sent text opens: removes the text while the network has not taken it.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel sending'**
+  String get threadCancelSending;
+
+  /// In the sheet a tap on a received text opens: opens the emoji to react with.
+  ///
+  /// In en, this message translates to:
+  /// **'React'**
+  String get threadReact;
+
   /// The button under a sent text whose search found no way: it sends the text once more.
   ///
   /// In en, this message translates to:

@@ -411,17 +411,33 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final small = Theme.of(context).textTheme.bodySmall!;
     final mine = e.mine;
     final color = scheme.onSurfaceVariant;
-    // A tap anywhere on the bubble says what it shows; the buttons take
-    // their own. A long press selects a sent text's words, and on a
-    // received one opens the reactions, with a copy.
+    // A tap anywhere on the bubble opens what may be done with it and
+    // what it shows; the buttons take their own. A long press selects a
+    // sent text's words, and on a received one is a shortcut to the
+    // reactions, with a copy.
     void help() => mine
         ? explainMessage(
             context,
+            actions: [
+              if (!archived && _droppable(e.outs).isNotEmpty)
+                (
+                  Icons.cancel_outlined,
+                  tr.threadCancelSending,
+                  () => _drop(e.outs),
+                ),
+            ],
             details: sentDetails(e.outs),
             marks: sentStates,
           )
         : explainMessage(
             context,
+            actions: [
+              (
+                to == null ? Icons.copy : Icons.add_reaction_outlined,
+                to == null ? tr.threadCopy : tr.threadReact,
+                () => _react(e, to),
+              ),
+            ],
             details: receivedDetails(e),
             marks: receivedMarks,
           );
@@ -707,34 +723,35 @@ class _ThreadScreenState extends State<ThreadScreen> {
     child: _mark(icon, words, small, color),
   );
 
-  /// Cancel, for the parts not yet with the node; and Send again, to
-  /// `to`, for a text with a part whose search found no way, which alone
-  /// waits for the person: a part given back busy or with no neighbour
-  /// goes again by itself, when the node can take it, which no button
-  /// makes sooner.
+  /// The parts not yet with the node, which the person may cancel.
+  List<Outgoing> _droppable(List<Outgoing> outs) => [
+    for (final o in outs)
+      if (o.state != OutState.writing && o.state != OutState.taken) o,
+  ];
+
+  /// Cancels the parts that are droppable now, which may be fewer than
+  /// when the person was offered it.
+  Future<void> _drop(List<Outgoing> outs) async {
+    for (final o in _droppable(outs)) {
+      await app.session.drop(o);
+    }
+  }
+
+  /// Cancel and Send again, to `to`, under a text with a part whose
+  /// search found no way, which alone waits for the person. A part given
+  /// back busy or with no neighbour goes again by itself, when the node
+  /// can take it, which no button makes sooner: its Cancel is in the
+  /// sheet a tap opens, as every waiting text's is.
   Widget _actions(List<Outgoing> outs, Contact? to) {
-    final s = app.session;
-    final droppable = [
-      for (final o in outs)
-        if (o.state != OutState.writing && o.state != OutState.taken) o,
-    ];
-    final again =
-        to != null &&
+    final waits =
         outs.any((o) => o.noWay) &&
         !outs.any((o) => o.state == OutState.writing);
-    if (droppable.isEmpty) return const SizedBox.shrink();
+    if (!waits) return const SizedBox.shrink();
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        TextButton(
-          onPressed: () async {
-            for (final o in droppable) {
-              await s.drop(o);
-            }
-          },
-          child: Text(tr.cancel),
-        ),
-        if (again)
+        TextButton(onPressed: () => _drop(outs), child: Text(tr.cancel)),
+        if (to != null)
           TextButton(
             onPressed: () => _sendAgain(to, outs),
             child: Text(tr.threadSendAgain),

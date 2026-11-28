@@ -216,6 +216,8 @@
   "threadTooManyParts": "{count, plural, one{{count} частина, щонайбільше {max}} few{{count} частини, щонайбільше {max}} many{{count} частин, щонайбільше {max}} other{{count} частини, щонайбільше {max}}}",
   "threadHint": "Повідомлення",
   "threadSend": "Надіслати",
+  "threadCancelSending": "Скасувати надсилання",
+  "threadReact": "Відреагувати",
   "threadSendAgain": "Надіслати знову",
   "threadTheyReacted": "Реакція одержувача: {emoji}",
   "threadYouReacted": "Ваша реакція: {emoji}",

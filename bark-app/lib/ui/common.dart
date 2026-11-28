@@ -218,10 +218,12 @@ List<(IconData, String, String)> get receivedMarks => [
   (Icons.schedule, tr.receivedTime, tr.receivedTimeHelp),
 ];
 
-/// A message's details that its bubble does not show, as label and
-/// value, then what each of its marks means.
+/// What a person may do with a message, first; then its details that
+/// its bubble does not show, as label and value; then what each of its
+/// marks means. An action closes the sheet before it runs.
 Future<void> explainMessage(
   BuildContext context, {
+  List<(IconData, String, VoidCallback)> actions = const [],
   required List<(String, String)> details,
   required List<(IconData, String, String)> marks,
 }) => showModalBottomSheet<void>(
@@ -235,6 +237,18 @@ Future<void> explainMessage(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (actions.isNotEmpty) ...[
+              for (final (icon, title, act) in actions)
+                ListTile(
+                  leading: Icon(icon),
+                  title: Text(title),
+                  onTap: () {
+                    Navigator.pop(context);
+                    act();
+                  },
+                ),
+              const Divider(),
+            ],
             if (details.isNotEmpty) ...[
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),

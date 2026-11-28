@@ -310,6 +310,11 @@ void main() {
       );
       expect(words, isNotEmpty);
     }
+    // The sheet's React opens what a long press does.
+    await t.tap(find.widgetWithText(ListTile, 'React'));
+    await t.pumpAndSettle();
+    expect(find.byKey(const ValueKey('frequent')), findsOneWidget);
+    expect(find.text('Copy text'), findsOneWidget);
     Navigator.pop(t.element(find.byType(BottomSheet)));
     await t.pumpAndSettle();
     await t.pageBack();
@@ -1036,8 +1041,15 @@ void main() {
     await givenBack(Why.noNeighbour);
     expect(find.byTooltip(lonely), findsOneWidget);
     expect(find.text(lonely), findsOneWidget);
-    expect(find.text('Cancel'), findsOneWidget);
+    // It goes again by itself, so no buttons under it: the sheet a tap
+    // opens cancels it.
+    expect(find.text('Cancel'), findsNothing);
     expect(find.text('Send again'), findsNothing);
+    await t.tap(find.text('hello'));
+    await t.pumpAndSettle();
+    expect(find.text('Cancel sending'), findsOneWidget);
+    await t.tapAt(const Offset(10, 10));
+    await t.pumpAndSettle();
     await givenBack(Why.noWay);
     expect(find.byTooltip(noWay), findsOneWidget);
     expect(find.text(noWay), findsOneWidget);
@@ -1103,6 +1115,26 @@ void main() {
     await t.tap(find.text('Cancel'));
     await t.pumpAndSettle();
     expect(app.session.outbox, isEmpty);
+
+    // The sheet's Cancel removes one that waits for a node; one the
+    // network has taken has none.
+    await t.enterText(find.byType(TextField), 'later');
+    await t.tap(find.byTooltip('Send'));
+    await t.pumpAndSettle();
+    final later = app.session.outbox.single..state = OutState.taken;
+    await t.tap(find.text('later'));
+    await t.pumpAndSettle();
+    expect(find.text('Cancel sending'), findsNothing);
+    await t.tapAt(const Offset(10, 10));
+    await t.pumpAndSettle();
+    later.state = OutState.queued;
+    await t.tap(find.text('later'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Cancel sending'));
+    await t.runAsync(() => Future<void>.delayed(Duration.zero));
+    await t.pumpAndSettle();
+    expect(app.session.outbox, isEmpty);
+    expect(find.byType(BottomSheet), findsNothing);
 
     await t.pumpWidget(const SizedBox());
     app.disposeWithNode();

@@ -840,6 +840,12 @@ class AppLocalizationsUk extends AppLocalizations {
   String get threadToHome => 'До дому контакту';
 
   @override
+  String get threadCancelSending => 'Скасувати надсилання';
+
+  @override
+  String get threadReact => 'Відреагувати';
+
+  @override
   String get threadSendAgain => 'Надіслати знову';
 
   @override

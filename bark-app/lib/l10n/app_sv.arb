@@ -216,6 +216,8 @@
   "threadTooManyParts": "{count, plural, one{{count} del, högst {max}} other{{count} delar, högst {max}}}",
   "threadHint": "Meddelande",
   "threadSend": "Skicka",
+  "threadCancelSending": "Avbryt sändningen",
+  "threadReact": "Reagera",
   "threadSendAgain": "Skicka igen",
   "threadTheyReacted": "Mottagarens reaktion: {emoji}",
   "threadYouReacted": "Din reaktion: {emoji}",

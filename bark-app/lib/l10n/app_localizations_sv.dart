@@ -831,6 +831,12 @@ class AppLocalizationsSv extends AppLocalizations {
   String get threadToHome => 'Till personens hem';
 
   @override
+  String get threadCancelSending => 'Avbryt sändningen';
+
+  @override
+  String get threadReact => 'Reagera';
+
+  @override
   String get threadSendAgain => 'Skicka igen';
 
   @override

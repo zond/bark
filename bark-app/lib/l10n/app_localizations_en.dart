@@ -818,6 +818,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get threadToHome => 'To their home';
 
   @override
+  String get threadCancelSending => 'Cancel sending';
+
+  @override
+  String get threadReact => 'React';
+
+  @override
   String get threadSendAgain => 'Send again';
 
   @override

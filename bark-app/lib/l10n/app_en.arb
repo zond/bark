@@ -535,6 +535,14 @@
   "@threadToHome": {
     "description": "A mark on a sent text, as threadToWhere is: where it was sent."
   },
+  "threadCancelSending": "Cancel sending",
+  "@threadCancelSending": {
+    "description": "In the sheet a tap on a sent text opens: removes the text while the network has not taken it."
+  },
+  "threadReact": "React",
+  "@threadReact": {
+    "description": "In the sheet a tap on a received text opens: opens the emoji to react with."
+  },
   "threadSendAgain": "Send again",
   "@threadSendAgain": {
     "description": "The button under a sent text whose search found no way: it sends the text once more."
