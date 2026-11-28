@@ -230,10 +230,9 @@ skriver.</p>
 <li>två pilar: det lämnas över till noden;</li>
 <li>en bock: nätet har tagit emot det.</li>
 </ul>
-<p>Bocken betyder inte att meddelandet har kommit fram. Nätet ger inget besked om det; du vet att det har kommit fram när personen svarar.</p>
+<p>Bocken betyder inte att meddelandet har kommit fram: det kan fortfarande försvinna på vägen. Nätet ger inget besked om det; du vet att det har kommit fram först när personen svarar eller reagerar på det.</p>
 <p>Om nätet är upptaget lämnar det tillbaka meddelandet. Appen visar då "Nätet
-är upptaget, skickar igen om …" och försöker igen av sig själv.
-Inget som nätet har tagit emot kastas bara för att det är gammalt.</p>
+är upptaget, skickar igen om …" och försöker igen av sig själv.</p>
 <p>Om din nod inte hör någon annan nod lämnar den tillbaka meddelandet. Appen visar då "Noden hör ingen annan, skickar när den gör det" och skickar det av sig själv så fort noden hör en annan.</p>
 <p>Om nätet inte hittar någon väg till personens adress kommer meddelandet tillbaka, ibland flera minuter senare, och appen visar "Hittade ingen väg
 dit". Personens nod kan vara avstängd eller borta, eller adressen inaktuell. Appen
@@ -325,6 +324,7 @@ bark köras</strong>.</p>
 <li><strong>Nätet litar på varje nod.</strong> Det är byggt för lägen när infrastrukturen slås ut, inte för att stå emot en angripare. Den som vill störa noderna
 omkring sig kan göra det.</li>
 <li><strong>Det delar på radioutrymmet rättvist.</strong> Lagen begränsar hur mycket varje nod får sända. Därför skickar nätet korta texter, säger nej till fler när det är fullt och talar om för appen när den kan försöka igen.</li>
+<li><strong>Inget löfte om leverans.</strong> Ett meddelande kan försvinna på vägen, och bara ett svar visar att det har kommit fram (<a href="#writing-and-reading-messages">Skriva och läsa meddelanden</a>).</li>
 <li><strong>Bara Android</strong>, än så länge.</li>
 </ul>
 <h2 id="when-something-does-not-work">När något inte fungerar</h2>
